@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Native single-material CAD solids can construct cubic tetrahedral
+  geometry. Deferred proof checks the actual degree-three map, including
+  both directed CAD trace distances; cold archive restore replays the same
+  proof. Certified radial shells avoid implicit facet elimination.
+  Rebuild native clients for the CAD trace and volume export ABI changes.
 - Quadratic CAD curving groups edge incidences with the native stable key
   sort and prepares the repair workset only when initial validity requires
   it. Edge numbering, coordinates, and validity decisions are unchanged.

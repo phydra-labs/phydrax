@@ -45,7 +45,10 @@ from ...discretization._cell_geometry import CellGeometrySpec
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._topology import sorted_unique_rows
-from ...discretization.fem._reference import lagrange_element
+from ...discretization.fem._reference import (
+    cubic_tetrahedron_geometry_element,
+    lagrange_element,
+)
 from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingFailureEvidence
@@ -139,6 +142,29 @@ def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometr
         (np.asarray(volume.points, dtype=np.float64), volume.nodes), axis=0
     )
     return CellGeometrySpec({_BLOCK: element}, {_BLOCK: route}, coordinates)
+
+
+def _cubic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometrySpec:
+    volume = solid.volume
+    extra = volume.cubic_cell_nodes
+    count = volume.points.shape[0]
+    additional = volume.cubic_nodes.shape[0]
+    if (
+        additional == 0
+        or count + additional > np.iinfo(np.int32).max
+        or extra.shape != (volume.tetrahedra.shape[0], 16)
+        or np.any(extra < 0)
+        or np.any(extra >= additional)
+    ):
+        raise ValueError("Native cubic CAD coordinates have an incompatible node bank.")
+    route = np.empty((volume.tetrahedra.shape[0], 20), dtype=np.int32)
+    route[:, :4] = volume.tetrahedra
+    route[:, 4:] = count + extra
+    return CellGeometrySpec(
+        {_BLOCK: cubic_tetrahedron_geometry_element(mesh.blocks[0].cell_kind)},
+        {_BLOCK: route},
+        np.concatenate((volume.points, volume.cubic_nodes)),
+    )
 
 
 def _size_compliance(
@@ -896,9 +922,15 @@ def execute_cad_solid(
         block_name=_BLOCK,
         numeric_version=domain.source_revision,
     )
-    geometry = (
-        CellGeometrySpec.affine(mesh) if order == 1 else _quadratic_geometry(mesh, solid)
-    )
+    match order:
+        case 1:
+            geometry = CellGeometrySpec.affine(mesh)
+        case 2:
+            geometry = _quadratic_geometry(mesh, solid)
+        case 3:
+            geometry = _cubic_geometry(mesh, solid)
+        case _:
+            raise ValueError(f"Unsupported native CAD geometry order {order!r}.")
     # Unmet cells split per cell: forced by the input (a rim wedge below the
     # dihedral target explains every failure of the cell) or not; only the
     # unforced ones are an issue.

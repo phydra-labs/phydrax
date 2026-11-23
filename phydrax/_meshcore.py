@@ -1433,8 +1433,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
     "phx_mc_cad_mesh_volume": (_I32, (_P, _P, _P, _P, _I32)),
-    "phx_mc_cad_volume_sizes": (_I32, (_P, _P)),
-    "phx_mc_cad_volume_export": (_I32, (_P, _P)),
+    "phx_mc_cad_volume_bank_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_volume_copy_banks": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
         (
@@ -2105,7 +2105,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
 }
 
 # CAD fidelity verifier.
-_SIGNATURES["phx_mc_verify_cad_fidelity"] = (
+_SIGNATURES["phx_mc_verify_cad_trace_fidelity"] = (
     _I32,
     (
         _P,
@@ -2142,11 +2142,9 @@ _SIGNATURES["phx_mc_verify_cad_fidelity"] = (
         _I64,
         _P,
         _P,
+        _P,
+        _P,
     ),
-)
-_SIGNATURES["phx_mc_verify_cad_quadratic_fidelity"] = (
-    _I32,
-    (*_SIGNATURES["phx_mc_verify_cad_fidelity"][1], _P),
 )
 
 
@@ -5408,12 +5406,15 @@ def verify_cad_fidelity(
     /,
     *,
     triangle_edge_nodes: np.ndarray | None = None,
+    triangle_cubic_nodes: np.ndarray | None = None,
 ) -> CadFidelityResult:
     """Verify bounds conditional on an independently checked chart partition.
 
     With ``triangle_edge_nodes``, use quadratic triangle traces with the given
     midpoint nodes on chart-local edges (0, 1), (1, 2), and (2, 0). A collapsed
     edge uses the repeated corner as its node.
+    Alternatively, ``triangle_cubic_nodes`` gives two nodes per directed edge
+    (near the start, then the end), followed by the centroid.
     """
     lower = _cad_fidelity_array(coefficient_lower, np.float64, "coefficient_lower")
     upper = _cad_fidelity_array(coefficient_upper, np.float64, "coefficient_upper")
@@ -5435,8 +5436,8 @@ def verify_cad_fidelity(
     if triangles.ndim != 2 or triangles.shape[1] != 3:
         raise ValueError("triangles must have shape (m, 3).")
     count = triangles.shape[0]
-    symbol = "phx_mc_verify_cad_fidelity"
-    trailing: tuple[int, ...] = ()
+    if triangle_edge_nodes is not None and triangle_cubic_nodes is not None:
+        raise ValueError("Only one CAD triangle trace bank may be supplied.")
     if triangle_edge_nodes is not None:
         triangle_edge_nodes = _cad_fidelity_array(
             triangle_edge_nodes, np.float64, "triangle_edge_nodes"
@@ -5445,8 +5446,14 @@ def verify_cad_fidelity(
             raise ValueError("triangle_edge_nodes must have shape (m, 3, 3).")
         if not np.all(np.isfinite(triangle_edge_nodes)):
             raise ValueError("triangle_edge_nodes must be finite.")
-        symbol = "phx_mc_verify_cad_quadratic_fidelity"
-        trailing = (triangle_edge_nodes.ctypes.data,)
+    if triangle_cubic_nodes is not None:
+        triangle_cubic_nodes = _cad_fidelity_array(
+            triangle_cubic_nodes, np.float64, "triangle_cubic_nodes"
+        )
+        if triangle_cubic_nodes.shape != (count, 7, 3):
+            raise ValueError("triangle_cubic_nodes must have shape (m, 7, 3).")
+        if not np.all(np.isfinite(triangle_cubic_nodes)):
+            raise ValueError("triangle_cubic_nodes must be finite.")
     if faces.shape != (count,) or uv.shape != (count, 3, 2) or edges.shape != (count, 3):
         raise ValueError("face_rows, uv and edge_chord must align with triangles.")
     if mesh_triangles.ndim != 2 or mesh_triangles.shape[1] != 3:
@@ -5476,7 +5483,7 @@ def verify_cad_fidelity(
     findings = np.empty(
         7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE
     )
-    status = load_meshcore()[symbol](
+    status = load_meshcore()["phx_mc_verify_cad_trace_fidelity"](
         ctypes.addressof(structure),
         lower.size,
         lower.ctypes.data,
@@ -5511,7 +5518,8 @@ def verify_cad_fidelity(
         findings.size,
         findings.ctypes.data,
         ctypes.addressof(evidence_count),
-        *trailing,
+        None if triangle_edge_nodes is None else triangle_edge_nodes.ctypes.data,
+        None if triangle_cubic_nodes is None else triangle_cubic_nodes.ctypes.data,
     )
     del arrays
     if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
@@ -15272,6 +15280,7 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
         ("unmet_unforced_cells", np.int64),
         ("unmet_shape_rows", np.int64),
         ("unmet_hard_cells", np.int64),
+        ("cubic_ns", np.int64),
     ],
     align=True,
 )
@@ -15318,15 +15327,18 @@ class _CadVolumeArrays(ctypes.Structure):
         ),
         ("curve_capacity", _I64),
         ("curve_rim_wedges", _P),
+        ("cubic_node_capacity", _I64),
+        ("cubic_nodes", _P),
+        ("cubic_cell_nodes", _P),
     )
 
 
 class CadVolumeResult(NamedTuple):
-    """Fixed-boundary tetrahedra of a CAD surface candidate and its P2 nodes.
+    """Fixed-boundary tetrahedra of a CAD solid and optional curved geometry.
 
     Points begin with the surface points; cells are right-handed;
     ``boundary_faces[t]`` is the (cell, local face opposite that vertex) of
-    surface triangle ``t``. P2 arrays are empty for geometry order 1.
+    surface triangle ``t``. Each curved bank is empty for other orders.
     """
 
     points: np.ndarray
@@ -15345,6 +15357,8 @@ class CadVolumeResult(NamedTuple):
     # Per model curve: the smallest true wedge (degrees) between its two
     # faces, written when some unmet cell is not forced, else NaN.
     curve_rim_wedges: np.ndarray
+    cubic_nodes: np.ndarray
+    cubic_cell_nodes: np.ndarray
 
 
 class CadSolidResult(NamedTuple):
@@ -15464,12 +15478,12 @@ def cad_mesh_solid(
 def _cad_volume_export(
     library: Any, handle: ctypes.c_void_p, curve_count: int, /
 ) -> CadVolumeResult:
-    counts = np.empty((6,), dtype=np.int64)
+    counts = np.empty((7,), dtype=np.int64)
     _raise_for_call(
-        library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
-        "cad_volume_sizes",
+        library["phx_mc_cad_volume_bank_sizes"](handle, counts.ctypes.data),
+        "cad_volume_bank_sizes",
     )
-    p, m, t, n, r, s = (int(c) for c in counts)
+    p, m, t, n, r, s, n3 = (int(c) for c in counts)
     cells = m if n else 0
     banks = (
         np.empty((p, 3), dtype=np.float64),
@@ -15487,14 +15501,27 @@ def _cad_volume_export(
         np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
     )
     wedges = np.full((curve_count,), np.nan, dtype=np.float64)
+    cubic_nodes = np.empty((n3, 3), dtype=np.float64)
+    cubic_cell_nodes = np.empty((m if n3 else 0, 16), dtype=np.int64)
     outputs = _CadVolumeArrays(
-        p, m, t, n, r, s, *(a.ctypes.data for a in banks), curve_count, wedges.ctypes.data
+        p,
+        m,
+        t,
+        n,
+        r,
+        s,
+        *(a.ctypes.data for a in banks),
+        curve_count,
+        wedges.ctypes.data,
+        n3,
+        cubic_nodes.ctypes.data,
+        cubic_cell_nodes.ctypes.data,
     )
     _raise_for_call(
-        library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
-        "cad_volume_export",
+        library["phx_mc_cad_volume_copy_banks"](handle, ctypes.addressof(outputs)),
+        "cad_volume_copy_banks",
     )
-    return CadVolumeResult(*banks, wedges)
+    return CadVolumeResult(*banks, wedges, cubic_nodes, cubic_cell_nodes)
 
 
 def _cad_surface_refinement(

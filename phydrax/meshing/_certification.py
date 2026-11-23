@@ -799,17 +799,21 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         if reuse_surface:
             assert computed_surface is not None
             embedding = computed_surface.report.embedding
-        quadratic_cad = False
+        cad_degree = 1
         cad_embedding = None
         if inputs.native_cad_surface is not None:
             from ..discretization.fem._reference import FiniteElementSpec
 
-            quadratic_cad = any(
-                isinstance(element, FiniteElementSpec) and element.degree == 2
+            element_degrees = {
+                element.degree
                 for element in inputs.geometry.elements
-            )
+                if isinstance(element, FiniteElementSpec)
+            }
+            # This selects the verifier; the certificate authenticates every
+            # block against that degree's complete canonical basis.
+            cad_degree = 2 if 2 in element_degrees else 3 if 3 in element_degrees else 1
             if (
-                quadratic_cad
+                cad_degree != 1
                 and inputs.junction_vertices is None
                 and embedding_premise is None
             ):
@@ -890,8 +894,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.fidelity_tolerance,
                 inputs.protected_features,
                 inputs.maximum_normal_deviation,
-                embedding=cad_embedding if quadratic_cad else embedding,
-                quadratic=quadratic_cad,
+                embedding=cad_embedding if cad_degree != 1 else embedding,
+                degree=cad_degree,
             )
             findings.extend(native_cad.findings)
         elif inputs.source is not None:

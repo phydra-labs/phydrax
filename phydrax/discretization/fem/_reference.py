@@ -37,6 +37,9 @@ type ElementMapping = Literal[
 type _Tabulator = Callable[[Array], tuple[ArrayLike, ArrayLike]]
 
 
+_EQUISPACED_CUBIC = "EquispacedCubicLagrange"
+
+
 @final
 class FiniteElementSpec(StrictModule, NonTrainableState):
     """Reference element with typed form values and explicit entity functionals."""
@@ -199,6 +202,9 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             return _quadrilateral_q1(locations)
         if self.cell_kind == "tetrahedron" and self.degree == 1:
             return _tetrahedron_p1(locations)
+        if self.family == _EQUISPACED_CUBIC:
+            require_cubic_tetrahedron_geometry_element(self)
+            return _tetrahedron_cubic_equispaced(locations)
         if self.cell_kind == "hexahedron" and self.degree == 1:
             return _hexahedron_q1(locations)
         raise ValueError("Finite-element tabulation is not implemented for this spec.")
@@ -322,6 +328,109 @@ def _tetrahedron_p1(points: Array, /) -> tuple[Array, Array]:
         (points.shape[0], 4, 3),
     )
     return values, gradients
+
+
+_CUBIC_TETRAHEDRON_LATTICE = (
+    (3, 0, 0, 0),
+    (0, 3, 0, 0),
+    (0, 0, 3, 0),
+    (0, 0, 0, 3),
+    (2, 1, 0, 0),
+    (1, 2, 0, 0),
+    (2, 0, 1, 0),
+    (1, 0, 2, 0),
+    (2, 0, 0, 1),
+    (1, 0, 0, 2),
+    (0, 2, 1, 0),
+    (0, 1, 2, 0),
+    (0, 2, 0, 1),
+    (0, 1, 0, 2),
+    (0, 0, 2, 1),
+    (0, 0, 1, 2),
+    (0, 1, 1, 1),
+    (1, 0, 1, 1),
+    (1, 1, 0, 1),
+    (1, 1, 1, 0),
+)
+
+
+def _tetrahedron_cubic_equispaced(points: Array, /) -> tuple[Array, Array]:
+    barycentric = jnp.concatenate(
+        (1.0 - jnp.sum(points, axis=1, keepdims=True), points), axis=1
+    )
+    # Cardinal product along each barycentric axis, indexed by the integer
+    # lattice component. The four factors have degree summing to exactly 3.
+    t = 3.0 * barycentric
+    t1, t2 = t - 1.0, t - 2.0
+    one = jnp.ones_like(t)
+    factors = jnp.stack((one, t, 0.5 * t * t1, t * t1 * t2 / 6.0), axis=-1)
+    derivative = jnp.stack(
+        (
+            jnp.zeros_like(t),
+            3.0 * one,
+            1.5 * (t + t1),
+            0.5 * ((t1 * t2 + t * t2) + t * t1),
+        ),
+        axis=-1,
+    )
+    indices = jnp.asarray(_CUBIC_TETRAHEDRON_LATTICE, dtype=jnp.int32)
+    axes = jnp.arange(4, dtype=jnp.int32)
+    values = factors[:, axes, indices]
+    partials = derivative[:, axes, indices]
+    a, b, c, d = (values[:, :, column] for column in range(4))
+    base = partials[:, :, 0] * b * c * d
+    return a * b * c * d, jnp.stack(
+        (
+            a * partials[:, :, 1] * c * d - base,
+            a * b * partials[:, :, 2] * d - base,
+            a * b * c * partials[:, :, 3] - base,
+        ),
+        axis=-1,
+    )
+
+
+@lru_cache(maxsize=2)
+def cubic_tetrahedron_geometry_element(cell_kind: str, /) -> FiniteElementSpec:
+    """Canonical equispaced cubic tetrahedron used for nodal CAD geometry."""
+    if cell_kind not in ("tetrahedron", "simplex:3"):
+        raise ValueError("Cubic tetrahedral geometry requires a tetrahedral carrier.")
+    with jax.ensure_compile_time_eval():
+        topology = reference_cell_topology(cell_kind)
+        lattice = _CUBIC_TETRAHEDRON_LATTICE
+        supports = tuple(
+            frozenset(index for index, degree in enumerate(node) if degree)
+            for node in lattice
+        )
+        dofs = tuple(
+            tuple(
+                tuple(
+                    i
+                    for i, support in enumerate(supports)
+                    if support == frozenset(entity)
+                )
+                for entity in level
+            )
+            for level in topology.entities
+        )
+        return FiniteElementSpec(
+            _EQUISPACED_CUBIC,
+            cell_kind,
+            3,
+            np.asarray(lattice, dtype=np.float64)[:, 1:] / 3.0,
+            dofs,
+            value_spec=FormValueSpec(FormType(3, 0, twist="untwisted"), proxy="scalar"),
+        )
+
+
+def require_cubic_tetrahedron_geometry_element(element: FiniteElementSpec, /) -> None:
+    """Refuse layouts that do not name the equispaced cubic coordinate basis."""
+    if (
+        element.tabulator is not None
+        or element.form_basis is not None
+        or element.element_id
+        != cubic_tetrahedron_geometry_element(element.cell_kind).element_id
+    ):
+        raise ValueError("Expected the canonical equispaced cubic tetrahedral element.")
 
 
 def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:

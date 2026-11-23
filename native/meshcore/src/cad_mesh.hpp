@@ -78,6 +78,7 @@ struct CadVolumeMesh {
   std::vector<int32_t> regions;
   std::vector<std::array<int32_t, 2>> boundary_faces;
   CadQuadraticMesh quadratic;
+  CadCubicMesh cubic;
   std::vector<phx_mc_cad_boundary_split> splits;
   phx_mc_cad_volume_stats stats{};
   // Per model curve (empty when the volume stage stopped before quality):

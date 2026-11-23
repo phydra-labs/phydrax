@@ -855,8 +855,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   result = CadVolumeMesh{};
   auto& stats = result.stats;
   const auto& model = geometry.model();
-  if (!sizes || (controls.geometry_order != 1 && controls.geometry_order != 2))
+  if (!sizes || controls.geometry_order < 1 || controls.geometry_order > 3) {
     return PHX_MC_INVALID_ARGUMENT;
+  }
   const auto volume_start = std::chrono::steady_clock::now();
   PlcHandle recovery;
   for (int attempt = 0;; ++attempt) {
@@ -1064,8 +1065,8 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   // UNRESOLVED iff some unmet cell is not forced by the input
   // (count_forced_cells); forced cells are reported, not unmet.
   int32_t overall = stats.unmet_unforced_cells > 0 ? PHX_MC_UNRESOLVED : PHX_MC_OK;
-  if (controls.geometry_order == 2) {
-    const auto quadratic_start = std::chrono::steady_clock::now();
+  if (controls.geometry_order > 1) {
+    const auto curve_start = std::chrono::steady_clock::now();
     const CadQuadraticInput input{
         static_cast<int64_t>(result.points.size()), reinterpret_cast<const double*>(result.points.data()),
         static_cast<int64_t>(surface_points), surface.vertex_dimensions.data(),
@@ -1079,12 +1080,18 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
         surface.curve_edge_curves.data(),
         reinterpret_cast<const double*>(surface.curve_edge_parameters.data()),
         controls.minimum_relative_determinant};
-    const int32_t curved = cad_quadratic_nodes(geometry, input, result.quadratic);
-    stats.quadratic_ns = elapsed_ns(quadratic_start);
-    if (curved != PHX_MC_OK) return curved;
-    stats.quadratic = result.quadratic.stats;
-    if (stats.quadratic.final_invalid > 0 || stats.quadratic.final_unresolved > 0)
-      overall = PHX_MC_UNRESOLVED;
+    if (controls.geometry_order == 2) {
+      const int32_t curved = cad_quadratic_nodes(geometry, input, result.quadratic);
+      stats.quadratic_ns = elapsed_ns(curve_start);
+      if (curved != PHX_MC_OK) return curved;
+      stats.quadratic = result.quadratic.stats;
+      if (stats.quadratic.final_invalid > 0 || stats.quadratic.final_unresolved > 0)
+        overall = PHX_MC_UNRESOLVED;
+    } else {
+      const int32_t curved = cad_cubic_nodes(geometry, input, result.cubic);
+      stats.cubic_ns = elapsed_ns(curve_start);
+      if (curved != PHX_MC_OK) return curved;
+    }
   }
   return overall;
 }

@@ -63,7 +63,11 @@ from ._integer_triangle_contact import (
     integer_triangle_contacts,
     IntegerTriangle,
 )
-from ._mapped_embedding import prove_mapped_cell_injective
+from ._mapped_embedding import (
+    _determinant,
+    _strict_positive_controls,
+    prove_mapped_cell_injective,
+)
 from ._planar_chain_embedding import polytope_face_routes
 from ._restricted_embedding import (
     _trace_arguments,
@@ -414,6 +418,103 @@ def _ray_winding(
         if generic:
             return crossings, True
     return 0, False
+
+
+def _radial_face_evidence(
+    face: BoundaryFace, cell: EmbeddingCell, center: Point3, /
+) -> tuple[str, str] | None:
+    arguments = _trace_arguments(cell, face.vertex_ids)
+    if len(cell.coordinates) != 3 or len(face.points) != 3:
+        return None
+    if arguments is None:
+        return None
+    offsets = tuple(
+        subtract(compose_expression(expression, arguments), constant(center[axis], 2))
+        for axis, expression in enumerate(cell.coordinates)
+    )
+    polynomials = tuple(value for value in offsets if isinstance(value, dict))
+    if len(polynomials) != 3:
+        return None
+    first, second, third = face.points
+    normal = _cross3(_sub3(second, first), _sub3(third, first))
+    if _dot3(normal, _sub3(first, center)) <= 0:
+        return None
+    # Both the chord and mapped trace remain strictly above this plane through
+    # the center, so their pointwise linear homotopy avoids the center.
+    hemisphere = _strict_positive_controls(
+        linear_combinations(polynomials, (normal,))[0], "simplex", 2
+    )
+    if hemisphere is None:
+        return None
+    angular = _strict_positive_controls(
+        _determinant(
+            (
+                polynomials,
+                tuple(derivative(value, 0) for value in polynomials),
+                tuple(derivative(value, 1) for value in polynomials),
+            )
+        ),
+        "simplex",
+        2,
+    )
+    return None if angular is None else (hemisphere, angular)
+
+
+def prove_radial_boundary(
+    boundary: OrientedBoundary, cells: tuple[EmbeddingCell, ...], /
+) -> tuple[str, ...] | None:
+    """Prove an embedded shell by degree-one radial projection of the actual traces.
+
+    Every closed chart has a locally invertible radial projection with positive
+    orientation. There are finitely many preimages of a ray, isolated even at
+    seams and vertices by the local inverses on their incident charts. Each
+    preimage has positive local degree: take an interior point of any incident
+    chart arbitrarily near it and count preimages of a nearby regular value
+    in an isolating neighborhood. Each contributes +1. The homotopy to the
+    chord shell gives degree one, so all rays have precisely one preimage.
+    """
+    if not boundary.single_shell_topology or not boundary.faces:
+        return None
+    if any(len(face.vertex_ids) != 3 for face in boundary.faces):
+        return None
+    vertices = {
+        identifier: point
+        for face in boundary.faces
+        for identifier, point in zip(face.vertex_ids, face.points, strict=True)
+    }
+    count = len(vertices)
+    points = tuple(vertices.values())
+    center: Point3 = (
+        exact_sum(point[0] for point in points) / count,
+        exact_sum(point[1] for point in points) / count,
+        exact_sum(point[2] for point in points) / count,
+    )
+    exterior = {frozenset(face.vertex_ids) for face in boundary.faces}
+    owner = {
+        key: cell
+        for row in boundary.exterior_cells
+        for cell in (cells[row],)
+        for face in _cell_facets(cell)
+        if (key := frozenset(cell.vertex_ids[index] for index in face)) in exterior
+    }
+    values = [
+        f"radial-center:{tuple(_exact_scalar_identity(value) for value in center)}",
+    ]
+    for face in boundary.faces:
+        cell = owner.get(frozenset(face.vertex_ids))
+        if cell is None:
+            return None
+        controls = _radial_face_evidence(face, cell, center)
+        if controls is None:
+            return None
+        hemisphere, angular = controls
+        values.append(
+            f"radial-facet:{face.facet_id}:hemisphere:{hemisphere}:angular:{angular}"
+        )
+    winding, decided = _ray_winding(center, boundary.triangles)
+    if not decided or winding != 1:
+        return None
+    return (*values, "radial-chord-winding:1")
 
 
 def _edge(left: int, right: int, /) -> tuple[int, int]:

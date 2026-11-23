@@ -606,9 +606,8 @@ def _cad_boundary_specification(
     if specification.layer_controls:
         target_issues = _layer_target_support(specification)
     else:
-        # Order 2 is constructed by the native route; the existing route
-        # (gated plans) refuses it at execution.
-        target_issues = _target_support(specification, maximum_geometry_order=2)
+        # Curved solids are supported only on the direct native route.
+        target_issues = _target_support(specification, maximum_geometry_order=3)
     if target_issues:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -810,8 +809,8 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         if self.specification.target.geometry_order != 1:
             raise _failure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "The existing CAD volume construction is affine; geometry order 2 "
-                "is constructed by the native route only.",
+                "The existing CAD volume construction is affine; curved geometry "
+                "is constructed by the direct native route only.",
             )
         boundary_construction = self.boundary_proof.get().execute()
         surface_proofs: list[_ComputedSurfaceAcceptance] = []

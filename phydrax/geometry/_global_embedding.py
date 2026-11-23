@@ -83,10 +83,12 @@ from ..discretization._nested_reference import (
 from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
 from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
+from ..discretization.fem._reference import _EQUISPACED_CUBIC, FiniteElementSpec
 from ..linalg._exact import factor_exact_sparse, solve_exact
 from ._boundary_degree_embedding import (
     _face_trace_image_evidence,
     build_oriented_boundary,
+    prove_radial_boundary,
 )
 from ._embedding_cells import (
     _cell_expressions,
@@ -7567,18 +7569,17 @@ def _boundary_findings(
     mesh: CellMesh,
     cells: tuple[EmbeddingCell, ...],
     /,
+    *,
+    prove_radial: bool,
 ) -> tuple[
     list[MeshCertificateFinding], int, int, list[str], str | None, tuple[int, ...] | None
 ]:
     """Oriented-boundary findings, inventory, proof values and degree premises.
 
-    The fifth value names the complete exterior degree-one theorem when it
-    holds (``embedded_planar_exterior_boundary``, or
-    ``embedded_fan_exterior_boundary`` when an exterior face is the fan of a
-    non-planar loop), else ``None``. The last is the rows of the exterior-facet
-    cells when the complex has one closed manifold shell whose exterior images
-    are not all proved planar, so their embedding is still owed; otherwise
-    ``None``.
+    The fifth value names a complete exterior degree-one theorem for an
+    embedded planar, fan-triangulated, or radially projected shell. The last
+    value lists the exterior-facet cell rows of a single closed manifold
+    shell when exterior embedding is still owed.
     """
     if (
         mesh.topological_dimension != 3
@@ -7652,6 +7653,9 @@ def _boundary_findings(
                 f"embedded_exterior_triangles:{len(boundary.triangles)}",
             )
         )
+    elif prove_radial and (radial := prove_radial_boundary(boundary, cells)) is not None:
+        degree_route = "embedded_radial_exterior_boundary"
+        values.extend(radial)
     return (
         findings,
         len(boundary.faces),
@@ -7659,7 +7663,7 @@ def _boundary_findings(
         values,
         degree_route,
         boundary.exterior_cells
-        if boundary.single_shell_topology and not boundary.boundary_degree_one
+        if boundary.single_shell_topology and degree_route is None
         else None,
     )
 
@@ -8619,7 +8623,15 @@ def _proof(
             boundary_values,
             degree_one_boundary,
             exterior_cells,
-        ) = _boundary_findings(mesh, cells)
+        ) = _boundary_findings(
+            mesh,
+            cells,
+            prove_radial=all(
+                isinstance(element, FiniteElementSpec)
+                and element.family == _EQUISPACED_CUBIC
+                for element in geometry.elements
+            ),
+        )
         # Positive local Jacobians, exactly cancelling interior traces and one
         # embedded closed shell make the map injective: it has degree zero
         # outside the shell, the degree changes by one across it, and each

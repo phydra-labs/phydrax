@@ -2428,6 +2428,7 @@ def _finite_element_monomials(
     element: FiniteElementSpec, /
 ) -> tuple[tuple[int, ...], ...]:
     from .fem._high_order import ReferenceNodalFamily, SimplexNodalFamily
+    from .fem._reference import _EQUISPACED_CUBIC
 
     dimension = element.topological_dimension
     hybrid_owner = _finite_element_hybrid_owner(element)
@@ -2504,6 +2505,7 @@ def _finite_element_monomials(
         "Lagrange",
         "DiscontinuousLagrange",
         "SimplexLagrange",
+        _EQUISPACED_CUBIC,
         "TensorProductLagrange",
     ):
         raise ValueError(
@@ -3153,6 +3155,17 @@ def _finite_element_execution_basis(
             return _simplex_nodal_execution_basis(owner)
         raise ValueError("Finite-element tabulator has no canonical coefficient owner.")
     if tabulator is None:
+        from .fem._reference import (
+            _EQUISPACED_CUBIC,
+            cubic_tetrahedron_geometry_element,
+            require_cubic_tetrahedron_geometry_element,
+        )
+
+        if element.family == _EQUISPACED_CUBIC:
+            require_cubic_tetrahedron_geometry_element(element)
+            return coordinate_source_basis(
+                cubic_tetrahedron_geometry_element(element.cell_kind)
+            )
         if element.family == "DiscontinuousLagrange" and element.degree == 0:
             return (constant(1, element.topological_dimension),)
         if (

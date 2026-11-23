@@ -881,8 +881,15 @@ def _family_node_data(
     /,
 ) -> _FamilyNodeData:
     from ._high_order import ReferenceNodalFamily, SimplexNodalFamily
+    from ._reference import _CUBIC_TETRAHEDRON_LATTICE, _EQUISPACED_CUBIC
     from ._spectral_hp_completion import HybridReferenceFamily
 
+    if element.family == _EQUISPACED_CUBIC:
+        result = []
+        for index in _CUBIC_TETRAHEDRON_LATTICE:
+            weights = tuple(constant(Fraction(value, 3)) for value in index)
+            result.append((weights[1:], weights, index))
+        return tuple(result)
     if isinstance(owner, SimplexNodalFamily):
         barycentric_nodes = _simplex_nodes(owner)
         data = tuple(
@@ -1017,10 +1024,19 @@ def _owner_for_element(element: Any, /) -> Any | None:
 
 def _validated_owner(element: Any, /) -> tuple[Any | None, Any]:
     from ._high_order import ReferenceNodalFamily, SimplexNodalFamily
-    from ._reference import discontinuous_element, FiniteElementSpec, lagrange_element
+    from ._reference import (
+        _EQUISPACED_CUBIC,
+        discontinuous_element,
+        FiniteElementSpec,
+        lagrange_element,
+        require_cubic_tetrahedron_geometry_element,
+    )
     from ._spectral_hp_completion import HybridReferenceFamily
 
     source_element = element
+    if element.family == _EQUISPACED_CUBIC:
+        require_cubic_tetrahedron_geometry_element(element)
+        return None, source_element
     owner = _owner_for_element(element)
     if element.family == "DiscontinuousLagrange":
         if element.degree == 0:
@@ -1139,7 +1155,7 @@ def finite_element_nodal_reference_data(
 ) -> tuple[ExactNodalReferenceNode, ...]:
     """Return exact point functionals and projections in local DOF order."""
     from ._high_order import SimplexNodalFamily
-    from ._reference import FiniteElementSpec
+    from ._reference import _EQUISPACED_CUBIC, FiniteElementSpec
     from ._spectral_hp_completion import HybridReferenceFamily
 
     if not isinstance(element, FiniteElementSpec):
@@ -1191,6 +1207,9 @@ def finite_element_nodal_reference_data(
         if isinstance(owner, SimplexNodalFamily) and lattice is not None:
             entity_lattice = tuple(lattice[vertex] for vertex in entity_vertices)
             entity_lattice_order = int(owner.order)
+        elif element.family == _EQUISPACED_CUBIC and lattice is not None:
+            entity_lattice = tuple(lattice[vertex] for vertex in entity_vertices)
+            entity_lattice_order = 3
         elif (
             isinstance(owner, HybridReferenceFamily)
             and owner.cell_kind == "prism"

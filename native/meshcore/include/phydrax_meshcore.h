@@ -3957,27 +3957,13 @@ typedef struct phx_mc_fidelity_finding {
 /* Edge-association findings identify triangle and local edge; -1 means absent.
  * evidence_count is required and reports the number of findings. Insufficient
  * evidence_capacity reports PHX_MC_CAPACITY_EXCEEDED before evidence or row
- * outputs are written. */
-PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
-    const phx_mc_cad_model* model, int64_t coefficient_count,
-    const double* coefficient_lower, const double* coefficient_upper,
-    int64_t point_count, const double* points, int64_t triangle_count,
-    const int64_t* triangles, const int32_t* face_rows, const double* uv,
-    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
-    int64_t use_count, const int64_t* use_patch, const double* use_range,
-    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
-    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
-    const int64_t* edge_chord, double tolerance, int32_t max_depth,
-    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
-    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
-    phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
-/* Same chart and source checks as phx_mc_verify_cad_fidelity, with outward
- * bounds on the paired quadratic trace. triangle_edge_nodes has 9 doubles per
- * chart row: xyz midpoint nodes of edges (0,1), (1,2), (2,0) in order.
- * Repeated mesh edges must name bitwise equal node coordinates; a collapsed
- * edge must repeat its point. The caller verifies these traces belong to the
- * actual embedded coordinate map and verifies the full chart partition. */
-PHX_MC_API int32_t phx_mc_verify_cad_quadratic_fidelity(
+ * outputs are written. The optional trace banks are mutually exclusive.
+ * Both null selects affine triangles. Quadratic traces take three xyz
+ * midpoints ordered by directed chart sides (01, 12, 20). Cubic traces
+ * take seven xyz nodes: two ordered by distance from the start of each
+ * directed side, then the centroid. The caller binds these traces to the
+ * actual embedded coordinate map and checks the full chart partition. */
+PHX_MC_API int32_t phx_mc_verify_cad_trace_fidelity(
     const phx_mc_cad_model* model, int64_t coefficient_count,
     const double* coefficient_lower, const double* coefficient_upper,
     int64_t point_count, const double* points, int64_t triangle_count,
@@ -3990,8 +3976,8 @@ PHX_MC_API int32_t phx_mc_verify_cad_quadratic_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count,
-    const double* triangle_edge_nodes);
-/* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
+    const double* triangle_edge_nodes, const double* triangle_cubic_nodes);
+/* phx_mc_verify_cad_trace_fidelity preconditions, checked at entry (refused with
  * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
  * every surface is on a loop; use_patch is the model's loop surface of each
  * use; use_range is the model's use range bitwise, in its sense-directed
@@ -4118,7 +4104,7 @@ typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
   double min_relative_determinant; /* 0; also the P2 relative floor */
-  int32_t geometry_order;          /* 1 or 2 */
+  int32_t geometry_order;          /* 1, 2, or 3; cubic maps require a separate proof. */
   int64_t proximity_count;         /* 0: no proximity controls */
   const phx_mc_cad_proximity_control* proximity_controls;
 } phx_mc_cad_volume_controls;
@@ -4148,6 +4134,7 @@ typedef struct phx_mc_cad_volume_stats {
    * row (validity, relative determinant, construction or a nonrepresentable
    * shape). unmet_cells counts cells with any row. */
   int64_t unmet_shape_rows, unmet_hard_cells;
+  int64_t cubic_ns;  /* Direct cubic node preparation; excludes geometry proof. */
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
@@ -4178,17 +4165,20 @@ typedef struct phx_mc_cad_volume_arrays {
    * makes that target unattainable near the curve for any mesh. */
   int64_t curve_capacity;
   double* curve_rim_wedges;
+  int64_t cubic_node_capacity;
+  double* cubic_nodes;      /* (N3, 3), coordinates not in points. */
+  int64_t* cubic_cell_nodes; /* (M, 16), indices into cubic_nodes; null when N3 = 0. */
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,
                                          const phx_mc_cad_volume_controls* volume,
                                          phx_mc_cad_surface_result** result,
                                          int32_t parallelism);
-/* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits. */
-PHX_MC_API int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
-                                           int64_t sizes[6]);
-PHX_MC_API int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
-                                            const phx_mc_cad_volume_arrays* arrays);
+/* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits, P3 nodes. */
+PHX_MC_API int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result* result,
+                                               int64_t sizes[7]);
+PHX_MC_API int32_t phx_mc_cad_volume_copy_banks(const phx_mc_cad_surface_result* result,
+                                               const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }

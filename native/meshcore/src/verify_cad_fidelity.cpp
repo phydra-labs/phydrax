@@ -7,8 +7,8 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <optional>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 #include "capi_guard.hpp"
@@ -72,6 +72,11 @@ using phx::mc::geometry::next_up;
 
 di::Interval negate(const di::Interval& x) { return {-x.upper, -x.lower}; }
 
+// x / c for an exact positive constant c.
+di::Interval divide_by(const di::Interval& x, double c) {
+  return {next_down(x.lower / c), next_up(x.upper / c)};
+}
+
 // The root P2 interpolant is L + 4 sum_e lambda_a lambda_b delta_e,
 // where delta_e is the actual edge node minus the exact chord midpoint.
 di::Interval edge_departure(double a, double b, double node) {
@@ -112,19 +117,175 @@ struct QuadraticTrace {
   }
 };
 
-double paired_bound(double source_bound, const Leaf& leaf, const QuadraticTrace* trace) {
-  if (trace == nullptr) return source_bound;
-  // Midpoint red refinement preserves the three edge directions. Each
-  // generation halves the reference edge spans and quarters the P2 remainder.
-  const auto remainder = di::multiply(di::point(trace->remainder),
-                                      di::point(std::ldexp(1.0, -2 * leaf.depth)));
-  return di::add(di::point(source_bound), remainder).upper;
+di::IntervalVector cubic_edge_departure(const double* a, const double* b, const double* node) {
+  di::IntervalVector delta;
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto base = di::point(a[axis]);
+    delta[axis] = di::subtract(di::subtract(di::point(node[axis]), base),
+                               divide_by(di::subtract(di::point(b[axis]), base), 3.0));
+  }
+  return delta;
 }
 
-// x / c for an exact positive constant c.
-di::Interval divide_by(const di::Interval& x, double c) {
-  return {next_down(x.lower / c), next_up(x.upper / c)};
+// The two Lagrange shape functions of a directed edge, in order near a
+// then near b. Adding their nodal departures to the affine map also leaves
+// its corner values unchanged.
+void add_cubic_edge_image(double a, double b, const di::IntervalVector* departures,
+                          di::IntervalVector& image) {
+  if (a == 0.0 || b == 0.0) return;
+  const auto common = di::multiply(di::point(4.5 * a), di::point(b));
+  const di::Interval weights[2] = {
+      di::multiply(common, di::point(3.0 * a - 1.0)),
+      di::multiply(common, di::point(3.0 * b - 1.0))};
+  // a and b are dyadic weights of depth at most 24; the point operands
+  // above are exact. Products of three weights need outward rounding.
+  for (int axis = 0; axis < 3; ++axis)
+    for (int node = 0; node < 2; ++node)
+      image[axis] = di::add(image[axis], di::multiply(weights[node], departures[node][axis]));
 }
+
+// The mesh Hessian is affine. Precompute the exact second derivatives of
+// the seven noncorner basis functions at the three reference corners, in
+// (uu, uv, vv) order for u = lambda_1, v = lambda_2.
+constexpr auto cubic_hessian() {
+  std::array<std::array<std::array<double, 7>, 3>, 3> result{};
+  constexpr int du[3] = {-1, 1, 0}, dv[3] = {-1, 0, 1};
+  for (int term = 0; term < 3; ++term) {
+    const int* p = term == 2 ? dv : du;
+    const int* q = term == 0 ? du : dv;
+    for (int corner = 0; corner < 3; ++corner) {
+      auto& h = result[term][corner];
+      for (int edge = 0; edge < 3; ++edge) {
+        const int next = (edge + 1) % 3;
+        for (int end = 0; end < 2; ++end) {
+          const int a = end == 0 ? edge : next, b = end == 0 ? next : edge;
+          h[2 * edge + end] = 4.5 * (
+              (p[a] * q[b] + q[a] * p[b]) * (6 * (corner == a) - 1) +
+              6 * p[a] * q[a] * (corner == b));
+        }
+      }
+      // D_p D_q (27 lambda_0 lambda_1 lambda_2).
+      const int a = (corner + 1) % 3, b = (corner + 2) % 3;
+      h[6] = 27.0 * (p[a] * q[b] + q[a] * p[b]);
+    }
+  }
+  return result;
+}
+
+struct CubicTrace {
+  std::array<di::IntervalVector, 7> departures;
+  double remainder;
+
+  CubicTrace(const double* vertices, const double* nodes) {
+    for (int edge = 0; edge < 3; ++edge) {
+      const double* a = vertices + 3 * edge;
+      const double* b = vertices + 3 * ((edge + 1) % 3);
+      departures[2 * edge] = cubic_edge_departure(a, b, nodes + 6 * edge);
+      departures[2 * edge + 1] = cubic_edge_departure(b, a, nodes + 6 * edge + 3);
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto a = di::point(vertices[axis]);
+      const auto offset = di::add(di::subtract(di::point(vertices[3 + axis]), a),
+                                  di::subtract(di::point(vertices[6 + axis]), a));
+      departures[6][axis] =
+          di::subtract(di::subtract(di::point(nodes[18 + axis]), a), divide_by(offset, 3.0));
+    }
+    remainder = interpolation_remainder();
+  }
+
+  void add_image(const Vertex& vertex, di::IntervalVector& image) const {
+    const double* w = vertex.weight;
+    for (int edge = 0; edge < 3; ++edge)
+      add_cubic_edge_image(w[edge], w[(edge + 1) % 3], departures.data() + 2 * edge, image);
+    if (w[0] == 0.0 || w[1] == 0.0 || w[2] == 0.0) return;
+    const auto weight = di::multiply(di::point(27.0 * w[0]),
+                                     di::multiply(di::point(w[1]), di::point(w[2])));
+    for (int axis = 0; axis < 3; ++axis)
+      image[axis] = di::add(image[axis], di::multiply(weight, departures[6][axis]));
+  }
+
+ private:
+  double interpolation_remainder() const {
+    constexpr auto hessian = cubic_hessian();
+    for (const auto& delta : departures)
+      for (const auto& component : delta)
+        if (!di::finite(component)) return std::numeric_limits<double>::infinity();
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      auto sum = di::point(0.0);
+      for (int term = 0; term < 3; ++term) {
+        double maximum = 0.0;
+        for (const auto& corner : hessian[term]) {
+          auto value = di::point(0.0);
+          for (int node = 0; node < 7; ++node)
+            if (corner[node] != 0.0)
+              value = di::add(value, di::multiply(di::point(corner[node]), departures[node][axis]));
+          if (!di::finite(value)) return std::numeric_limits<double>::infinity();
+          maximum = std::max(maximum, di::magnitude(value));
+        }
+        sum = di::add(sum, di::multiply(di::point(term == 1 ? 2.0 : 1.0), di::point(maximum)));
+      }
+      // Taylor at the query point: the linear terms cancel in the weighted
+      // sum over vertices, and each coordinate variance is at most 1/4
+      // (unit span). Cauchy-Schwarz gives the same bound for the mixed term.
+      magnitude[axis] = di::multiply(di::point(0.125), sum).upper;
+    }
+    return phx::mc::geometry::norm_upper(magnitude);
+  }
+};
+
+struct TraceNodes {
+  const double* quadratic;
+  const double* cubic;
+
+  TraceNodes row(int64_t i) const {
+    return {quadratic == nullptr ? nullptr : quadratic + 9 * i,
+            cubic == nullptr ? nullptr : cubic + 21 * i};
+  }
+};
+
+class Trace {
+ public:
+  Trace() = default;
+
+  Trace(const double* vertices, TraceNodes nodes, bool sliver) {
+    if (nodes.quadratic != nullptr) trace_.emplace<QuadraticTrace>(vertices, nodes.quadratic, sliver);
+    if (nodes.cubic != nullptr) trace_.emplace<CubicTrace>(vertices, nodes.cubic);
+  }
+
+  void add_image(const Vertex& vertex, di::IntervalVector& image) const {
+    if (const auto* quadratic = std::get_if<QuadraticTrace>(&trace_)) {
+      for (int axis = 0; axis < 3; ++axis) image[axis] = quadratic->image(vertex, axis, image[axis]);
+    } else if (const auto* cubic = std::get_if<CubicTrace>(&trace_)) {
+      cubic->add_image(vertex, image);
+    }
+  }
+
+  bool curved() const { return !std::holds_alternative<std::monostate>(trace_); }
+
+  bool valid() const {
+    const auto* cubic = std::get_if<CubicTrace>(&trace_);
+    return cubic == nullptr || std::isfinite(cubic->remainder);
+  }
+
+  double paired_bound(double source_bound, const Leaf& leaf) const {
+    double root;
+    if (const auto* quadratic = std::get_if<QuadraticTrace>(&trace_))
+      root = quadratic->remainder;
+    else if (const auto* cubic = std::get_if<CubicTrace>(&trace_))
+      root = cubic->remainder;
+    else
+      return source_bound;
+    // Red children halve both reference coordinate spans. The Hessian
+    // bounds still hold globally, so the remainder shrinks by four.
+    const auto remainder =
+        di::multiply(di::point(root), di::point(std::ldexp(1.0, -2 * leaf.depth)));
+    return di::add(di::point(source_bound), remainder).upper;
+  }
+
+ private:
+  std::variant<std::monostate, QuadraticTrace, CubicTrace> trace_;
+};
 
 di::Interval square(const di::Interval& x) {
   const double a = std::fabs(x.lower), b = std::fabs(x.upper);
@@ -1302,24 +1463,23 @@ bool clipped_leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& l
   return true;
 }
 
-// For each subdivision leaf L of the original triangle T,
-// S - I_T = (S - I_L) + (I_L - I_T). On a C1 piece, the first term
-// uses the leaf Hessian. A leaf meeting a continuous spline knot with a
-// possible tangent jump takes the piecewise rule of clipped_leaf_bound; when
-// that cannot locate or clip its lines soundly, use
-// |S(x)-I_L S(x)| <= sum_i lambda_i |S(x)-S(v_i)| and bound each difference
-// by the interval Jacobian over the leaf box.
-// The second term is affine and maximized at a leaf vertex, including the
-// mismatch against the stored original triangle. A possible discontinuity
-// is refused: neither the Hessian nor the Jacobian implies a Lipschitz bound.
-// Closed-form faces evaluate their interval formulas; rational spline faces
+// For a leaf, I_L denotes affine interpolation at its vertices. Decompose
+// S - M = (S - I_L S) + I_L(S - M) + (I_L M - M), with S and M paired by
+// reference coordinates. The middle term is bounded at the leaf vertices.
+// The last term is zero for an affine mesh and otherwise charged by Trace.
+// For the first term, use the source leaf Hessian on a C1 piece. At a
+// continuous knot with a possible tangent jump, the affine mesh route can
+// use clipped_leaf_bound; otherwise use
+// |S(x)-I_L S(x)| <= sum_i lambda_i |S(x)-S(v_i)| with the interval Jacobian.
+// A possible discontinuity is refused; neither estimate would be sound.
+// Closed-form faces use their interval formulas; rational spline faces
 // intersect the restricted numerator-net Hessian with the generic one.
 
 // Paired source and mesh point enclosure at a common reference vertex.
 int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vertex& vertex,
                      const di::Interval* point, const double* vertices,
                      IntervalEvaluationWorkspace& workspace, double& error,
-                     const QuadraticTrace* trace = nullptr) {
+                     const Trace& trace = {}) {
   const double lo[2] = {point[0].lower, point[1].lower};
   const double hi[2] = {point[0].upper, point[1].upper};
   di::Interval surface[3];
@@ -1334,7 +1494,7 @@ int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vert
     if (status != PHX_MC_OK) return status;
     for (int axis = 0; axis < 3; ++axis) surface[axis] = {surface_lower[axis], surface_upper[axis]};
   }
-  double magnitude[3];
+  di::IntervalVector image;
   for (int axis = 0; axis < 3; ++axis) {
     auto linear = di::point(0.0);
     for (int i = 0; i < 3; ++i) {
@@ -1345,8 +1505,12 @@ int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vert
                                                      di::point(vertices[3 * i + axis]));
       linear = di::add(linear, term);
     }
-    const auto difference = di::subtract(
-        surface[axis], trace != nullptr ? trace->image(vertex, axis, linear) : linear);
+    image[axis] = linear;
+  }
+  trace.add_image(vertex, image);
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto difference = di::subtract(surface[axis], image[axis]);
     if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
     magnitude[axis] = di::magnitude(difference);
   }
@@ -1360,7 +1524,7 @@ int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vert
 int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& leaf,
                    const double* vertices, const double* uv, const double* corner_error,
                    double tolerance, IntervalEvaluationWorkspace& workspace,
-                   double& vertex_term, double& upper, const QuadraticTrace* trace) {
+                   double& vertex_term, double& upper, const Trace& trace) {
   const int32_t node = kernel.node;
   double box_lower[2] = {std::numeric_limits<double>::infinity(),
                          std::numeric_limits<double>::infinity()};
@@ -1422,9 +1586,9 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
   } else {
     regularity = spline_regularity(geometry, node, box_lower, box_upper, workspace);
     if (regularity == 2) return PHX_MC_UNRESOLVED;
-    // Clipping the source leaf changes the interpolation vertices. The P2
-    // route uses the interval Jacobian fallback on the original leaf instead.
-    if (regularity == 1 && trace == nullptr) {
+    // Clipping the source leaf changes the interpolation vertices. Curved
+    // traces use the interval Jacobian fallback on the original leaf instead.
+    if (regularity == 1 && !trace.curved()) {
       int32_t status = PHX_MC_OK;
       if (clipped_leaf_bound(geometry, node, leaf, vertices, uv, box_lower, box_upper,
                              workspace, status, upper))
@@ -1810,11 +1974,18 @@ void chart_mesh_findings(
       findings.push_back({PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE, -1, -1, row, -1, -1});
 }
 
-// There is one physical quadratic trace per unordered mesh edge. In a
-// collapsed chart row both remaining uses must have that same midpoint.
-void quadratic_trace_findings(
-    int64_t count, const int64_t* triangles, const double* points, const double* edge_nodes,
+// Each unordered physical edge has one trace, with its node sequence reversed
+// when the chart direction reverses. A collapsed cubic row must be the pullback
+// of the surviving edge by lambda_B: at the centroid lambda_B = 1/3, so
+// the centroid is the surviving edge node nearer the repeated vertex A.
+void trace_findings(
+    int64_t count, const int64_t* triangles, const double* points, TraceNodes nodes,
     std::vector<phx_mc_fidelity_finding>& findings) {
+  const int nodes_per_edge = nodes.cubic == nullptr ? 1 : 2;
+  const auto node = [&](int64_t slot, int end) {
+    return nodes.cubic == nullptr ? nodes.quadratic + 3 * slot
+                                  : nodes.cubic + 21 * (slot / 3) + 6 * (slot % 3) + 3 * end;
+  };
   std::vector<std::array<int64_t, 3>> uses;
   uses.reserve(static_cast<std::size_t>(count) * 3);
   constexpr auto point_bytes = 3 * sizeof(double);
@@ -1824,16 +1995,28 @@ void quadratic_trace_findings(
       const int64_t a = triangles[slot], b = triangles[3 * row + (edge + 1) % 3];
       if (a != b) {
         uses.push_back({std::min(a, b), std::max(a, b), slot});
-      } else if (std::memcmp(edge_nodes + 3 * slot, points + 3 * a, point_bytes) != 0) {
-        findings.push_back({PHX_MC_FIDELITY_CHART_MESH_LINK, row, edge, -1, -1, -1});
+      } else {
+        bool matches = true;
+        for (int end = 0; end < nodes_per_edge; ++end)
+          matches &= std::memcmp(node(slot, end), points + 3 * a, point_bytes) == 0;
+        if (nodes_per_edge == 2)
+          matches &= std::memcmp(nodes.cubic + 21 * row + 18,
+                                 node(3 * row + (edge + 2) % 3, 1), point_bytes) == 0;
+        if (!matches)
+          findings.push_back({PHX_MC_FIDELITY_CHART_MESH_LINK, row, edge, -1, -1, -1});
       }
     }
   std::sort(uses.begin(), uses.end());
   for (std::size_t i = 1; i < uses.size(); ++i) {
     const auto& [a, b, slot] = uses[i];
     const auto& [pa, pb, previous] = uses[i - 1];
-    if (a == pa && b == pb &&
-        std::memcmp(edge_nodes + 3 * slot, edge_nodes + 3 * previous, point_bytes) != 0)
+    if (a != pa || b != pb) continue;
+    const bool reversed = nodes_per_edge == 2 && triangles[slot] != triangles[previous];
+    bool matches = true;
+    for (int end = 0; end < nodes_per_edge; ++end)
+      matches &= std::memcmp(node(slot, end), node(previous, reversed ? 1 - end : end),
+                             point_bytes) == 0;
+    if (!matches)
       findings.push_back({PHX_MC_FIDELITY_CHART_MESH_LINK, slot / 3,
                           static_cast<int32_t>(slot % 3), previous / 3,
                           static_cast<int32_t>(previous % 3), -1});
@@ -1843,9 +2026,10 @@ void quadratic_trace_findings(
 // BRep regular coedges share their source edge's parameter range. The
 // chart may lift the UV values by different periods, but does not shift the
 // edge gauge. Bind both ends of every segment in increasing source parameter
-// order, not in the face loop direction. Other parameterizations need an
-// exact gauge map before they can use this proof.
-void quadratic_coedge_findings(
+// order, not in the face loop direction. The physical edge check already
+// binds the intermediate nodes relative to these endpoints. Other source
+// parameterizations need an exact gauge map before they can use this proof.
+void coedge_gauge_findings(
     const phx_mc_cad_model& model, int64_t count, const int64_t* triangles,
     const int64_t* edge_chord, const int64_t* chord_use, const double* chord_range,
     std::vector<phx_mc_fidelity_finding>& findings) {
@@ -2053,9 +2237,10 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
                                         const double* corner_error, double tolerance,
                                         int32_t max_depth, bool tight, const LensIndex* lens,
                                         int32_t face, IntervalEvaluationWorkspace& workspace,
-                                        const QuadraticTrace* trace = nullptr) {
+                                        const Trace& trace = {}) {
   FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
                                 PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  if (!trace.valid()) return result;
   Leaf stack[73];
   stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
   int size = 1;
@@ -2089,7 +2274,7 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
           result.status = PHX_MC_UNRESOLVED;
         return result;
       }
-      bound = paired_bound(bound, leaf, trace);
+      bound = trace.paired_bound(bound, leaf);
       observed = std::max(observed, vertex_term);
       fits = bound <= budget;
     }
@@ -2314,21 +2499,25 @@ bool pole_corners(const pole::SphereFrame& frame, AnchoredTrigonometry& trig, co
   return true;
 }
 
-// |S(x) - sum_i w_i X_i| at a pole-chart leaf vertex, over its enclosure.
+// |S(x) - mesh(x)| at a pole-chart leaf vertex, over its enclosure.
 int32_t pole_vertex_error(const pole::SphereFrame& frame, int sigma, const Vertex& vertex,
                           const di::Interval* point, const double* vertices, double& error,
-                          const QuadraticTrace* trace) {
+                          const Trace& trace) {
   di::Interval jets[4][3];
   if (!pole::jets(frame, sigma, point[0], point[1], 0, 0, jets)) return PHX_MC_UNRESOLVED;
-  double magnitude[3];
+  di::IntervalVector image;
   for (int axis = 0; axis < 3; ++axis) {
     auto linear = di::point(0.0);
     for (int i = 0; i < 3; ++i)
       if (vertex.weight[i] != 0.0)
         linear = di::add(linear, di::multiply(di::point(vertex.weight[i]),
                                               di::point(vertices[3 * i + axis])));
-    const auto difference = di::subtract(
-        jets[0][axis], trace != nullptr ? trace->image(vertex, axis, linear) : linear);
+    image[axis] = linear;
+  }
+  trace.add_image(vertex, image);
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto difference = di::subtract(jets[0][axis], image[axis]);
     if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
     magnitude[axis] = di::magnitude(difference);
   }
@@ -2336,12 +2525,11 @@ int32_t pole_vertex_error(const pole::SphereFrame& frame, int sigma, const Verte
   return std::isfinite(error) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
-// leaf_bound in the pole chart: S - I_L by the Taylor remainder of the
-// pole-chart Hessian over the leaf box (offsets from the box center), plus
-// the affine I_L - I_T, maximal at a leaf vertex.
+// The source interpolation remainder and vertex mismatch, as in leaf_bound
+// but using the pole-chart Hessian. The caller adds the mesh remainder.
 int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& leaf,
                         const double* vertices, const double* xy, double& vertex_term,
-                        double& upper, const QuadraticTrace* trace) {
+                        double& upper, const Trace& trace) {
   double box_lower[2] = {std::numeric_limits<double>::infinity(),
                          std::numeric_limits<double>::infinity()};
   double box_upper[2] = {-std::numeric_limits<double>::infinity(),
@@ -2386,16 +2574,17 @@ int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& l
   return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
-// sup over the pole-chart triangle of |S - I_T| (the same subdivision as
-// subdivided_bound, without lens charges: the seam charge is the caller's).
+// Bound |S - M| over the shared reference triangle, using the pole chart.
+// This is subdivided_bound without lens charges (the caller charges seams).
 // `tight` (a pole sliver, two corners at the origin): subdivided_bound's
 // tight mode, refining toward the sampled maximum.
 FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int sigma,
                                              const double* vertices, const double* xy,
                                              double tolerance, int32_t max_depth, bool tight,
-                                             const QuadraticTrace* trace = nullptr) {
+                                             const Trace& trace = {}) {
   FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
                                 PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  if (!trace.valid()) return result;
   Leaf stack[73];
   stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
   int size = 1;
@@ -2405,7 +2594,7 @@ FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int
     double bound = 0.0, vertex_term = 0.0;
     result.status = pole_leaf_bound(frame, sigma, leaf, vertices, xy, vertex_term, bound, trace);
     if (result.status != PHX_MC_OK) return result;
-    bound = paired_bound(bound, leaf, trace);
+    bound = trace.paired_bound(bound, leaf);
     observed = std::max(observed, vertex_term);
     const bool fits = bound <= tolerance;
     if (fits && (!tight || bound <= kTightRatio * observed || leaf.depth >= kTightDepth ||
@@ -2436,7 +2625,7 @@ FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int
 // Seam lens of one boundary edge e of a pole region (see PoleRegion), from
 // chart corner a to b: gamma(t) = (1 - t) uv_a + t uv_b is the uv-straight
 // edge, P(gamma(t)) its pole-chart image, Phi(t) = (1 - t) c_a + t c_b the
-// pole-chart-straight edge and L(t) = (1 - t) X_a + t X_b the mesh edge. The
+// pole-chart-straight edge and L(t) the directed physical mesh edge trace. The
 // lens is the straight homotopy H(t, s) = (1 - s) P(gamma(t)) + s Phi(t) in
 // the pole chart, where S is smooth. With f(s) = S(H(t, s)) - L(t):
 // f(0) = S(gamma(t)) - L(t) (S_xy o P = S_uv), f(1) = S_xy(Phi(t)) - L(t)
@@ -2445,7 +2634,7 @@ FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int
 //   |S(H(t, s)) - L(t)| <= max(A, B) + |D^2 S_xy| W^2 / 8 =: cap,
 // A = sup_t |S_uv(gamma) - L|, B = sup_t |S_xy(Phi) - L| (each over
 // kSeamPieces equal pieces: the larger endpoint value plus dt^2 / 8 sup
-// |D^2 S [delta, delta]| over the piece's box), W >= sup |Delta|: the
+// |D^2 S [delta, delta] - L''| over the piece), W >= sup |Delta|: the
 // endpoint mismatch |c - P(uv)| (image enclosures) plus the chord sag
 // (1/8) sup |(P o gamma)''| with |(P o gamma)''|^2 = rho^2 du^4 +
 // 4 drho^2 du^2 (rho and u affine in t), and |D^2 S_xy [Delta, Delta]| <=
@@ -2458,19 +2647,49 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
                      int32_t node, const pole::SphereFrame& frame, int sigma,
                      const double* uv_a, const double* uv_b, const double* c_a,
                      const double* c_b, const double* x_a, const double* x_b, double& cap,
-                     double* edges = nullptr, const double* midpoint_node = nullptr) {
+                     double* edges = nullptr, TraceNodes edge_nodes = {nullptr, nullptr}) {
   AnchoredTrigonometry trig;
   const di::Interval dt = di::point(1.0 / kSeamPieces);
   const di::Interval eighth = di::point(0.125);
   di::IntervalVector departures{};
-  if (midpoint_node != nullptr)
+  if (edge_nodes.quadratic != nullptr)
     for (int axis = 0; axis < 3; ++axis)
-      departures[axis] = edge_departure(x_a[axis], x_b[axis], midpoint_node[axis]);
-  const auto mesh_edge = [&](double t, int axis) {
-    const auto linear = di::add(di::point(x_a[axis]), di::multiply(
-        di::point(t), di::subtract(di::point(x_b[axis]), di::point(x_a[axis]))));
-    if (midpoint_node == nullptr || t == 0.0 || t == 1.0) return linear;
-    return di::add(linear, di::multiply(di::point(4.0 * t * (1.0 - t)), departures[axis]));
+      departures[axis] = edge_departure(x_a[axis], x_b[axis], edge_nodes.quadratic[axis]);
+  const bool cubic_edge = edge_nodes.cubic != nullptr;
+  std::array<di::IntervalVector, 2> cubic;
+  double cubic_curvature[kSeamPieces][3];
+  if (cubic_edge) {
+    cubic[0] = cubic_edge_departure(x_a, x_b, edge_nodes.cubic);
+    cubic[1] = cubic_edge_departure(x_b, x_a, edge_nodes.cubic + 3);
+    for (const auto& node : cubic)
+      for (const auto& delta : node)
+        if (!di::finite(delta)) return false;
+    // The two edge basis second derivatives are -45 + 81t and 36 - 81t.
+    // The mesh second derivative is affine, so a piece needs only its ends.
+    double previous[3];
+    for (int k = 0; k <= kSeamPieces; ++k) {
+      const double z = 81.0 * (static_cast<double>(k) / kSeamPieces);
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto second = di::add(di::multiply(di::point(z - 45.0), cubic[0][axis]),
+                                    di::multiply(di::point(36.0 - z), cubic[1][axis]));
+        if (!di::finite(second)) return false;
+        const double magnitude = di::magnitude(second);
+        if (k != 0) cubic_curvature[k - 1][axis] = std::max(previous[axis], magnitude);
+        previous[axis] = magnitude;
+      }
+    }
+  }
+  const auto mesh_edge = [&](double t) {
+    di::IntervalVector image;
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto linear = di::add(di::point(x_a[axis]), di::multiply(
+          di::point(t), di::subtract(di::point(x_b[axis]), di::point(x_a[axis]))));
+      image[axis] = edge_nodes.quadratic == nullptr || t == 0.0 || t == 1.0
+          ? linear
+          : di::add(linear, di::multiply(di::point(4.0 * t * (1.0 - t)), departures[axis]));
+    }
+    if (cubic_edge) add_cubic_edge_image(1.0 - t, t, cubic.data(), image);
+    return image;
   };
   const auto along = [&](const double* a, const double* b, double t, int axis) {
     return di::add(di::point(a[axis]),
@@ -2500,8 +2719,9 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
         if (!pole::jets(frame, sigma, points[k][0], points[k][1], 0, 0, jets)) return false;
         for (int axis = 0; axis < 3; ++axis) surface[axis] = jets[0][axis];
       }
+      const auto image = mesh_edge(t);
       for (int axis = 0; axis < 3; ++axis) {
-        const auto difference = di::subtract(surface[axis], mesh_edge(t, axis));
+        const auto difference = di::subtract(surface[axis], image[axis]);
         if (!di::finite(difference)) return false;
         error[k][axis] = di::magnitude(difference);
       }
@@ -2545,9 +2765,11 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
         const auto mixed = di::multiply(h1, di::multiply(d0, d1));
         curvature = di::add(curvature, di::add(mixed, mixed));
         curvature = di::add(curvature, di::multiply(h2, di::multiply(d1, d1)));
-        if (midpoint_node != nullptr)
+        if (edge_nodes.quadratic != nullptr)
           curvature = di::add(curvature, di::multiply(
               di::point(8.0), di::point(di::magnitude(departures[axis]))));
+        if (cubic_edge)
+          curvature = di::add(curvature, di::point(cubic_curvature[k][axis]));
         const auto remainder = di::multiply(eighth, di::multiply(curvature, di::multiply(dt, dt)));
         magnitude[axis] =
             di::add(di::point(std::max(error[k][axis], error[k + 1][axis])), remainder).upper;
@@ -2640,9 +2862,9 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // the region's corners, and P is injective on the strip for every 0 < rho.
 //
 // Contract (MAC bc1b665 option (i), seam lens charge). For R's rows the
-// linear map is taken on the pole-chart corners (pole_corners), Phi on each
-// uv triangle the affine map onto its pole-chart triangle; Phi is continuous
-// on R (shared chart corners share their pole-chart points). Each boundary
+// mesh trace is paired by reference coordinates with the pole-chart corners
+// (pole_corners). Phi is affine on each uv triangle and continuous on R
+// (shared chart corners share their pole-chart points). Each boundary
 // edge of R (an edge no other row of R shares bitwise: edges shared with a
 // uv row, seam and pole chord edges) carries a seam lens with cap c_e
 // (seam_lens_bound), charged to both adjacent rows (row bound := max(bound,
@@ -2650,9 +2872,10 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // boundary of R are homotopic through the lenses, so off the lenses
 // deg(Phi, R, z) = deg(P, R, z) != 0 (P is injective with one Jacobian sign
 // on the open strip), so z lies in some row's pole-chart triangle and S(x)
-// is within that row's bound of the mesh; on a lens S(x) is within c_e of
-// the mesh edge. Mesh -> surface: a pole row's mesh point I(z) is within its
-// bound of S_xy(z) with |z| <= rho_strip; the face holds the whole strip
+// is within that row's bound of the mesh trace at a preimage of z under Phi;
+// on a lens S(x) is within c_e of the mesh edge. Mesh -> surface: each mesh
+// point is paired with a pole-chart point z with |z| <= rho_strip. The face
+// holds the whole strip
 // {u in [u_min, u_max], rho <= rho_strip} (every chord of the face meeting
 // it is a pole chord or a seam chord at u_min or u_max, checked exactly;
 // the polygon/trim difference is the trim lens, charged over the strip's uv
@@ -2916,7 +3139,7 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
                         const std::vector<PoleRegion>& regions, const std::vector<FaceKernel>& kernels,
                         int64_t triangle_count, const int64_t* triangles,
                         const int32_t* face_rows, const double* uv, const double* points,
-                        const double* triangle_edge_nodes,
+                        TraceNodes trace_nodes,
                         const std::vector<int32_t>& row_region, const LensIndex& lens,
                         double tolerance, int32_t max_depth, std::vector<double>& row_upper,
                         std::vector<int32_t>& row_status, std::vector<int32_t>& row_reason,
@@ -2972,13 +3195,10 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
       }
       const int32_t mask = region.masks[k];
       const bool sliver = mask == 3 || mask == 5 || mask == 6;
-      std::optional<QuadraticTrace> trace;
-      if (triangle_edge_nodes != nullptr)
-        trace.emplace(vertices, triangle_edge_nodes + 9 * row, sliver);
+      const Trace trace(vertices, trace_nodes.row(row), sliver);
       const auto result = pole_subdivided_bound(
           frame, region.sigma, vertices, region.corners[k].data(),
-          di::subtract(di::point(tolerance), di::point(fixed)).lower, max_depth, sliver,
-          trace ? &*trace : nullptr);
+          di::subtract(di::point(tolerance), di::point(fixed)).lower, max_depth, sliver, trace);
       row_splits[static_cast<std::size_t>(row)] = result.subdivisions;
       if (result.status != PHX_MC_OK) {
         refuse(row, result.reason);
@@ -3017,12 +3237,13 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
       const int64_t row = region.rows[k];
       const double* corners = region.corners[k].data();
       double cap = std::numeric_limits<double>::infinity();
+      const auto nodes = trace_nodes.row(row);
       if (!seam_lens_bound(geometry, workspace, node, frame, region.sigma, uv + 6 * row + 2 * a,
                            uv + 6 * row + 2 * b, corners + 2 * a, corners + 2 * b,
                            points + 3 * triangles[3 * row + a],
                            points + 3 * triangles[3 * row + b], cap, nullptr,
-                           triangle_edge_nodes == nullptr
-                               ? nullptr : triangle_edge_nodes + 9 * row + 3 * a))
+                           {nodes.quadratic == nullptr ? nullptr : nodes.quadratic + 3 * a,
+                            nodes.cubic == nullptr ? nullptr : nodes.cubic + 6 * a}))
         cap = std::numeric_limits<double>::infinity();
       // The edge's own trim lens (a ring chord whose p-curve leaves the
       // chord): a face point beyond it is within that lens cap of a chord
@@ -3121,7 +3342,7 @@ int32_t fidelity_seam_lens(const CadGeometry& geometry, int32_t face,
   pole::SphereFrame frame;
   if (!pole_sphere_frame(geometry, workspace, node, frame) ||
       !seam_lens_bound(geometry, workspace, node, frame, pole_side, uv_a, uv_b, c_a, c_b, x_a, x_b,
-                       out[0], out + 1, midpoint_node))
+                       out[0], out + 1, {midpoint_node, nullptr}))
     return PHX_MC_UNRESOLVED;
   return PHX_MC_OK;
 }
@@ -3221,7 +3442,7 @@ int32_t fidelity_net_hessian(const CadGeometry& geometry, int32_t face,
 }
 }  // namespace phx::mc::cad
 
-static int32_t verify_cad_fidelity(
+extern "C" int32_t phx_mc_verify_cad_trace_fidelity(
     const phx_mc_cad_model* model, int64_t coefficient_count,
     const double* coefficient_lower, const double* coefficient_upper,
     int64_t point_count, const double* points, int64_t triangle_count,
@@ -3234,12 +3455,14 @@ static int32_t verify_cad_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count,
-    const double* triangle_edge_nodes) {
+    const double* triangle_edge_nodes, const double* triangle_cubic_nodes) {
   return phx::mc::guarded([&]() -> int32_t {
     if (model == nullptr || !phx::mc::addressable(point_count, 3, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 6, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 3, sizeof(int64_t)) ||
         (triangle_edge_nodes && !phx::mc::addressable(triangle_count, 9, sizeof(double))) ||
+        (triangle_cubic_nodes && !phx::mc::addressable(triangle_count, 21, sizeof(double))) ||
+        (triangle_edge_nodes && triangle_cubic_nodes) ||
         !phx::mc::addressable(mesh_triangle_count, 3, sizeof(int64_t)) ||
         !phx::mc::addressable(use_count, 2, sizeof(double)) ||
         !phx::mc::addressable(chord_count, 4, sizeof(double)) || loop_count < 0 ||
@@ -3301,6 +3524,9 @@ static int32_t verify_cad_fidelity(
     if (triangle_edge_nodes != nullptr)
       for (int64_t i = 0; i < 9 * triangle_count; ++i)
         if (!std::isfinite(triangle_edge_nodes[i])) return PHX_MC_NONFINITE_INPUT;
+    if (triangle_cubic_nodes != nullptr)
+      for (int64_t i = 0; i < 21 * triangle_count; ++i)
+        if (!std::isfinite(triangle_cubic_nodes[i])) return PHX_MC_NONFINITE_INPUT;
     // V4's use coverage, loop closure and orientation are this verifier's
     // precondition, checked here: the caller's use and loop rows are bound
     // to the model (patch from loop_surfaces, chord loop from
@@ -3349,18 +3575,19 @@ static int32_t verify_cad_fidelity(
                                         failures);
       if (!failures.empty()) return PHX_MC_INVALID_INPUT;
     }
+    const phx::mc::cad::TraceNodes trace_nodes{triangle_edge_nodes, triangle_cubic_nodes};
+    const bool curved = triangle_edge_nodes != nullptr || triangle_cubic_nodes != nullptr;
     auto findings = phx::mc::cad::association_findings(
         triangle_count, face_rows, uv, chord_count, chord_use, use_patch, chord_uv, edge_chord,
-        triangle_edge_nodes == nullptr ? nullptr : triangles);
+        curved ? triangles : nullptr);
     std::vector<int32_t> pole_edges(static_cast<std::size_t>(triangle_count), -1);
     phx::mc::cad::chart_mesh_findings(*model, triangle_count, triangles,
                                      mesh_triangle_count, mesh_triangles, chart_to_mesh,
                                      edge_chord, chord_use, pole_edges, findings);
-    if (triangle_edge_nodes != nullptr && findings.empty())
-      phx::mc::cad::quadratic_trace_findings(
-          triangle_count, triangles, points, triangle_edge_nodes, findings);
-    if (triangle_edge_nodes != nullptr && findings.empty())
-      phx::mc::cad::quadratic_coedge_findings(
+    if (curved && findings.empty())
+      phx::mc::cad::trace_findings(triangle_count, triangles, points, trace_nodes, findings);
+    if (curved && findings.empty())
+      phx::mc::cad::coedge_gauge_findings(
           *model, triangle_count, triangles, edge_chord, chord_use, chord_range, findings);
     *evidence_count = static_cast<int64_t>(findings.size());
     if (*evidence_count > evidence_capacity) return PHX_MC_CAPACITY_EXCEEDED;
@@ -3443,12 +3670,10 @@ static int32_t verify_cad_fidelity(
         row_splits[row] = 0;
         continue;
       }
-      // A pole sliver is the chart triangle of a collapsed side: its two pole
-      // corners carry the same mesh vertex, and S - I_T on the chart triangle
-      // takes the same interpolation theorem as every other row (S is smooth
-      // on the chart, the collapse only makes I_T degenerate). I_T lies on
-      // the mesh edge from the pole to the third vertex. Tight mode refines
-      // it toward its sampled maximum.
+      // A sliver's repeated pole corner collapses its trace onto the physical
+      // edge joining that pole to the remaining vertex. The paired bound
+      // still applies on the full reference triangle; tight mode refines
+      // toward the sampled maximum.
       const int pole_edge = pole_edges[static_cast<std::size_t>(i)];
       auto& kernel = kernels[static_cast<std::size_t>(face_rows[i])];
       if (!kernel.prepared) phx::mc::cad::prepare_face_kernel(geometry, face_rows[i], workspace, kernel);
@@ -3470,13 +3695,10 @@ static int32_t verify_cad_fidelity(
                                                    workspace, corner_error[j]) == PHX_MC_OK;
         if (corners_known) cached = {point_uv[0], point_uv[1], corner_error[j], face_rows[i]};
       }
-      std::optional<phx::mc::cad::QuadraticTrace> trace;
-      if (triangle_edge_nodes != nullptr)
-        trace.emplace(vertices, triangle_edge_nodes + 9 * i, pole_edge >= 0);
+      const phx::mc::cad::Trace trace(vertices, trace_nodes.row(i), pole_edge >= 0);
       const auto result = phx::mc::cad::subdivided_bound(
           geometry, kernel, vertices, uv + 6 * i, corners_known ? corner_error : nullptr,
-          tolerance, max_depth, pole_edge >= 0, &lens_index, face_rows[i], workspace,
-          trace ? &*trace : nullptr);
+          tolerance, max_depth, pole_edge >= 0, &lens_index, face_rows[i], workspace, trace);
       if (result.status != PHX_MC_OK && result.status != PHX_MC_UNRESOLVED)
         return result.status;
       row_upper[row] = result.upper;
@@ -3485,7 +3707,7 @@ static int32_t verify_cad_fidelity(
       row_splits[row] = result.subdivisions;
     }
     phx::mc::cad::pole_region_bounds(geometry, workspace, regions, kernels, triangle_count,
-                                     triangles, face_rows, uv, points, triangle_edge_nodes,
+                                     triangles, face_rows, uv, points, trace_nodes,
                                      row_region, lens_index, tolerance, max_depth,
                                      row_upper, row_status, row_reason, row_splits);
     int32_t aggregate = PHX_MC_OK;
@@ -3502,50 +3724,4 @@ static int32_t verify_cad_fidelity(
     *maximum_upper = aggregate == PHX_MC_OK ? maximum : std::numeric_limits<double>::infinity();
     return aggregate;
   });
-}
-
-extern "C" int32_t phx_mc_verify_cad_fidelity(
-    const phx_mc_cad_model* model, int64_t coefficient_count,
-    const double* coefficient_lower, const double* coefficient_upper,
-    int64_t point_count, const double* points, int64_t triangle_count,
-    const int64_t* triangles, const int32_t* face_rows, const double* uv,
-    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
-    int64_t use_count, const int64_t* use_patch, const double* use_range,
-    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
-    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
-    const int64_t* edge_chord, double tolerance, int32_t max_depth,
-    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
-    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
-    phx_mc_fidelity_finding* evidence, int64_t* evidence_count) {
-  return verify_cad_fidelity(
-      model, coefficient_count, coefficient_lower, coefficient_upper, point_count,
-      points, triangle_count, triangles, face_rows, uv, mesh_triangle_count, mesh_triangles,
-      chart_to_mesh, use_count, use_patch, use_range, loop_count, chord_count, chord_use,
-      chord_loop, chord_uv, chord_range, edge_chord, tolerance, max_depth, output_capacity,
-      upper, item_status, reasons, subdivisions, maximum_upper, evidence_capacity,
-      evidence, evidence_count, nullptr);
-}
-
-extern "C" int32_t phx_mc_verify_cad_quadratic_fidelity(
-    const phx_mc_cad_model* model, int64_t coefficient_count,
-    const double* coefficient_lower, const double* coefficient_upper,
-    int64_t point_count, const double* points, int64_t triangle_count,
-    const int64_t* triangles, const int32_t* face_rows, const double* uv,
-    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
-    int64_t use_count, const int64_t* use_patch, const double* use_range,
-    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
-    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
-    const int64_t* edge_chord, double tolerance, int32_t max_depth,
-    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
-    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
-    phx_mc_fidelity_finding* evidence, int64_t* evidence_count,
-    const double* triangle_edge_nodes) {
-  if (triangle_count != 0 && triangle_edge_nodes == nullptr) return PHX_MC_INVALID_ARGUMENT;
-  return verify_cad_fidelity(
-      model, coefficient_count, coefficient_lower, coefficient_upper, point_count,
-      points, triangle_count, triangles, face_rows, uv, mesh_triangle_count, mesh_triangles,
-      chart_to_mesh, use_count, use_patch, use_range, loop_count, chord_count, chord_use,
-      chord_loop, chord_uv, chord_range, edge_chord, tolerance, max_depth, output_capacity,
-      upper, item_status, reasons, subdivisions, maximum_upper, evidence_capacity,
-      evidence, evidence_count, triangle_edge_nodes);
 }

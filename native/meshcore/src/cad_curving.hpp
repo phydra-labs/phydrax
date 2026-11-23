@@ -1,7 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// P2 curving from stored parameters (S2 design B.8): one quadratic node per
-// tet edge from the face stage's curve parameters and triangle UV records,
-// certified by the Bernstein validity of the Jacobian, with local repair.
+// Curving from stored curve parameters and triangle UV records. P2 has a
+// native Bernstein validity and repair step; P3 only prepares the nodes.
 #pragma once
 
 #include <array>
@@ -51,5 +50,15 @@ struct CadQuadraticMesh {
 
 int32_t cad_quadratic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInput& input,
                             CadQuadraticMesh& result);
+
+struct CadCubicMesh {
+  std::vector<std::array<double, 3>> nodes;
+  // IDs in nodes (not the vertex bank): two per edge 01, 02, 03, 12, 13, 23
+  // in local endpoint order, then one per face opposite corners 0, 1, 2, 3.
+  std::vector<std::array<int64_t, 16>> cell_nodes;
+};
+
+int32_t cad_cubic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInput& input,
+                        CadCubicMesh& result);
 
 }  // namespace phx::mc

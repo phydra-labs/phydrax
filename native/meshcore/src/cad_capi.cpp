@@ -250,7 +250,7 @@ extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
     if (!model || !controls || !volume || !result) return PHX_MC_INVALID_ARGUMENT;
     *result = nullptr;
     if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
-    if (volume->geometry_order != 1 && volume->geometry_order != 2)
+    if (volume->geometry_order < 1 || volume->geometry_order > 3)
       return PHX_MC_INVALID_ARGUMENT;
     phx::mc::cad::CadGeometry geometry;
     const int32_t bound = geometry.bind(*model);
@@ -300,8 +300,8 @@ extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
   });
 }
 
-extern "C" int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
-                                             int64_t sizes[6]) {
+extern "C" int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result* result,
+                                               int64_t sizes[7]) {
   if (!result || !sizes) return PHX_MC_INVALID_ARGUMENT;
   const auto& v = result->volume;
   sizes[0] = static_cast<int64_t>(v.points.size());
@@ -310,33 +310,37 @@ extern "C" int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* resu
   sizes[3] = static_cast<int64_t>(v.quadratic.edges.size());
   sizes[4] = static_cast<int64_t>(v.quadratic.straightened.size());
   sizes[5] = static_cast<int64_t>(v.splits.size());
+  sizes[6] = static_cast<int64_t>(v.cubic.nodes.size());
   return PHX_MC_OK;
 }
 
-extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
-                                              const phx_mc_cad_volume_arrays* a) {
+extern "C" int32_t phx_mc_cad_volume_copy_banks(const phx_mc_cad_surface_result* result,
+                                                const phx_mc_cad_volume_arrays* a) {
   if (!result || !a) return PHX_MC_INVALID_ARGUMENT;
   const auto& v = result->volume;
   const auto& q = v.quadratic;
   const std::size_t np = v.points.size(), nt = v.tetrahedra.size(), nb = v.boundary_faces.size(),
                     ne = q.edges.size(), nr = q.straightened.size(), ns = v.splits.size();
   const std::size_t nc = ne ? nt : 0;
+  const auto n3 = v.cubic.nodes.size(), c3 = v.cubic.cell_nodes.size();
   if (a->point_capacity < 0 || a->tetrahedron_capacity < 0 || a->triangle_capacity < 0 ||
-      a->edge_capacity < 0 || a->record_capacity < 0 || a->split_capacity < 0)
+      a->edge_capacity < 0 || a->record_capacity < 0 || a->split_capacity < 0 ||
+      a->cubic_node_capacity < 0)
     return PHX_MC_INVALID_ARGUMENT;
   if (static_cast<uint64_t>(a->point_capacity) < np ||
       static_cast<uint64_t>(a->tetrahedron_capacity) < nt ||
       static_cast<uint64_t>(a->triangle_capacity) < nb ||
       static_cast<uint64_t>(a->edge_capacity) < ne ||
       static_cast<uint64_t>(a->record_capacity) < nr ||
-      static_cast<uint64_t>(a->split_capacity) < ns)
+      static_cast<uint64_t>(a->split_capacity) < ns ||
+      static_cast<uint64_t>(a->cubic_node_capacity) < n3)
     return PHX_MC_CAPACITY_EXCEEDED;
   if (!present(a->points, np) || !present(a->tetrahedra, nt) ||
       !present(a->tetrahedron_regions, nt) || !present(a->boundary_faces, nb) ||
       !present(a->edges, ne) || !present(a->nodes, ne) || !present(a->edge_kinds, ne) ||
       !present(a->edge_entities, ne) || !present(a->cell_edges, nc) ||
       !present(a->cell_decisions, nc) || !present(a->records, nr) || !present(a->splits, ns) ||
-      !a->stats)
+      !present(a->cubic_nodes, n3) || !present(a->cubic_cell_nodes, c3) || !a->stats)
     return PHX_MC_INVALID_ARGUMENT;
   copy_flat(v.points, a->points); copy_flat(v.tetrahedra, a->tetrahedra);
   copy_rows(v.regions, a->tetrahedron_regions); copy_flat(v.boundary_faces, a->boundary_faces);
@@ -347,6 +351,8 @@ extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* res
     copy_rows(q.cell_decisions, a->cell_decisions);
   }
   copy_flat(q.straightened, a->records); copy_rows(v.splits, a->splits);
+  copy_flat(v.cubic.nodes, a->cubic_nodes);
+  copy_flat(v.cubic.cell_nodes, a->cubic_cell_nodes);
   *a->stats = v.stats;
   // Optional: curve_rim_wedges null skips them.
   if (a->curve_rim_wedges) {

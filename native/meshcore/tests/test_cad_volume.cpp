@@ -148,10 +148,12 @@ phx_mc_cad_model quadric_model() {
 struct Solid {
   int32_t status = -1;
   std::vector<double> points, nodes, uv, surface_points;
+  std::vector<double> cubic_nodes;
   std::vector<int32_t> tetrahedra, regions, boundary, edges, entities, decisions, triangles,
       patches;
   std::vector<int8_t> kinds;
   std::vector<int64_t> cell_edges, records;
+  std::vector<int64_t> cubic_cell_nodes;
   std::vector<phx_mc_cad_boundary_split> splits;
   phx_mc_cad_volume_stats stats{};
 };
@@ -170,9 +172,9 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
   s.status = phx_mc_cad_mesh_volume(&model, &controls, &volume, &handle, 1);
   PHX_CHECK(handle != nullptr);
   if (!handle) return s;
-  int64_t n[9]{}, m[6]{};
+  int64_t n[9]{}, m[7]{};
   PHX_CHECK(phx_mc_cad_surface_result_sizes(handle, n) == PHX_MC_OK);
-  PHX_CHECK(phx_mc_cad_volume_sizes(handle, m) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_cad_volume_bank_sizes(handle, m) == PHX_MC_OK);
   const auto z = [](int64_t v) { return static_cast<std::size_t>(v); };
   // The surface rows the volume refers to.
   std::vector<double> parameters(2 * z(n[0])), sliver_uv(6 * z(n[2])), edge_parameters(2 * z(n[3])),
@@ -209,15 +211,18 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
   s.decisions.resize(m[3] ? z(m[1]) : 0);
   s.records.resize(2 * z(m[4]));
   s.splits.resize(z(m[5]));
+  s.cubic_nodes.resize(3 * z(m[6]));
+  s.cubic_cell_nodes.resize(m[6] ? 16 * z(m[1]) : 0);
   const phx_mc_cad_volume_arrays out{
       m[0], m[1], m[2], m[3], m[4], m[5], s.points.data(), s.tetrahedra.data(), s.regions.data(),
       s.boundary.data(), s.edges.data(), s.nodes.data(), s.kinds.data(), s.entities.data(),
       s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats,
-      0, nullptr};  // curve_rim_wedges skipped (optional)
-  PHX_CHECK(phx_mc_cad_volume_export(handle, &out) == PHX_MC_OK);
+      0, nullptr, m[6], s.cubic_nodes.data(), s.cubic_cell_nodes.data()};
+  PHX_CHECK(phx_mc_cad_volume_copy_banks(handle, &out) == PHX_MC_OK);
   phx_mc_cad_volume_arrays small = out;
   small.point_capacity = m[0] - 1;
-  if (m[0] > 0) PHX_CHECK(phx_mc_cad_volume_export(handle, &small) == PHX_MC_CAPACITY_EXCEEDED);
+  if (m[0] > 0)
+    PHX_CHECK(phx_mc_cad_volume_copy_banks(handle, &small) == PHX_MC_CAPACITY_EXCEEDED);
   phx_mc_cad_surface_result_free(handle);
   return s;
 }
@@ -316,6 +321,25 @@ void solid_case(const char* name, const phx_mc_cad_model& model, double size, On
   const Solid linear = solid(model, size, 1);
   PHX_CHECK(linear.tetrahedra == first.tetrahedra && linear.edges.empty() &&
             linear.decisions.empty());
+}
+
+void cubic_sphere_exports_curved_boundary_face_nodes(const phx_mc_cad_model& model) {
+  const Solid mesh = solid(model, 0.3, 3);
+  PHX_CHECK(mesh.status == PHX_MC_OK);
+  if (mesh.status != PHX_MC_OK) return;
+  PHX_CHECK(!mesh.tetrahedra.empty() && !mesh.triangles.empty());
+  PHX_CHECK(mesh.cubic_cell_nodes.size() == 4 * mesh.tetrahedra.size());
+  if (mesh.cubic_cell_nodes.size() != 4 * mesh.tetrahedra.size()) return;
+  for (std::size_t row = 0; row < mesh.boundary.size() / 2; ++row) {
+    const int32_t cell = mesh.boundary[2 * row], local = mesh.boundary[2 * row + 1];
+    const auto slot = 16 * static_cast<std::size_t>(cell) + 12 + local;
+    PHX_CHECK(slot < mesh.cubic_cell_nodes.size());
+    if (slot >= mesh.cubic_cell_nodes.size()) continue;
+    const auto node = static_cast<std::size_t>(mesh.cubic_cell_nodes[slot]);
+    PHX_CHECK(node < mesh.cubic_nodes.size() / 3);
+    if (node >= mesh.cubic_nodes.size() / 3) continue;
+    PHX_CHECK(on_sphere(mesh.cubic_nodes.data() + 3 * node));
+  }
 }
 
 // The boundary-split retry: the first recovery is refused as if it needed a
@@ -472,7 +496,7 @@ void refusals() {
                                              std::numeric_limits<double>::infinity());
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
-  const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 3};
+  const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 4};
   phx_mc_cad_surface_result* handle = reinterpret_cast<phx_mc_cad_surface_result*>(&handle);
   PHX_CHECK(phx_mc_cad_mesh_volume(&model, &controls, &bad, &handle, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
@@ -481,9 +505,9 @@ void refusals() {
   PHX_CHECK(phx_mc_cad_mesh_volume(&model, &controls, &linear, &handle, 0) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
-  int64_t sizes_out[6];
-  PHX_CHECK(phx_mc_cad_volume_sizes(nullptr, sizes_out) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_cad_volume_export(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  int64_t sizes_out[7];
+  PHX_CHECK(phx_mc_cad_volume_bank_sizes(nullptr, sizes_out) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_cad_volume_copy_banks(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // The proximity field over two parallel unit squares 0.25 apart (face 0 at
@@ -558,6 +582,7 @@ int main() {
   const phx_mc_cad_model quadric = quadric_model();
   solid_case("sphere", sphere_model, 0.3, on_sphere);
   solid_case("quadric", quadric, 0.2293, on_quadric);
+  cubic_sphere_exports_curved_boundary_face_nodes(sphere_model);
   forced_split("sphere curve split", sphere_model, 0.3, true, on_sphere);
   forced_split("quadric face split", quadric, 0.2293, false, on_quadric);
   forced_split("quadric curve split", quadric, 0.2293, true, on_quadric);

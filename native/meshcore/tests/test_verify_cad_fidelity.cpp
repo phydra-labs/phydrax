@@ -119,7 +119,7 @@ void add_chart(std::vector<double>& reals, std::array<double, 4> start, std::arr
   reals.insert(reals.end(), preconditioner.begin(), preconditioner.end());
 }
 
-// Chart and chord rows of phx_mc_verify_cad_fidelity.
+// Chart and chord rows of phx_mc_verify_cad_trace_fidelity.
 struct Mesh {
   std::vector<double> points;
   std::vector<int64_t> triangles;
@@ -152,7 +152,7 @@ Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t d
                   std::vector<int32_t>(rows, -7), std::vector<int32_t>(rows, -7), kSentinel,
                   std::vector<phx_mc_fidelity_finding>(64)};
   int64_t evidence_count = 0;
-  verdict.status = phx_mc_verify_cad_fidelity(
+  verdict.status = phx_mc_verify_cad_trace_fidelity(
       &view, static_cast<int64_t>(model.reals.size()), model.reals.data(), model.reals.data(),
       static_cast<int64_t>(mesh.points.size() / 3), mesh.points.data(),
       static_cast<int64_t>(rows), mesh.triangles.data(), mesh.face_rows.data(), mesh.uv.data(),
@@ -163,7 +163,8 @@ Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t d
       mesh.chord_uv.data(), mesh.chord_range.data(), mesh.edge_chord.data(), tolerance, depth,
       static_cast<int64_t>(rows), verdict.upper.data(), verdict.item_status.data(),
       verdict.reasons.data(), verdict.subdivisions.data(), &verdict.maximum,
-      static_cast<int64_t>(verdict.findings.size()), verdict.findings.data(), &evidence_count);
+      static_cast<int64_t>(verdict.findings.size()), verdict.findings.data(), &evidence_count,
+      nullptr, nullptr);
   verdict.findings.resize(static_cast<std::size_t>(std::max<int64_t>(evidence_count, 0)));
   return verdict;
 }
@@ -2521,12 +2522,13 @@ int main() {
   phx_mc_fidelity_finding evidence[12];
   int64_t evidence_count;
   const auto verify = [&]() {
-    return phx_mc_verify_cad_fidelity(
+    return phx_mc_verify_cad_trace_fidelity(
         &model, coefficients.size(), coefficients.data(), coefficients.data(),
         3, points, 1, triangles, face_rows, uv, 1, mesh_triangles, chart_to_mesh,
         1, use_patch, use_parameters,
         1, 3, chord_use, chord_loop, chords, chord_parameters, chord_edges, 1.0, 8,
-        1, &bound, &status, &reason, &splits, &maximum, 12, evidence, &evidence_count);
+        1, &bound, &status, &reason, &splits, &maximum, 12, evidence, &evidence_count,
+        nullptr, nullptr);
   };
   const int32_t initial = verify();
   PHX_CHECK((initial == PHX_MC_OK || initial == PHX_MC_UNRESOLVED) && evidence_count == 0);

@@ -1928,7 +1928,7 @@ def _quadratic_cad_certificate(
         (),
         None,
         embedding=embedding,
-        quadratic=True,
+        degree=2,
     )
 
 
@@ -2291,6 +2291,23 @@ def test_quadratic_cad_public_proof_reuses_the_constructed_map(
     assert native.geometry_id == deferred.certification.embedding.binding.geometry_id
 
 
+def test_cubic_cad_deferred_proof_binds_the_constructed_map() -> None:
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+
+    candidate = _cad_volume_plan(_sphere_model(), 0.3, 3).execute(prove=False)
+    (element,) = candidate.geometry.elements
+    assert isinstance(element, FiniteElementSpec)
+    assert element.degree == 3 and element.local_dof_count == 20
+    result = candidate.prove()
+    result.audit.require_passed()
+    assert result.mesh.mesh_id == candidate.mesh.mesh_id
+    assert result.certification is not None
+    native = result.certification.native_cad
+    assert native is not None and native.status == "certified"
+    assert native.maximum_deviation is not None and native.maximum_deviation <= 0.05
+    assert native.geometry_id == result.certification.embedding.binding.geometry_id
+
+
 @pytest.mark.parametrize("prove_later", [False, True])
 def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
     monkeypatch: pytest.MonkeyPatch, prove_later: bool
@@ -2322,8 +2339,8 @@ def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
 
 @pytest.mark.parametrize(
     ("order", "radius_edge", "dihedral"),
-    [(1, 8.0, 0.0), (2, 2.0, 15.5)],
-    ids=["affine", "quadratic"],
+    [(1, 8.0, 0.0), (2, 2.0, 15.5), (3, 2.0, 15.5)],
+    ids=["affine", "quadratic", "cubic"],
 )
 def test_native_cad_certificate_survives_the_archive(
     tmp_path: Path, order: int, radius_edge: float, dihedral: float
