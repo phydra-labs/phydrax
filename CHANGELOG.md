@@ -11,7 +11,8 @@
   independent of worker count; the authored wall and source identities do
   not change.
 - Native tetrahedral refinement uses the configured meshcore workers for
-  independent feature-size queries on large meshes. Query traversal,
+  independent feature-size queries, including on meshes below the parallel
+  triangulation cutoff. Query traversal,
   refinement order, persistent IDs, and quality evidence do not depend on
   worker count. The C ABI entry `phx_mc_tet_mesh_refine_circumcenters`
   replaces `phx_mc_tet_mesh_refine` and requires a worker cap.

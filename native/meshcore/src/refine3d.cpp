@@ -895,18 +895,19 @@ std::int32_t local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   };
   // Each range owns its stamps and writes only the distinct slots it visits.
   // Keep the large-feature scratch under 64 MiB across concurrent ranges.
-  constexpr std::size_t kChunk = 4096;
+  constexpr std::size_t kLargeChunk = 4096;
+  const auto chunk_size = order.size() < 4 * kLargeChunk ? std::size_t{1024} : kLargeChunk;
   constexpr std::size_t kScratchLimit = 64U * 1024 * 1024;
   const auto bytes = sizeof(std::uint32_t) * static_cast<std::size_t>(large_count);
   const auto workers = bytes == 0 ? parallelism
       : static_cast<std::uint32_t>(std::min<std::size_t>(parallelism,
             std::max(std::size_t{1}, kScratchLimit / bytes)));
   std::int32_t status;
-  if (workers == 1 || order.size() < 4 * kChunk) {
+  if (workers == 1 || order.size() < 4 * chunk_size) {
     status = query_range(0, order.size());
   } else {
-    const auto chunk = bytes == 0 ? kChunk
-        : std::max(kChunk, (order.size() + workers - 1) / workers);
+    const auto chunk = bytes == 0 ? chunk_size
+        : std::max(chunk_size, (order.size() + workers - 1) / workers);
     status = parallel_for(order.size(), ParallelRequest{chunk, workers},
                           [&](std::size_t begin, std::size_t end, ChunkContext&) {
       const GradualNearestScope mode;
