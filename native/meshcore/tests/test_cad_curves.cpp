@@ -140,6 +140,28 @@ void line_integral() {
       PHX_CHECK_NEAR(r.result.parameters[i],static_cast<double>(i)/count,1e-10);
 }
 
+void shared_refinement_respects_physical_spacing() {
+  Fixture f;
+  f.corner_points = {4, 0, 0, 12, 0, 0};
+  const int32_t surface = plane(f), pcurve = f.templ("line2", {0, 0, 2, 0});
+  const int32_t line = f.templ("line3", {0,0,0, 2,0,0});
+  f.face(surface); f.curve(line, 2, 6); f.use(0, 0, pcurve, 2, 6);
+  const double size = 4.0, tolerance = 100.0;
+  Run run(f, {size}, {tolerance}, {tolerance});
+  PHX_CHECK((run.result.parameters == std::vector<double>{0.0, 0.5, 1.0}));
+  const std::array<CurveInterval, 1> requested{{{0, 1}}};
+  CurveControls controls{&size, &tolerance, &tolerance, 0.5, 1.3, 0.75};
+  CurveDiscretization refined;
+  PHX_CHECK(refine_curve_intervals(run.geometry, controls, run.result, requested, false,
+                                   refined) == PHX_MC_OK);
+  const std::vector<double> expected{0.0, 0.5, 0.625, 0.75, 0.875, 1.0};
+  PHX_CHECK(refined.parameters == expected);
+  controls.minimum_size = 1.01;
+  PHX_CHECK(refine_curve_intervals(run.geometry, controls, run.result, requested, true,
+                                   refined) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(refined.parameters == expected);
+}
+
 // Detects omission of curvature sizing, incorrect circle range, or sag repair.
 void circle_integral() {
   Fixture f; auto s = plane(f), pc = line2(f);
@@ -695,6 +717,7 @@ void intersection_chart_shift() {
 
 int main() {
   line_integral(); circle_integral(); ellipse_integral(); shared_nurbs_and_seam(); cylindrical_seam();
+  shared_refinement_respects_physical_spacing();
   cubic_inflection(); knot_breakpoint(); span_allocation(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
   one_sided_spline_jets(); one_sided_cubic_jets();
   surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift(); quadric_closed_integral();

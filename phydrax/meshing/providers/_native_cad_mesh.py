@@ -777,6 +777,51 @@ def _organization(
     )
 
 
+def _cad_failure_evidence(
+    solid: CadSolidResult, deviation: float, /, *, volume_recovery: bool
+) -> MeshingFailureEvidence:
+    curves = solid.surface.curve_failures
+    faces = solid.surface.face_failures
+    initial_faces = solid.surface.initial_face_failures
+    achieved = {
+        "unresolved_curve_intervals": float(curves.size),
+        "face_findings": float(faces.size),
+    }
+    if solid.surface.surface_refinement_retries:
+        achieved["surface_refinement_retries"] = float(
+            solid.surface.surface_refinement_retries
+        )
+        achieved["initial_face_findings"] = float(initial_faces.size)
+    findings: list[str] = []
+    for kind, field, bank in (
+        ("curve", "curve", curves),
+        ("face", "face", faces),
+        ("initial_face", "face", initial_faces),
+    ):
+        fields = bank.dtype.names
+        if fields is None:
+            raise RuntimeError("Native CAD failure banks require named fields.")
+        for row in bank:
+            count_key = f"{kind}_{int(row[field])}_findings"
+            achieved[count_key] = achieved.get(count_key, 0.0) + 1.0
+            findings.append(
+                f"{kind}_finding:"
+                + ":".join(f"{name}={row[name].tolist()!r}" for name in fields)
+            )
+    if volume_recovery:
+        stats = solid.volume.stats[0]
+        for name in ("recovery_attempts", "recovery_status", "recovery_reason"):
+            achieved[name] = float(stats[name])
+    return MeshingFailureEvidence(
+        requested_quantities={"maximum_deviation": deviation},
+        achieved_quantities=achieved,
+        checkpoint="cad_volume_recovery"
+        if volume_recovery
+        else "cad_surface_construction",
+        logical_findings=findings,
+    )
+
+
 def _cad_surface_failure(solid: CadSolidResult, deviation: float, /) -> MeshingFailure:
     curves = solid.surface.curve_failures
     faces = solid.surface.face_failures
@@ -790,22 +835,6 @@ def _cad_surface_failure(solid: CadSolidResult, deviation: float, /) -> MeshingF
         first = f"; first unresolved interval on curve {int(curves[0]['curve'])}"
     else:
         first = ""
-    achieved = {
-        "unresolved_curve_intervals": float(curves.size),
-        "face_findings": float(faces.size),
-    }
-    findings: list[str] = []
-    for kind, bank in (("curve", curves), ("face", faces)):
-        fields = bank.dtype.names
-        if fields is None:
-            raise RuntimeError("Native CAD failure banks require named fields.")
-        for row in bank:
-            count_key = f"{kind}_{int(row[kind])}_findings"
-            achieved[count_key] = achieved.get(count_key, 0.0) + 1.0
-            findings.append(
-                f"{kind}_finding:"
-                + ":".join(f"{name}={row[name].tolist()!r}" for name in fields)
-            )
     return MeshingFailure(
         MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
         "Native CAD surface construction did not reach volume recovery "
@@ -813,12 +842,7 @@ def _cad_surface_failure(solid: CadSolidResult, deviation: float, /) -> MeshingF
         f"intervals and {faces.size} face findings{first}).",
         provider_code="native_cad_surface_unresolved",
         stage="surface_meshing",
-        evidence=MeshingFailureEvidence(
-            requested_quantities={"maximum_deviation": deviation},
-            achieved_quantities=achieved,
-            checkpoint="cad_surface_construction",
-            logical_findings=findings,
-        ),
+        evidence=_cad_failure_evidence(solid, deviation, volume_recovery=False),
     )
 
 
@@ -859,6 +883,11 @@ def execute_cad_solid(
             f"smallest-angle sine {float(stats['failure_measure'])!r}).",
             provider_code="native_cad_volume_unresolved",
             stage="volume_meshing",
+            evidence=(
+                _cad_failure_evidence(solid, deviation, volume_recovery=True)
+                if solid.surface.surface_refinement_retries
+                else None
+            ),
         )
     mesh = CellMesh.from_simplices(
         np.asarray(volume.points, dtype=np.float64),
@@ -893,6 +922,19 @@ def execute_cad_solid(
         ("unmet_forced_quality_cells", float(forced)),
         ("unmet_unforced_quality_cells", float(unforced)),
     ]
+    if solid.surface.surface_refinement_retries:
+        achieved.extend(
+            (
+                (
+                    "surface_refinement_retries",
+                    float(solid.surface.surface_refinement_retries),
+                ),
+                (
+                    "initial_face_findings",
+                    float(solid.surface.initial_face_failures.size),
+                ),
+            )
+        )
     if gated:
         if solid.status is MeshcoreStatus.UNRESOLVED:
             issues.append(f"native_unmet_quality_cells:{unforced}")
