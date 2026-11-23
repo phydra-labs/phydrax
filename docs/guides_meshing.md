@@ -1138,6 +1138,9 @@ then at most one retry on their source curves. Every incident chart uses the
 same added samples. The minimum spacing and sag checks still apply. A
 successful first pass is not rebuilt; on refusal, initial and final face
 findings are reported separately.
+Native work counters describe the emitted curve and face banks. Discarded
+curve proposals contribute to the solid's curve-phase time, not to the
+emitted bank's evaluation counts.
 
 The native CAD solid (`cad_tetrahedral`, `prove=False`) keeps the requested size
 h. `ProximitySizeControl`
