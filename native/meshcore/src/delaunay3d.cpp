@@ -57,27 +57,39 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
     return status;
   }
   std::vector<int32_t> vertex_map;
-  const std::vector<int32_t> order =
-      deduplicated_insertion_order(points, point_count, 3, active_weights, vertex_map);
+  const auto workers = canonical ? static_cast<std::uint32_t>(parallelism) : 1U;
+  const auto [prepared, order] = deduplicated_insertion_order(
+      points, point_count, 3, active_weights, vertex_map, workers);
+  if (prepared != PHX_MC_OK) return prepared;
 
   // Vertex k of the triangulation is input point order[k], stored in
   // insertion order so that walks and cavities touch nearby memory. Its
   // input index orders the symbolic perturbation and labels the output cells.
   const std::size_t count = order.size();
-  std::vector<double> local_points(3 * count);
-  std::vector<double> local_weights(weighted ? count : 0);
-  for (std::size_t k = 0; k < count; ++k) {
-    const double* point = points + 3 * static_cast<std::size_t>(order[k]);
-    std::copy_n(point, 3, local_points.begin() + static_cast<std::ptrdiff_t>(3 * k));
-    if (weighted) local_weights[k] = weights[order[k]];
+  auto local_points = std::make_unique_for_overwrite<double[]>(3 * count);
+  auto local_weights = weighted ? std::make_unique_for_overwrite<double[]>(count) : nullptr;
+  const auto pack = [&](std::size_t first, std::size_t last) {
+    for (std::size_t k = first; k < last; ++k) {
+      const double* point = points + 3 * static_cast<std::size_t>(order[k]);
+      std::copy_n(point, 3, local_points.get() + 3 * k);
+      if (weighted) local_weights[k] = weights[order[k]];
+    }
+  };
+  if (workers > 1 && count >= 65536) {
+    const auto packed = parallel_for(count, ParallelRequest{4096, workers},
+                                     [&](std::size_t first, std::size_t last, ChunkContext&) {
+      pack(first, last);
+    });
+    if (packed != PHX_MC_OK) return packed;
+  } else {
+    pack(0, count);
   }
   std::vector<int32_t> local_order(count);
   std::iota(local_order.begin(), local_order.end(), 0);
   std::vector<char> alive(count, 1);
   auto result = std::make_unique<phx_mc_mesh>();
   {
-    Triangulation3D triangulation(local_points.data(),
-                                  weighted ? local_weights.data() : nullptr,
+    Triangulation3D triangulation(local_points.get(), local_weights.get(),
                                   static_cast<int64_t>(count));
     triangulation.set_identities(order.data());
     status = triangulation.build(local_order, alive, canonical ? parallelism : 1);

@@ -44,8 +44,9 @@ static int32_t triangulate_2d_impl(int64_t point_count, const double* points,
   if (point_count == 0) {
     return PHX_MC_DEGENERATE_INPUT;
   }
-  const std::vector<int32_t> order =
+  const auto [prepared, order] =
       deduplicated_insertion_order(points, point_count, 2, active_weights, result->vertex_map);
+  if (prepared != PHX_MC_OK) return prepared;
   // Vertex k of the triangulation is input point order[k], stored in
   // insertion order so that walks and cavities touch nearby memory; its
   // input index orders the symbolic perturbation, so the triangulation is

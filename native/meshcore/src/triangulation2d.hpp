@@ -601,8 +601,9 @@ inline int32_t build_ordered_delaunay_2d(Triangulation2D& triangulation,
 inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* points,
                                  int64_t point_count, const double* weights,
                                  std::vector<int32_t>& vertex_map) {
-  const std::vector<int32_t> order =
+  const auto [prepared, order] =
       deduplicated_insertion_order(points, point_count, 2, weights, vertex_map);
+  if (prepared != PHX_MC_OK) return prepared;
   if (weights != nullptr) return build_ordered_delaunay_2d(triangulation, order);
   // Unweighted, build on the representatives stored in insertion order (so
   // walks and cavities touch nearby memory) with their input indices as

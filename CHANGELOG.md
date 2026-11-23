@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Large native 3D point sets prepare Hilbert keys and copy coordinates into
+  insertion order on the existing workers. Box quantization, stable key
+  ordering, duplicate resolution, and all exported triangulation banks are
+  unchanged across worker counts.
 - Uniform fixed-wall PLC recovery can prepare interior body-centered cubic
   sites directly from the source wall, then triangulate the wall and sites
   together. It adopts that triangulation only when it already recovers every

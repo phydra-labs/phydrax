@@ -928,7 +928,10 @@ void test_triangulate_options() {
 void test_parallelism() {
   std::uint64_t state = 11;
   std::vector<double> random;
-  for (int i = 0; i < 3 * 40000; ++i) random.push_back(uniform(state));
+  // Exercise parallel key preparation as well as the region insertion pass.
+  constexpr int kRandomPoints = 70000;
+  random.reserve(3 * kRandomPoints);
+  for (int i = 0; i < 3 * kRandomPoints; ++i) random.push_back(uniform(state));
   std::vector<double> lattice;
   for (int i = 0; i < 30; ++i)
     for (int j = 0; j < 30; ++j)

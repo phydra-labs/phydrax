@@ -15,6 +15,9 @@
 #include <span>
 #include <vector>
 
+#include "floating_point_mode.hpp"
+#include "parallel.hpp"
+
 namespace phx::mc {
 
 inline std::uint64_t splitmix64(std::uint64_t value) {
@@ -121,10 +124,11 @@ void hilbert_key_block(const double* points, std::span<const int32_t> candidates
 
 // Hilbert keys (31 bits per axis in 2D, 21 in 3D) of `candidates` in their
 // bounding box, in candidate order; rounds are left 0.
-inline void hilbert_keys(const double* points, int dimension, std::span<const int32_t> candidates,
-                         std::vector<SpatialKey>& keys) {
+inline int32_t hilbert_keys(const double* points, int dimension,
+                            std::span<const int32_t> candidates, std::vector<SpatialKey>& keys,
+                            std::uint32_t parallelism = 1) {
   keys.clear();
-  if (candidates.empty()) return;
+  if (candidates.empty()) return PHX_MC_OK;
   double lower[3] = {0.0, 0.0, 0.0};
   double upper[3] = {0.0, 0.0, 0.0};
   for (int axis = 0; axis < dimension; ++axis) {
@@ -142,14 +146,29 @@ inline void hilbert_keys(const double* points, int dimension, std::span<const in
   // of them keep the vector units busy.
   constexpr std::size_t kLanes = 32;
   keys.resize(candidates.size());
-  for (std::size_t begin = 0; begin < candidates.size(); begin += kLanes) {
-    const std::size_t end = std::min(candidates.size(), begin + kLanes);
-    if (dimension == 2) {
-      hilbert_key_block<2, 31, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
-    } else {
-      hilbert_key_block<3, 21, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
+  const auto blocks = (candidates.size() + kLanes - 1) / kLanes;
+  const auto fill = [&](std::size_t first, std::size_t last) {
+    for (std::size_t block = first; block < last; ++block) {
+      const std::size_t begin = block * kLanes;
+      const auto end = std::min(candidates.size(), begin + kLanes);
+      if (dimension == 2) {
+        hilbert_key_block<2, 31, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
+      } else {
+        hilbert_key_block<3, 21, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
+      }
     }
+  };
+  if (parallelism == 1 || candidates.size() < 65536) {
+    fill(0, blocks);
+    return PHX_MC_OK;
   }
+  return parallel_for(blocks, ParallelRequest{128, parallelism},
+                      [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    fill(first, last);
+    return PHX_MC_OK;
+  });
 }
 
 // BRIO rounds for `count` points and the round of point `index`: round r

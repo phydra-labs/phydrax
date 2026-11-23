@@ -14,6 +14,7 @@
 #include <memory>
 #include <numeric>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "phydrax_meshcore.h"
@@ -139,14 +140,15 @@ inline std::vector<int32_t> deduplicate_points(const double* points, int64_t cou
 // the rules of deduplicate_points). Returns the insertion order; the
 // bounding box, keys and rounds are those of the representatives, so the
 // order equals brio_hilbert_order(deduplicate_points(...)).
-inline std::vector<int32_t> deduplicated_insertion_order(const double* points, int64_t count,
-                                                         int dimension, const double* weights,
-                                                         std::vector<int32_t>& vertex_map) {
+inline std::pair<int32_t, std::vector<int32_t>> deduplicated_insertion_order(
+    const double* points, int64_t count, int dimension, const double* weights,
+    std::vector<int32_t>& vertex_map, std::uint32_t parallelism = 1) {
   vertex_map.assign(static_cast<std::size_t>(count), -1);
   std::vector<int32_t> all(static_cast<std::size_t>(count));
   std::iota(all.begin(), all.end(), 0);
   std::vector<SpatialKey> keys, kept;
-  hilbert_keys(points, dimension, all, keys);
+  const int32_t keyed = hilbert_keys(points, dimension, all, keys, parallelism);
+  if (keyed != PHX_MC_OK) return {keyed, {}};
   radix_sort_keys(keys, kept, true, false);
   const auto coordinate = [&](int32_t point, int axis) {
     return points[static_cast<int64_t>(point) * dimension + axis];
@@ -218,7 +220,7 @@ inline std::vector<int32_t> deduplicated_insertion_order(const double* points, i
   std::partial_sum(starts.begin(), starts.end(), starts.begin());
   std::vector<int32_t> order(written);
   for (std::size_t k = 0; k < written; ++k) order[starts[kept[k].round]++] = kept[k].index;
-  return order;
+  return {PHX_MC_OK, std::move(order)};
 }
 
 // Stable least-significant-digit radix sort of `count` rows of `Width`
