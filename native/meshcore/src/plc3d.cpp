@@ -2316,7 +2316,11 @@ class PlcRecoveryBuilder {
       return PHX_MC_OK;
     }
     const auto count = candidate_.points.size() / 3 + sites.size() / 3;
-    if (count < 16384 || count > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_OK;
+    // Reusing the sized triangulation pays off before parallel DT3 turns on.
+    constexpr std::size_t kMinimumPreseededPoints = 4096;
+    if (count < kMinimumPreseededPoints || count > static_cast<std::size_t>(kMaxMeshPoints)) {
+      return PHX_MC_OK;
+    }
     work_points_ = candidate_.points;
     work_points_.insert(work_points_.end(), sites.begin(), sites.end());
     std::vector<int32_t> active(count);
