@@ -33,6 +33,7 @@
 #include "exact_scalar.hpp"
 #include "floating_point_mode.hpp"
 #include "parallel.hpp"
+#include "volume_lattice.hpp"
 
 namespace phx::mc {
 namespace {
@@ -3202,12 +3203,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // cell whose orientation is not measurably positive (a degenerate boundary
   // such as cocircular grid rows, where cavities into flat cells shrink and
   // leave non-Delaunay cells).
-  constexpr double kLatticeMargin = 0.98;
+  constexpr double kLatticeMargin = kBccLatticeMargin;
   const auto seed_lattice = [&]() -> std::int32_t {
     if (boundary_splittable || mesh.metric_active() || !embedded_segments.empty()) {
       return PHX_MC_OK;
     }
     double smallest = std::numeric_limits<double>::infinity();
+    bool retained_lattice = mesh.generation_ == 0 && mesh.initial_preseeded_radius_ > 0.0;
     double lower[3]{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
                     std::numeric_limits<double>::infinity()};
     double upper[3]{-lower[0], -lower[1], -lower[2]};
@@ -3215,6 +3217,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (mesh.vertex_live_[vertex] == 0) continue;
       const double size = mesh.vertex_size(static_cast<std::int32_t>(vertex));
       if (!(size > 0.0) || !std::isfinite(size)) return PHX_MC_OK;
+      retained_lattice = retained_lattice && size == mesh.initial_preseeded_radius_;
       smallest = std::min(smallest, size);
       const double* p = mesh.point(static_cast<std::int32_t>(vertex));
       for (int axis = 0; axis < 3; ++axis) {
@@ -3222,6 +3225,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         upper[axis] = std::max(upper[axis], p[axis]);
       }
     }
+    if (retained_lattice) return PHX_MC_OK;
     for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
       const auto cell = static_cast<std::int32_t>(row);
       if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
@@ -3232,7 +3236,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
     }
     if (!std::isfinite(smallest)) return PHX_MC_OK;
-    const double a = 4.0 * kLatticeMargin * smallest / std::sqrt(5.0);
+    const double a = bcc_lattice_spacing(smallest);
     const double band = 0.5 * a;
     // The lattice is turned and shifted off the coordinate axes so that it
     // shares no symmetry plane or axis with an input built along them (a
@@ -3240,30 +3244,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // cocircular rows' spheres). Site (shift, i, j, k) has lattice
     // coordinates (i, j, k) + kShift + shift / 2 and lies at
     // middle + a rotation (lattice coordinates).
-    double rotation[3][3];
-    {
-      double q[4]{0.9, 0.3, 0.2, 0.25};
-      const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-      for (double& value : q) value /= norm;
-      const double w = q[0], x = q[1], y = q[2], z = q[3];
-      const double m[3][3]{{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
-                           {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
-                           {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
-      std::copy(&m[0][0], &m[0][0] + 9, &rotation[0][0]);
-    }
+    const auto rotation = bcc_lattice_rotation();
     double middle[3];
     for (int axis = 0; axis < 3; ++axis) middle[axis] = 0.5 * (lower[axis] + upper[axis]);
-    constexpr double kShift[3]{0.31, 0.47, 0.13};
+    constexpr auto kShift = kBccLatticeShift;
     const auto site_point = [&](std::int64_t shift, std::int64_t i, std::int64_t j, std::int64_t k,
                                 double* point) {
-      const double half = 0.5 * static_cast<double>(shift);
-      const double local[3]{(static_cast<double>(i) + kShift[0] + half) * a,
-                            (static_cast<double>(j) + kShift[1] + half) * a,
-                            (static_cast<double>(k) + kShift[2] + half) * a};
-      for (int axis = 0; axis < 3; ++axis) {
-        point[axis] = middle[axis] + rotation[axis][0] * local[0] + rotation[axis][1] * local[1] +
-                      rotation[axis][2] * local[2];
-      }
+      bcc_lattice_point(middle, rotation, a, shift, i, j, k, point);
     };
     // Whether `p` lies in the live cell `tet` perturbed to p + (e, e^2, e^3)
     // for an infinitesimal e. orient3d is affine in its last point with

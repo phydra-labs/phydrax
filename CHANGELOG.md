@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Uniform fixed-wall PLC recovery can prepare interior body-centered cubic
+  sites directly from the source wall, then triangulate the wall and sites
+  together. It adopts that triangulation only when it already recovers every
+  requested wall face, and runs the same refinement, quality, and proof
+  gates. Accepted meshes have new interior cell and vertex identities,
+  independent of worker count; the authored wall and source identities do
+  not change.
 - Native tetrahedral refinement uses the configured meshcore workers for
   independent feature-size queries on large meshes. Query traversal,
   refinement order, persistent IDs, and quality evidence do not depend on

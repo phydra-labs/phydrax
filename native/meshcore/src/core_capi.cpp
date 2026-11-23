@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
@@ -137,12 +138,18 @@ using PlcBuilder = int32_t (*)(const phx::mc::PlcInput&, phx::mc::PlcRecovery&);
 
 int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
                           PlcBuilder builder, const double* affine_metric = nullptr,
-                          const uint8_t* protected_facets = nullptr) {
+                          const uint8_t* protected_facets = nullptr,
+                          std::optional<double> uniform_radius = std::nullopt,
+                          int32_t parallelism = 1) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   if (request->result != nullptr) *request->result = nullptr;
   return guarded([&]() -> int32_t {
     const GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (uniform_radius &&
+        (!std::isfinite(*uniform_radius) || *uniform_radius <= 0.0 || parallelism < 1)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     const int32_t valid = validate_plc3d_prepare_request(*request);
     if (valid != PHX_MC_OK) return valid;
     if (protected_facets != nullptr) {
@@ -171,6 +178,8 @@ int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
     input.facet_plane_tolerances = request->facet_plane_tolerances;
     input.affine_metric = affine_metric;
     input.protected_facets = protected_facets;
+    input.uniform_radius = uniform_radius.value_or(0.0);
+    input.parallelism = parallelism;
     if (request->search_node_budget < 0 || request->search_byte_budget < 0) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -595,6 +604,22 @@ int32_t phx_mc_plc3d_prepare_source(
 int32_t phx_mc_plc3d_recover(
     const phx_mc_plc3d_prepare_source_request* request) {
   return run_plc3d_request(request, phx::mc::recover_plc);
+}
+
+int32_t phx_mc_plc3d_recover_uniform_sized(
+    const phx_mc_plc3d_prepare_source_request* request, double uniform_radius,
+    int32_t parallelism, double* preseeded_radius) {
+  if (preseeded_radius == nullptr) {
+    if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  *preseeded_radius = 0.0;
+  const int32_t status = run_plc3d_request(request, phx::mc::recover_plc, nullptr, nullptr,
+                                           uniform_radius, parallelism);
+  if (status == PHX_MC_OK) {
+    *preseeded_radius = (*request->result)->recovery.preseeded_radius;
+  }
+  return status;
 }
 
 int32_t phx_mc_plc3d_recover_with_affine_metric(

@@ -3053,6 +3053,14 @@ PHX_MC_API int32_t phx_mc_plc3d_prepare_source(
 /* Protected PLC recovery from the same authored source banks. */
 PHX_MC_API int32_t phx_mc_plc3d_recover(
     const phx_mc_plc3d_prepare_source_request* request);
+/* Uniform circumradius target in the input coordinate space; both the radius
+ * and worker cap must be positive, and the radius must be finite. Recovery
+ * may pre-seed eligible geometry; authored source banks are unchanged.
+ * The required preseeded_radius output is zero unless successful recovery
+ * adopted interior lattice sites, in which case it holds their radius. */
+PHX_MC_API int32_t phx_mc_plc3d_recover_uniform_sized(
+    const phx_mc_plc3d_prepare_source_request* request, double uniform_radius,
+    int32_t parallelism, double* preseeded_radius);
 /* Row-major index-to-physical linear map; topology and witnesses remain in index space. */
 PHX_MC_API int32_t phx_mc_plc3d_recover_with_affine_metric(
     const phx_mc_plc3d_prepare_source_request* request, const double* affine_metric);

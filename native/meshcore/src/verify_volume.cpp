@@ -59,6 +59,40 @@
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "volume_lattice.hpp"
+
+namespace phx::mc {
+
+bool add_volume_ray_crossing(const double* a, const double* b, const double* c,
+                             const double* x, std::int64_t& winding) {
+  if (std::max({a[2], b[2], c[2]}) < x[2] || std::min({a[0], b[0], c[0]}) > x[0] ||
+      std::max({a[0], b[0], c[0]}) < x[0] || std::min({a[1], b[1], c[1]}) > x[1] ||
+      std::max({a[1], b[1], c[1]}) < x[1]) {
+    return true;
+  }
+  const int projected = orient2d_filtered(a, b, c);
+  if (projected == 0) return true;
+
+  // Sign of orient2d(u, v, x + (eps, eps^2)); a nonzero projected
+  // triangle has no projected edge with coincident endpoints.
+  const auto perturbed_side = [x](const double* u, const double* v) {
+    const int sign = orient2d_filtered(u, v, x);
+    if (sign != 0) return sign;
+    if (v[1] != u[1]) return v[1] > u[1] ? -1 : 1;
+    return v[0] > u[0] ? 1 : -1;
+  };
+  if (perturbed_side(a, b) != projected || perturbed_side(b, c) != projected ||
+      perturbed_side(c, a) != projected) {
+    return true;
+  }
+  const int side = orient3d_filtered(a, b, c, x);
+  if (side == 0) return false;
+  // The crossing is ahead of x when x is behind the plane along the ray.
+  if (side * projected < 0) winding += projected;
+  return true;
+}
+
+}  // namespace phx::mc
 
 namespace {
 
@@ -398,15 +432,6 @@ std::size_t find_root(std::vector<std::size_t>& parent, std::size_t row) {
   return row;
 }
 
-// Sign of the perturbed orient2d(u, v, x + (eps, eps^2)) on the first two
-// coordinates; u and v differ in that projection.
-int perturbed_side(const double* u, const double* v, const double* x) {
-  const int sign = phx::mc::orient2d(u, v, x);
-  if (sign != 0) return sign;
-  if (v[1] != u[1]) return v[1] > u[1] ? -1 : 1;
-  return v[0] > u[0] ? 1 : -1;
-}
-
 // Exact winding number at x of the closed triangle chain `rows` of `faces`,
 // counted along the ray from x + (eps, eps^2, 0) in direction +z.  False
 // when x lies on one of the triangles.
@@ -418,22 +443,7 @@ bool winding_number(const double* points, const std::vector<BoundaryFace>& faces
     const double* a = point_at(points, v[0]);
     const double* b = point_at(points, v[1]);
     const double* c = point_at(points, v[2]);
-    if (std::max({a[2], b[2], c[2]}) < x[2] || std::min({a[0], b[0], c[0]}) > x[0] ||
-        std::max({a[0], b[0], c[0]}) < x[0] || std::min({a[1], b[1], c[1]}) > x[1] ||
-        std::max({a[1], b[1], c[1]}) < x[1]) {
-      continue;
-    }
-    const int projected = phx::mc::orient2d(a, b, c);
-    if (projected == 0) continue;
-    if (perturbed_side(a, b, x) != projected || perturbed_side(b, c, x) != projected ||
-        perturbed_side(c, a, x) != projected) {
-      continue;
-    }
-    const int side = phx::mc::orient3d(a, b, c, x);
-    if (side == 0) return false;
-    // The normal (b - a) x (c - a) has the sign `projected` along the ray, so
-    // the crossing lies ahead of x exactly when x is behind the plane.
-    if (side * projected < 0) value += projected;
+    if (!phx::mc::add_volume_ray_crossing(a, b, c, x, value)) return false;
   }
   return true;
 }
