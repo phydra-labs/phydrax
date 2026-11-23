@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <vector>
@@ -337,7 +338,7 @@ void check_witnessed_boundary_relocation() {
   PHX_CHECK(witness.deviation == 0.0 && deviation == 0.0);
 }
 
-Run adapt_direction_sensitive_edge(bool permuted) {
+Run adapt_direction_sensitive_edge(bool permuted, std::uint64_t next_target_cell = 800) {
   // Only the logical body diagonal is editable. Its two evaluation
   // directions straddle the exact binary64 completion threshold.
   Cube cube = kuhn_cube(1);
@@ -415,7 +416,8 @@ Run adapt_direction_sensitive_edge(bool permuted) {
     input.ancestry_offsets.push_back(static_cast<std::int64_t>(row));
   }
   input.next_vertex_id = input.next_target_vertex = 800;
-  input.next_cell_id = input.next_target_cell = 800;
+  input.next_cell_id = 800;
+  input.next_target_cell = next_target_cell;
   input.lower = 0.6;
   input.relocation = false;
   run.status = metric::adapt_metric(mesh, input, run.output);
@@ -442,6 +444,19 @@ void metric_worksets_ignore_physical_vertex_order() {
   PHX_CHECK(cells(first) == cells(second));
 }
 
+void metric_uses_the_last_available_target_cell_ids() {
+  constexpr std::uint64_t exhausted = std::numeric_limits<std::uint64_t>::max();
+  // The protected-edge fixture has six parents along its only editable edge.
+  const Run run = adapt_direction_sensitive_edge(false, exhausted - 12);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  std::vector<std::uint64_t> expected;
+  for (std::uint64_t id = exhausted - 12; id < exhausted; ++id) expected.push_back(id);
+  auto assigned = run.output.cell_target_ids;
+  std::sort(assigned.begin(), assigned.end());
+  PHX_CHECK(assigned == expected);
+}
+
 }  // namespace
 
 int main() {
@@ -451,5 +466,6 @@ int main() {
   check_completion_tolerance_does_not_skip_eligible_collapses();
   check_witnessed_boundary_relocation();
   metric_worksets_ignore_physical_vertex_order();
+  metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");
 }

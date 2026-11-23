@@ -4,6 +4,7 @@ from itertools import permutations
 from typing import Any
 
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._geometry_predicates import orient3d, PredicateMode
@@ -27,7 +28,9 @@ _LOWER = 1.0 / np.sqrt(2.0)
 _UPPER = np.sqrt(2.0)
 
 
-def _source(*, curved_boundary: bool = False) -> Any:
+def _source(
+    *, curved_boundary: bool = False, exhausted_dimension: int | None = None
+) -> Any:
     shape = 3
     vertex_rows = np.arange(shape**3, dtype=np.int64).reshape((shape,) * 3)
     axis = np.linspace(0.0, 1.0, shape, dtype=np.float64)
@@ -55,16 +58,22 @@ def _source(*, curved_boundary: bool = False) -> Any:
             if np.linalg.det(corners[1:] - corners[:1]) < 0.0:
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)
+    cell_ids = np.arange(3000, 3000 + len(tetrahedra), dtype=np.int64)
+    vertex_ids = np.arange(shape**3, dtype=np.int64)
+    if exhausted_dimension == 0:
+        vertex_ids[-1] = np.iinfo(np.int64).max
+    if exhausted_dimension == 3:
+        cell_ids[-1] = np.iinfo(np.int64).max
     block = CellBlock(
         "tetrahedra",
         "tetrahedron",
         np.asarray(tetrahedra, dtype=np.int32),
-        global_ids=np.arange(3000, 3000 + len(tetrahedra), dtype=np.int64),
+        global_ids=cell_ids,
     )
     mesh = CellMesh(
         coordinates,
         (block,),
-        vertex_global_ids=np.arange(shape**3, dtype=np.int64),
+        vertex_global_ids=vertex_ids,
     )
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -173,3 +182,10 @@ def test_native_metric_route_refines_a_kuhn_cube_with_exact_lineage() -> None:
         assert all(value.denominator.bit_count() == 1 for value in exact)
         new_vertices += int(target_ids[row]) not in source_ids
     assert new_vertices > 0
+
+
+@pytest.mark.parametrize("dimension", [0, 3], ids=["vertex", "cell"])
+def test_native_metric_route_refuses_signed_id_exhaustion(dimension: int) -> None:
+    source = _source(exhausted_dimension=dimension)
+    with pytest.raises(OverflowError, match="stable int64 identifier range"):
+        _run(source, _request(source), MeshAdaptationRoute.NATIVE_METRIC_3D)

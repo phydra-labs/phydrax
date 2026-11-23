@@ -74,6 +74,13 @@ constexpr std::int32_t kNoBlock = -1;
 constexpr std::size_t kRelocationCacheSlots = 4096;
 constexpr std::size_t kRelocationCacheStarCells = 64;
 
+constexpr std::uint64_t kExhaustedId = std::numeric_limits<std::uint64_t>::max();
+
+bool fits_ids(std::uint64_t next, std::size_t count) {
+  // Keep MAX as the exhausted cursor, never as a freshly assigned ID.
+  return count <= kExhaustedId - next;
+}
+
 using detail::LocalIncidence;
 
 // Max-first quantized band violations of a set of lengths.
@@ -531,10 +538,11 @@ void Adapter::bind() {
   next_target_vertex_ = input_.next_target_vertex;
   next_target_cell_ = input_.next_target_cell;
   for (const TetSnapshotFacet& facet : snapshot.constrained_facets) {
-    next_facet_id_ = std::max(next_facet_id_, facet.id + 1);
+    next_facet_id_ = std::max(next_facet_id_, facet.id < kExhaustedId ? facet.id + 1 : facet.id);
   }
   for (const TetSnapshotSegment& segment : snapshot.constrained_segments) {
-    next_segment_id_ = std::max(next_segment_id_, segment.id + 1);
+    next_segment_id_ =
+        std::max(next_segment_id_, segment.id < kExhaustedId ? segment.id + 1 : segment.id);
   }
   if (!incidence_.initialize(mesh_)) throw std::invalid_argument("The mesh has no incidence.");
   source_banks_match_ = snapshot.source_points == input_.source_points;
@@ -738,9 +746,10 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   const std::span<const std::int32_t> shell_view = incidence_.edge_star(a, b);
   if (shell_view.empty()) return TetEditStatus::kApplied;
   std::vector<std::int32_t> shell(shell_view.begin(), shell_view.end());
-  std::sort(shell.begin(), shell.end(), [&](std::int32_t p, std::int32_t q) {
+  const auto by_id = [&](std::int32_t p, std::int32_t q) {
     return mesh_.cell_id(p) < mesh_.cell_id(q);
-  });
+  };
+  std::sort(shell.begin(), shell.end(), by_id);
   for (std::int32_t slot : shell) {
     if (static_cast<std::size_t>(slot) < occupied_.size() &&
         occupied_[static_cast<std::size_t>(slot)] != 0) {
@@ -824,6 +833,26 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
     }
     pending_.push_back({a, b, parameter, point, tensor, std::move(stencil), shell});
     return TetEditStatus::kApplied;
+  }
+  if (!fits_ids(std::max(next_vertex_id_, next_target_vertex_), 1)) {
+    return TetEditStatus::kIndexOverflow;
+  }
+  // A boundary split makes two children per parent. A free split cones every
+  // exposed face, so count those faces if the target range cannot cover the
+  // trivial upper bound. Both transactions check their native cell allocator.
+  if (*support != EdgeSupport::kFree) {
+    if (!fits_ids(next_target_cell_, 2 * shell.size())) return TetEditStatus::kIndexOverflow;
+  } else if (!fits_ids(next_target_cell_, 4 * shell.size())) {
+    std::size_t faces = 0;
+    for (std::int32_t slot : shell) {
+      for (std::int32_t neighbor : mesh_.tet(slot).n) {
+        if (!mesh_.complex().live(neighbor) || is_ghost(mesh_.tet(neighbor)) ||
+            !std::binary_search(shell.begin(), shell.end(), neighbor, by_id)) {
+          ++faces;
+        }
+      }
+    }
+    if (!fits_ids(next_target_cell_, faces)) return TetEditStatus::kIndexOverflow;
   }
 
   // Parents by their two faces opposite the edge ends, before the commit.
@@ -940,6 +969,11 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
   };
   std::vector<Child> children;
   for (const PendingSplit& split : splits) {
+    if (!fits_ids(vertex_id, 1) || !fits_ids(next_target_vertex_, op.changed_vertices.size() + 1) ||
+        !fits_ids(cell_id, 2 * split.shell.size()) ||
+        !fits_ids(next_target_cell_, op.replacement_cells.size() + 2 * split.shell.size())) {
+      return TetEditStatus::kIndexOverflow;
+    }
     const std::uint64_t ida = mesh_.vertex_id(split.a);
     const std::uint64_t idb = mesh_.vertex_id(split.b);
     const bool forward = ida < idb;
@@ -992,6 +1026,7 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
         const std::uint64_t x = facet.vertices[static_cast<std::size_t>(side)];
         const std::uint64_t y = facet.vertices[static_cast<std::size_t>((side + 1) % 3)];
         if (id_edge(x, y) != key) continue;
+        if (!fits_ids(facet_id, 2)) return TetEditStatus::kIndexOverflow;
         const std::uint64_t z = facet.vertices[static_cast<std::size_t>((side + 2) % 3)];
         for (const std::array<std::uint64_t, 3>& half :
              {std::array<std::uint64_t, 3>{x, middle, z}, std::array<std::uint64_t, 3>{middle, y, z}}) {
@@ -1010,6 +1045,7 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
     const TetEditStatus lookup = incidence_.boundary_segment(key, segment);
     if (lookup != TetEditStatus::kApplied) return lookup;
     if (segment != nullptr) {
+      if (!fits_ids(segment_id, 2)) return TetEditStatus::kIndexOverflow;
       const TetSnapshotSegment& old = *segment;
       op.removed_segment_ids.push_back(old.id);
       for (const std::array<std::uint64_t, 2>& half :
@@ -1523,6 +1559,9 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     const Tetrahedron& cell = mesh_.tet(slot);
     edit.removed_cell_ids.push_back(mesh_.cell_id(slot));
     if (vertex_slot(cell, removed) >= 0 && vertex_slot(cell, kept) >= 0) continue;
+    if (!fits_ids(std::max(next_cell_id_, next_target_cell_), edit.replacement_cells.size() + 1)) {
+      return TetEditStatus::kIndexOverflow;
+    }
     TetEditCell replacement;
     replacement.id = next_cell_id_ + edit.replacement_cells.size();
     replacement.region = mesh_.complex().region(slot);
@@ -1564,6 +1603,7 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
       if (std::find(facet.vertices.begin(), facet.vertices.end(), kept_id) != facet.vertices.end()) {
         continue;
       }
+      if (!fits_ids(facet_id, 1)) return TetEditStatus::kIndexOverflow;
       TetEditFacet replacement;
       replacement.id = facet_id++;
       replacement.vertices = {image(facet.vertices[0]), image(facet.vertices[1]),
@@ -1576,6 +1616,7 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     for (const TetSnapshotSegment& segment : segments) {
       edit.removed_segment_ids.push_back(segment.id);
       if (segment.vertices[0] == kept_id || segment.vertices[1] == kept_id) continue;
+      if (!fits_ids(segment_id, 1)) return TetEditStatus::kIndexOverflow;
       TetEditSegment replacement;
       replacement.id = segment_id++;
       replacement.vertices = {image(segment.vertices[0]), image(segment.vertices[1])};
@@ -1724,6 +1765,9 @@ TetEditStatus Adapter::replace(TetEditKind kind, const std::vector<std::int32_t>
                                const std::vector<std::array<std::int32_t, 4>>& cells,
                                bool& applied) {
   applied = false;
+  if (!fits_ids(std::max(next_cell_id_, next_target_cell_), cells.size())) {
+    return TetEditStatus::kIndexOverflow;
+  }
   // Labels of the cavity's outer faces, kept by the replacement faces on them.
   struct Label {
     std::array<std::int32_t, 3> key;
@@ -2154,6 +2198,10 @@ TetEditStatus Adapter::swap_boundary(const std::vector<std::int32_t>& shell,
   if (side == 0) {
     ++counters_.rejected_invalid;
     return TetEditStatus::kApplied;
+  }
+  if (!fits_ids(std::max(next_cell_id_, next_target_cell_), cells.size()) ||
+      !fits_ids(next_facet_id_, 2)) {
+    return TetEditStatus::kIndexOverflow;
   }
   TetEdit edit;
   edit.kind = TetEditKind::kRingReconnect;

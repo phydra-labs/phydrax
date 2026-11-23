@@ -2363,6 +2363,35 @@ def test_metric_adapt_refuses_a_mismatched_authored_rounding() -> None:
         assert native.arrays().generation == generation
 
 
+@pytest.mark.parametrize("allocator", (2, 3), ids=("target-vertex", "target-cell"))
+def test_metric_adapt_reports_target_identifier_exhaustion(allocator: int) -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    tensor = 4.0 * np.eye(3, dtype=np.float64)
+    state = _state(_source(2), tensor)
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        next_ids = list(banks["next_ids"])
+        # One cell ID is not enough for both children of even one parent.
+        next_ids[allocator] = np.iinfo(np.uint64).max - (allocator == 3)
+        banks["next_ids"] = tuple(next_ids)
+        generation = int(state.snapshot.generation)
+        source_id, revision, map_id, frame_id = state.source_identity
+        with pytest.raises(RuntimeError, match=r"failed with INDEX_OVERFLOW"):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=False,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
 def test_relocation_reopens_an_unrepresentable_split() -> None:
     from phydrax.meshing._tetra_metric import (
         _adapted_evidence,

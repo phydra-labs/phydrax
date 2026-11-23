@@ -7536,6 +7536,26 @@ def execute_tetra_metric_adaptation(
         frame_id=state.source_identity[3],
     )
     snapshot = state.native.arrays()
+    # The native edit owns a private working mesh and uses unsigned IDs.
+    # Refuse overflow before any narrowing or publication of its result.
+    limit = np.iinfo(np.int64).max
+    if any(
+        int(np.max(bank, initial=0)) > limit
+        for bank in (
+            snapshot.vertex_ids,
+            snapshot.cell_ids,
+            adaptation.vertex_ids,
+            adaptation.vertex_target_ids,
+            adaptation.cell_ids,
+            adaptation.cell_target_ids,
+            adaptation.ancestry_ids,
+            adaptation.vertex_relations,
+            adaptation.unrepresentable_edges,
+        )
+    ):
+        raise OverflowError(
+            "Native adaptation IDs exceed the stable int64 identifier range."
+        )
     edit, target_metric = _adapted_edit(state, adaptation, snapshot)
     evidence = _adapted_evidence(state, adaptation, snapshot, lower)
     return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)

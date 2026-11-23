@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Nonperiodic tetrahedral metric adaptation now runs native edits with exact
+  source-carrier checks and exports lineage for the public proofs and field
+  transfers. An edit that would exhaust a native or target ID allocator
+  reports identifier overflow before it commits; publication also refuses
+  IDs outside the signed 64-bit public range.
 - Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
   `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
   core refined to half size at the boundary with exact inside/outside, one
