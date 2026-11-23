@@ -764,7 +764,7 @@ class TetMesh {
       TetMesh&, detail::LocalIncidence&, std::span<const std::uint64_t>,
       const std::function<bool(std::uint64_t, std::uint64_t)>&, std::vector<std::uint64_t>&);
   friend std::int32_t refine_mesh(TetMesh&, double, std::span<const double>,
-                                  std::int64_t&, std::int64_t&);
+                                  std::int64_t&, std::int64_t&, std::uint32_t);
   friend std::int32_t improve_mesh(TetMesh&, const TetQualityRequest&,
                                    std::span<const double>, std::int64_t&,
                                    std::int64_t&, std::int64_t&, std::int64_t&);

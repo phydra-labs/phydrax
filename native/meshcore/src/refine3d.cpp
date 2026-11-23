@@ -31,6 +31,8 @@
 #include "spatial_sort.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
+#include "floating_point_mode.hpp"
+#include "parallel.hpp"
 
 namespace phx::mc {
 namespace {
@@ -561,10 +563,10 @@ class CoordinateResolution {
 // features the constrained segments and constrained-facet edges, plane
 // features the constrained facets. Dead slots keep +inf. lambda is floored at
 // the coordinate spacing at v. Fails only on non-finite geometry.
-bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
-                         std::span<const TetSnapshotFacet> facets,
-                         std::span<const TetSnapshotSegment> segments,
-                         std::vector<double>& sizes, double& smallest) {
+std::int32_t local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
+                                std::span<const TetSnapshotFacet> facets,
+                                std::span<const TetSnapshotSegment> segments,
+                                std::vector<double>& sizes, std::uint32_t parallelism) {
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
   // The shortest incident edge bounds lambda from above and sets the query
@@ -618,7 +620,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   for (const TetSnapshotSegment& segment : segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
-    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
+    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return PHX_MC_INVALID_INPUT;
     segment_slots.push_back({std::min(a, b), std::max(a, b)});
     ++segment_starts[static_cast<std::size_t>(std::min(a, b)) + 1];
   }
@@ -648,7 +650,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     std::array<std::int32_t, 3> slots{};
     for (std::size_t corner = 0; corner < 3; ++corner) {
       slots[corner] = mesh.vertex_slot(facet.vertices[corner]);
-      if (!mesh.live_vertex(slots[corner])) return false;
+      if (!mesh.live_vertex(slots[corner])) return PHX_MC_INVALID_INPUT;
     }
     features.push_back(slots);
     for (std::size_t corner = 0; corner < 3; ++corner) {
@@ -691,7 +693,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     if (std::isfinite(sizes[slot])) radii.push_back(sizes[slot]);
   }
-  if (radii.empty()) return false;
+  if (radii.empty()) return PHX_MC_INVALID_INPUT;
   std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2),
                    radii.end());
   double cell = 1.5 * radii[radii.size() / 2];
@@ -751,7 +753,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   DenseFrame frame;
   if (!frame.fit(frame_lower, frame_upper, cell,
                  std::max(4096.0, 8.0 * static_cast<double>(slot_count)))) {
-    return false;
+    return PHX_MC_INVALID_INPUT;
   }
   // A small feature (box at most one cell wide per axis) is registered once,
   // in the cell of its box's lower corner, so a query of radius r reads the
@@ -789,8 +791,6 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   }, [&](std::size_t row) { return records[row]; });
   std::vector<FeatureRecord>().swap(records);
 
-  std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
-  smallest = infinity;
   const CoordinateResolution coordinate_resolution(mesh);
   // Each lambda depends only on its vertex: the vertices go cell by cell
   // (a counting sort on their cells), so consecutive queries read nearby
@@ -815,7 +815,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
       order[starts[cells[slot]]++] = static_cast<std::int32_t>(slot);
     }
   }
-  for (const std::int32_t vertex : order) {
+  const auto query = [&](std::int32_t vertex, std::span<std::uint32_t> seen) {
     const auto slot = static_cast<std::size_t>(vertex);
     const double* p = mesh.point(vertex);
     double lambda = sizes[slot];
@@ -883,9 +883,39 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     // a representable point; lambda is floored there, which keeps it positive.
     lambda = std::max(lambda, coordinate_resolution(p));
     sizes[slot] = lambda;
-    smallest = std::min(smallest, lambda);
+    return true;
+  };
+  const auto query_range = [&](std::size_t begin, std::size_t end) -> std::int32_t {
+    std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
+    for (std::size_t row = begin; row < end; ++row) {
+      if (!query(order[row], seen)) return PHX_MC_INVALID_INPUT;
+    }
+    return PHX_MC_OK;
+  };
+  // Each range owns its stamps and writes only the distinct slots it visits.
+  // Keep the large-feature scratch under 64 MiB across concurrent ranges.
+  constexpr std::size_t kChunk = 4096;
+  constexpr std::size_t kScratchLimit = 64U * 1024 * 1024;
+  const auto bytes = sizeof(std::uint32_t) * static_cast<std::size_t>(large_count);
+  const auto workers = bytes == 0 ? parallelism
+      : static_cast<std::uint32_t>(std::min<std::size_t>(parallelism,
+            std::max(std::size_t{1}, kScratchLimit / bytes)));
+  std::int32_t status;
+  if (workers == 1 || order.size() < 4 * kChunk) {
+    status = query_range(0, order.size());
+  } else {
+    const auto chunk = bytes == 0 ? kChunk
+        : std::max(kChunk, (order.size() + workers - 1) / workers);
+    status = parallel_for(order.size(), ParallelRequest{chunk, workers},
+                          [&](std::size_t begin, std::size_t end, ChunkContext&) {
+      const GradualNearestScope mode;
+      if (!mode.established()) return std::int32_t{PHX_MC_INTERNAL_ERROR};
+      return query_range(begin, end);
+    });
   }
-  return std::isfinite(smallest);
+  if (status != PHX_MC_OK) return status;
+  return std::any_of(sizes.begin(), sizes.end(), [](double size) { return std::isfinite(size); })
+             ? PHX_MC_OK : PHX_MC_INVALID_INPUT;
 }
 
 // Bits per axis of the proposal order: a 4096^3 grid over the domain's box
@@ -1703,10 +1733,10 @@ class ProtectionIndex {
 std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                          std::span<const double> vertex_sizes,
                          std::int64_t& inserted_vertices,
-                         std::int64_t& unmet_cells) {
+                         std::int64_t& unmet_cells, std::uint32_t parallelism) {
   inserted_vertices = 0;
   unmet_cells = 0;
-  if (!std::isfinite(radius_edge_bound) || radius_edge_bound < 0.0) {
+  if (!std::isfinite(radius_edge_bound) || radius_edge_bound < 0.0 || parallelism == 0) {
     return PHX_MC_INVALID_ARGUMENT;
   }
 
@@ -2051,30 +2081,32 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   }
   constexpr double kSizeGuardFraction = 0.5;
   std::vector<double> feature_sizes;
-  double smallest_feature = 0.0;
-  if (!local_feature_sizes(mesh, mesh.vertex_ids_.size(), mesh.facets_, mesh.segments_,
-                           feature_sizes, smallest_feature)) {
-    return PHX_MC_INVALID_INPUT;
-  }
+  const std::int32_t sized = local_feature_sizes(mesh, mesh.vertex_ids_.size(), mesh.facets_,
+                                                mesh.segments_, feature_sizes, parallelism);
+  if (sized != PHX_MC_OK) return sized;
   // lfs(x) estimate: the Lipschitz bound min_u (lambda(u) + |x - u|) from the
   // natural neighbors u of x, lambda precomputed per vertex on a grid
   // (local_feature_sizes), floored at the coordinate spacing. Every term is
   // an upper bound of the true lfs(x) (lfs is 1-Lipschitz), so the estimate
   // never falls below lfs_min > 0 and insertion_guard keeps the packing
   // argument (Ruppert, Shewchuk) bounding the vertex count.
-  // feature_size_at keeps the metric distances from its point to its
-  // neighbors (in neighbor order) for clear_of.
-  std::vector<double> neighbor_distances;
+  struct InsertionNeighborhood {
+    double feature_size;
+    double nearest_distance;
+  };
   const CoordinateResolution coordinate_resolution(mesh);
-  const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors) {
-    neighbor_distances.clear();
-    double size = std::numeric_limits<double>::infinity();
+  const auto inspect_neighborhood = [&](const double* point,
+                                        std::span<const std::int32_t> neighbors) {
+    double feature_size = std::numeric_limits<double>::infinity();
+    double nearest_distance = feature_size;
     for (std::int32_t vertex : neighbors) {
       const double distance = metric_distance(mesh, point, mesh.point(vertex));
-      neighbor_distances.push_back(distance);
-      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] + distance);
+      feature_size =
+          std::min(feature_size, feature_sizes[static_cast<std::size_t>(vertex)] + distance);
+      nearest_distance = std::min(nearest_distance, distance);
     }
-    return std::max(size, coordinate_resolution(point));
+    return InsertionNeighborhood{std::max(feature_size, coordinate_resolution(point)),
+                                 nearest_distance};
   };
   const auto spacing_guard = [&](double feature_size, double target_size) {
     const double guard = kSizeGuardFraction * feature_size;
@@ -2100,16 +2132,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     feature_sizes[static_cast<std::size_t>(vertex)] = size;
   };
-  // The spacing guard: no natural neighbor of a point (a vertex of its
-  // cavity, which holds its nearest vertex in a Delaunay neighborhood) lies
-  // closer than `radius`; it reads the neighbors feature_size_at measured
-  // last.
-  const auto clear_of = [&](double radius) {
-    if (!(radius > 0.0) || !std::isfinite(radius)) return false;
-    for (double distance : neighbor_distances) {
-      if (distance < radius) return false;
-    }
-    return true;
+  // The point clears the spacing guard iff its closest natural neighbor
+  // (a vertex of its Delaunay cavity) does.
+  const auto clear_of = [](double nearest_distance, double radius) {
+    return radius > 0.0 && std::isfinite(radius) && nearest_distance >= radius;
   };
   // Acute features only protect boundary splits, and a fixed boundary is
   // never split, so it has none.
@@ -2410,8 +2436,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (encroached_segment.has_value()) {
         return PHX_MC_OK;
       }
-      const double feature_size = feature_size_at(point, cavity_vertices);
-      if (radius > 0.0 && !clear_of(insertion_guard(feature_size, radius, target))) {
+      const auto neighborhood = inspect_neighborhood(point, cavity_vertices);
+      if (radius > 0.0 &&
+          !clear_of(neighborhood.nearest_distance,
+                    insertion_guard(neighborhood.feature_size, radius, target))) {
         return PHX_MC_OK;
       }
       const std::size_t facet_count = mesh.facets_.size();
@@ -2451,7 +2479,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       const std::int32_t inserted_slot = mesh.vertex_slot(inserted.id);
       if (target > 0.0) mesh.set_vertex_size(inserted_slot, target);
-      record_feature_size(inserted_slot, feature_size);
+      record_feature_size(inserted_slot, neighborhood.feature_size);
       if (const std::int32_t settled = settle(created_cells); settled != PHX_MC_OK) return settled;
       ++inserted_vertices;
       split = true;
@@ -2827,8 +2855,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                                    std::span<const std::uint8_t> meets,
                                    int& outcome) -> std::int32_t {
     outcome = 2;
-    const double feature_size = feature_size_at(point, interior.vertices);
-    if (!clear_of(insertion_guard(feature_size, radius, size))) {
+    const auto neighborhood = inspect_neighborhood(point, interior.vertices);
+    if (!clear_of(neighborhood.nearest_distance,
+                  insertion_guard(neighborhood.feature_size, radius, size))) {
       return PHX_MC_OK;
     }
     removed_cells.clear();
@@ -2858,7 +2887,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       if (meets.empty() || meets[row] == 0U) enqueue_slot(slot);
     }
-    record_feature_size(static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1, feature_size);
+    record_feature_size(static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1,
+                        neighborhood.feature_size);
     ++inserted_vertices;
     outcome = 0;
     return PHX_MC_OK;
@@ -2953,8 +2983,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
           })) {
         break;
       }
-      const double feature_size = feature_size_at(candidate, interior.vertices);
-      if (!clear_of(insertion_guard(feature_size, radius, size))) {
+      const auto neighborhood = inspect_neighborhood(candidate, interior.vertices);
+      if (!clear_of(neighborhood.nearest_distance,
+                    insertion_guard(neighborhood.feature_size, radius, size))) {
         break;
       }
       const double quality = screen_cone(mesh, interior.boundary, candidate, radius_edge_bound,

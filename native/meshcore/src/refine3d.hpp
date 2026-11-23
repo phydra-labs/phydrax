@@ -17,7 +17,7 @@ namespace phx::mc {
 std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                          std::span<const double> vertex_sizes,
                          std::int64_t& inserted_vertices,
-                         std::int64_t& unmet_cells);
+                         std::int64_t& unmet_cells, std::uint32_t parallelism = 1);
 
 // Circumradius size target of a cell from its corners' targets: their mean,
 // or +inf when any corner is unconstrained (target <= 0). Refinement and

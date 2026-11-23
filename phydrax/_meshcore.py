@@ -1870,7 +1870,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, ctypes.POINTER(_TetMeshImplicitFacetRefusal)),
     ),
     "phx_mc_tet_mesh_clear_implicit_facet_refusal": (_I32, (_P,)),
-    "phx_mc_tet_mesh_refine": (
+    "phx_mc_tet_mesh_refine_circumcenters": (
         _I32,
         (
             _P,
@@ -1891,6 +1891,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_tet_mesh_improve_quality": (
@@ -13194,6 +13195,8 @@ class TetMesh3D:
         smallest target (where the target is within 2 % of it, at least half a
         lattice spacing from the boundary), then refined as above.
         """
+        from ._exact_kernels import exact_kernel_parallelism
+
         radius_edge = _tet_radius_target(radius_edge_bound)
         with self._lock:
             identity = self._identity()
@@ -13207,7 +13210,7 @@ class TetMesh3D:
             edit_status, run_status = _I32(), _I32()
             inserted, unmet = _I64(), _I64()
             _raise_for_call(
-                self._library["phx_mc_tet_mesh_refine"](
+                self._library["phx_mc_tet_mesh_refine_circumcenters"](
                     self._live(),
                     identity.generation,
                     identity_bound,
@@ -13221,8 +13224,9 @@ class TetMesh3D:
                     ctypes.addressof(run_status),
                     ctypes.addressof(inserted),
                     ctypes.addressof(unmet),
+                    exact_kernel_parallelism(),
                 ),
-                "tet_mesh_refine",
+                "tet_mesh_refine_circumcenters",
             )
             return TetMeshRun(
                 TetMeshEditStatus(edit_status.value),

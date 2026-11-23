@@ -504,12 +504,12 @@ void persistent_create_snapshot_and_rejection() {
   int32_t run_status = -1;
   int64_t inserted_vertices = 0;
   int64_t remaining_cells = 0;
-  PHX_CHECK(phx_mc_tet_mesh_refine(
+  PHX_CHECK(phx_mc_tet_mesh_refine_circumcenters(
                 mesh, generation, identity_bound, source_id, sizeof(source_id) - 1,
                 source_revision, sizeof(source_revision) - 1, source_map_id,
                 sizeof(source_map_id) - 1, frame_id, sizeof(frame_id) - 1,
                 0.5, 0, nullptr, &edit_status, &run_status, &inserted_vertices,
-                &remaining_cells) == PHX_MC_OK);
+                &remaining_cells, 1) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   // A radius-edge bound below the regular tetrahedron's is unattainable: the
   // run ends unresolved after circumcenter insertions (if any) that keep a
@@ -1393,12 +1393,12 @@ void persistent_joint_quality_transition_preserves_identity() {
   int32_t run_status = -1;
   int64_t inserted = 0;
   int64_t refinement_unmet = 0;
-  PHX_CHECK(phx_mc_tet_mesh_refine(
+  PHX_CHECK(phx_mc_tet_mesh_refine_circumcenters(
                 mesh, generation, identity_bound, nullptr, 0, nullptr, 0,
                 nullptr, 0, nullptr, 0, 2.0,
                 static_cast<int64_t>(vertex_sizes.size()), vertex_sizes.data(),
                 &edit_status, &run_status, &inserted,
-                &refinement_unmet) == PHX_MC_OK);
+                &refinement_unmet, 1) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   PHX_CHECK(run_status == PHX_MC_OK || run_status == PHX_MC_UNRESOLVED);
 
@@ -1668,9 +1668,10 @@ void refinement_preserves_source_region_conflict_refusal() {
   int32_t run_status = -1;
   int64_t inserted = -1;
   int64_t unmet = -1;
-  PHX_CHECK(phx_mc_tet_mesh_refine(
+  PHX_CHECK(phx_mc_tet_mesh_refine_circumcenters(
                 mesh, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
-                0.5, 0, nullptr, &edit_status, &run_status, &inserted, &unmet) == PHX_MC_OK);
+                0.5, 0, nullptr, &edit_status, &run_status, &inserted, &unmet, 1) ==
+            PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   PHX_CHECK(run_status == PHX_MC_UNRESOLVED);
   PHX_CHECK(inserted == 0 && unmet == 2);
@@ -1712,20 +1713,20 @@ void persistent_quality_query_is_read_only() {
   if (mesh == nullptr) return;
   int32_t edit_status = -1, run_status = -1;
   int64_t inserted = -1, unmet = -1, quality_count = -1;
-  PHX_CHECK(phx_mc_tet_mesh_refine(
+  PHX_CHECK(phx_mc_tet_mesh_refine_circumcenters(
                 mesh, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                 2.0, 4, loose_sizes.data(), &edit_status, &run_status, &inserted,
-                &unmet) == PHX_MC_OK);
+                &unmet, 1) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED && run_status == PHX_MC_OK &&
             inserted == 0 && unmet == 0);
   PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
                 mesh, 0, 2.0, 10.0, 0.0, 0, &quality_count,
                 nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
   PHX_CHECK(quality_count == 0);
-  PHX_CHECK(phx_mc_tet_mesh_refine(
+  PHX_CHECK(phx_mc_tet_mesh_refine_circumcenters(
                 mesh, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                 0.5, 4, target_sizes.data(), &edit_status, &run_status, &inserted,
-                &unmet) == PHX_MC_OK);
+                &unmet, 1) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   uint64_t generation = 99;
   int32_t identity_bound = -1;
@@ -4219,10 +4220,10 @@ TetHazardRun tet_hazard_run(const TetHazardInputs& inputs) {
     run.statuses.push_back(phx_mc_tet_mesh_apply_edit(mesh, &relocation, &edit_status));
     run.statuses.push_back(edit_status);
     run.banks.push_back(capture_banks(mesh));
-    run.statuses.push_back(phx_mc_tet_mesh_refine(
+    run.statuses.push_back(phx_mc_tet_mesh_refine_circumcenters(
         mesh, run.banks.back().generation, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
         2.0, static_cast<int64_t>(sizes.size()), sizes.data(), &edit_status, &run_status,
-        &edits[0], &edits[1]));
+        &edits[0], &edits[1], 1));
     run.statuses.push_back(edit_status);
     run.statuses.push_back(run_status);
     run.banks.push_back(capture_banks(mesh));

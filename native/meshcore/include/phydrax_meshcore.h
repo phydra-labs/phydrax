@@ -843,15 +843,18 @@ PHX_MC_API int32_t phx_mc_tet_mesh_clear_implicit_facet_refusal(phx_mc_tet_mesh*
  * whose vertices all carry targets (no metric, no embedded segments, every
  * cell measurably positive) is first seeded with the body-centered cubic
  * lattice whose cells meet the smallest target, where the target is that
- * smallest value within 2 % and at least half a lattice spacing inside. */
-PHX_MC_API int32_t phx_mc_tet_mesh_refine(
+ * smallest value within 2 % and at least half a lattice spacing inside.
+ * parallelism >= 1 caps parallel feature-size queries without changing the
+ * order or results of refinement edits. */
+PHX_MC_API int32_t phx_mc_tet_mesh_refine_circumcenters(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
     const char* source_revision, int64_t source_revision_length,
     const char* source_map_id, int64_t source_map_id_length,
     const char* frame_id, int64_t frame_id_length, double radius_edge_bound,
     int64_t size_count, const double* sizes, int32_t* edit_status,
-    int32_t* run_status, int64_t* inserted_count, int64_t* unmet_count);
+    int32_t* run_status, int64_t* inserted_count, int64_t* unmet_count,
+    int32_t parallelism);
 /* Improve preserves every constrained face/segment and region. Flips,
  * collapses, relocations, and interior vertex insertions are accepted by one
  * sorted-score order; each cell's score is floored to multiples of
