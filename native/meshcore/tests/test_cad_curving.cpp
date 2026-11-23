@@ -507,20 +507,13 @@ void check_quadratic(const Surface& s, const TetMesh& mesh, const Quadratic& q,
     }
   }
   PHX_CHECK(q.stats.final_invalid + q.stats.final_unresolved == linear_failures);
-  // On the quality mesh the lift may leave initially invalid or unresolved
-  // only cells whose four vertices are all on the boundary: which such cap
-  // cell the fill builds beside a curved surface is the volume's choice
-  // (measured on the torus at h = 0.3: tens of them, all with a small P2
-  // Jacobian margin, with or without a given surface smoothing). Any cell
-  // with a volume vertex must lift valid, and every cell ends valid.
+  // The first lift can fail before harmonic repair, including in cells
+  // incident on interior vertices. A quality fill must finish certified.
   int64_t initial_failures = 0;
   PHX_CHECK(q.initial_decisions.size() == q.cell_decisions.size());
   for (std::size_t t = 0; t < q.initial_decisions.size(); ++t) {
     if (q.initial_decisions[t] == PHX_MC_QUADRATIC_VALIDITY_VALID) continue;
     ++initial_failures;
-    if (!quality) continue;
-    for (int k = 0; k < 4; ++k)
-      PHX_CHECK(static_cast<std::size_t>(mesh.tetrahedra[4 * t + k]) < s.dimensions.size());
   }
   PHX_CHECK(initial_failures == q.stats.initial_invalid + q.stats.initial_unresolved);
   if (quality) PHX_CHECK(q.stats.final_invalid + q.stats.final_unresolved == 0);
