@@ -419,9 +419,11 @@ does not replace the separate bidirectional CAD fidelity or embedding proof.
 
 The macOS results across all 12 rows beat every curving clock and certified
 every cell's determinant, but no row matched all reference quality fields. The
-quadric rows met the boundary residual thresholds and missed the minimum
-scaled Jacobian; the sphere rows also missed the boundary residual threshold.
-Keep F5 open until the combined gates pass.
+quadric rows met the boundary residual thresholds and missed minimum scaled
+Jacobian. Blending in the spherical chart's unit frame brought all six sphere
+rows within their boundary residual limits without losing validity or the
+curving time advantage. Minimum scaled Jacobian and determinant ratio still
+miss on all six sphere rows. Keep F5 open until the combined gates pass.
 
 ### Matched fixed-wall volume qualification
 

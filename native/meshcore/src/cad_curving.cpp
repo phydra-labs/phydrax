@@ -6,10 +6,12 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <numbers>
 #include <utility>
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "cad_faces.hpp"
 #include "floating_point_mode.hpp"
 #include "spatial_sort.hpp"
 
@@ -85,12 +87,60 @@ bool finite(const std::array<double, N>& p) noexcept {
   return std::all_of(p.begin(), p.end(), [](double x) { return std::isfinite(x); });
 }
 
+using ChartPoint = std::array<double, 2>;
+
+template <std::size_t N>
+ChartPoint sphere_site(const std::array<ChartPoint, N>& corners,
+                      const std::array<double, N>& weights, ChartPoint linear,
+                      const double* domain) {
+  constexpr double half_pi = std::numbers::pi / 2.0;
+  constexpr double period = 2.0 * std::numbers::pi;
+  Point direction{};
+  for (std::size_t i = 0; i < N; ++i) {
+    const auto [u, v] = corners[i];
+    if (!(v >= -half_pi && v <= half_pi)) return linear;
+    const double radial = v == -half_pi || v == half_pi ? 0.0 : std::cos(v);
+    direction[0] += weights[i] * (radial * std::cos(u));
+    direction[1] += weights[i] * (radial * std::sin(u));
+    direction[2] += weights[i] * std::sin(v);
+  }
+  const double equator = std::hypot(direction[0], direction[1]);
+  // An antipodal blend has no stable direction. Keep the chart interpolant
+  // rather than assigning it an arbitrary longitude or latitude.
+  if (!(std::hypot(equator, direction[2]) > 32.0 * std::numeric_limits<double>::epsilon()))
+    return linear;
+  const double u = equator == 0.0 ? linear[0]
+      : linear[0] + std::remainder(std::atan2(direction[1], direction[0]) - linear[0], period);
+  const double v = std::atan2(direction[2], equator);
+  if (domain && !(u >= domain[0] && u <= domain[1] && v >= domain[2] && v <= domain[3]))
+    return linear;
+  return {u, v};
+}
+
 enum class EdgeClaim { skip, lift, conflict };
 
 class CurvingSource {
  public:
   CurvingSource(const cad::CadGeometry& geometry, const CadQuadraticInput& input)
-      : geometry_(geometry), input_(input) {}
+      : geometry_(geometry), input_(input),
+        spherical_(static_cast<std::size_t>(geometry.surface_count()), 0) {
+    for (int32_t face = 0; face < geometry.surface_count(); ++face) {
+      SphereChart chart;
+      spherical_[static_cast<std::size_t>(face)] = sphere_chart(geometry, face, chart);
+    }
+  }
+
+  template <std::size_t N>
+  ChartPoint chart_site(int32_t face, const std::array<ChartPoint, N>& corners,
+                       const std::array<double, N>& weights, ChartPoint linear) const {
+    if (face < 0 || !spherical_[static_cast<std::size_t>(face)]) return linear;
+    const double* domains = geometry_.model().surface_parameter_domains;
+    // The parametric sphere is a linear image of its unit directions even
+    // through an affine wrapper. Blending in physical coordinates would
+    // not return a point on that chart when its frame is stretched.
+    return sphere_site(corners, weights, linear,
+                       domains == nullptr ? nullptr : domains + 4 * static_cast<int64_t>(face));
+  }
 
   template <int Order>
   int32_t validate() const {
@@ -208,7 +258,7 @@ class CurvingSource {
         if (pa >= 0 && pb < 0) p[pa] = q[pa];
         if (pb >= 0 && pa < 0) q[pb] = p[pb];
         const int32_t placed = lift_edge<Order>(geometry_.surface_node(face), p, q, a > b,
-                                               nodes.data() + stride * edge, workspace);
+                                               nodes.data() + stride * edge, workspace, face);
         if (placed != PHX_MC_OK) return placed;
       }
     }
@@ -237,22 +287,28 @@ class CurvingSource {
 
   template <int Order, std::size_t N>
   int32_t lift_edge(int32_t carrier, const std::array<double, N>& a, const std::array<double, N>& b,
-                    bool reverse, Point* nodes, cad::EvaluationWorkspace& workspace) const {
+                    bool reverse, Point* nodes, cad::EvaluationWorkspace& workspace,
+                    int32_t face = -1) const {
     if constexpr (Order == 2) {
       std::array<double, N> middle;
       for (std::size_t i = 0; i < N; ++i) middle[i] = 0.5 * (a[i] + b[i]);
+      if constexpr (N == 2) middle = chart_site(face, std::array{a, b}, {0.5, 0.5}, middle);
       Point xyz;
       if (!geometry_.jets(carrier, middle.data(), 0, xyz.data(), workspace))
         return PHX_MC_INVALID_INPUT;
       nodes[0] = xyz;
     } else {
-      // Compute in physical endpoint order, but never go outside the owning
-      // chart interval even for equal parameters or at rounding limits.
+      // Compute in physical endpoint order, retaining the owning chart.
       const auto& p = reverse ? b : a;
       const auto& q = reverse ? a : b;
       if (!finite(p) || !finite(q)) return PHX_MC_NONFINITE_INPUT;
-      const auto near_p = third_point(p, q);
-      const auto near_q = third_point(q, p);
+      auto near_p = third_point(p, q);
+      auto near_q = third_point(q, p);
+      if constexpr (N == 2) {
+        const auto ends = std::array{p, q};
+        near_p = chart_site(face, ends, {2.0 / 3.0, 1.0 / 3.0}, near_p);
+        near_q = chart_site(face, ends, {1.0 / 3.0, 2.0 / 3.0}, near_q);
+      }
       if (!geometry_.jets(carrier, near_p.data(), 0, nodes[0].data(), workspace) ||
           !geometry_.jets(carrier, near_q.data(), 0, nodes[1].data(), workspace))
         return PHX_MC_INVALID_INPUT;
@@ -293,6 +349,7 @@ class CurvingSource {
 
   const cad::CadGeometry& geometry_;
   const CadQuadraticInput& input_;
+  std::vector<uint8_t> spherical_;
 };
 
 class QuadraticCurving {
@@ -530,17 +587,18 @@ Face sorted_face(Face corners) {
   return corners;
 }
 
-std::array<double, 2> chart_centroid(const int32_t* triangle, const double* uv) {
+std::array<ChartPoint, 3> chart_corners(const int32_t* triangle, const double* uv) {
   std::array<int, 3> order{0, 1, 2};
   std::sort(order.begin(), order.end(), [&](int a, int b) { return triangle[a] < triangle[b]; });
   const auto corner = [&](int i) {
     return std::array{uv[2 * order[i]], uv[2 * order[i] + 1]};
   };
-  return centroid(corner(0), corner(1), corner(2));
+  return {corner(0), corner(1), corner(2)};
 }
 
-int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CadQuadraticInput& input,
-                          std::size_t edge_nodes, CadCubicMesh& result) {
+int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource& source,
+                          const CadQuadraticInput& input, std::size_t edge_nodes,
+                          CadCubicMesh& result) {
   // Sort physical triples with CAD chart declarations (negative slots) before
   // cell incidences. A CAD interface may be owned by two cells; the exterior
   // must have a chart, and a face cannot declare two distinct owning rows.
@@ -586,9 +644,13 @@ int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CadQuadraticIn
     Point& xyz = result.nodes[node];
     if (on_cad) {
       const int64_t row = ~owner;
-      const auto uv = chart_centroid(input.triangles + 3 * row, input.triangle_uv + 6 * row);
-      const int32_t face = geometry.surface_node(input.triangle_patches[row]);
-      if (!geometry.jets(face, uv.data(), 0, xyz.data(), workspace)) return PHX_MC_INVALID_INPUT;
+      const auto corners = chart_corners(input.triangles + 3 * row, input.triangle_uv + 6 * row);
+      const auto patch = input.triangle_patches[row];
+      constexpr double third = 1.0 / 3.0;
+      const auto uv = source.chart_site(patch, corners, {third, third, third},
+                                        centroid(corners[0], corners[1], corners[2]));
+      if (!geometry.jets(geometry.surface_node(patch), uv.data(), 0, xyz.data(), workspace))
+        return PHX_MC_INVALID_INPUT;
     } else {
       xyz = centroid(point_at(input.points, key[0]), point_at(input.points, key[1]),
                      point_at(input.points, key[2]));
@@ -661,7 +723,7 @@ int32_t cad_cubic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInpu
     result.cell_nodes[t][2 * e] = 2 * edge + reverse;
     result.cell_nodes[t][2 * e + 1] = 2 * edge + !reverse;
   });
-  const int32_t faces = place_cubic_faces(geometry, input, 2 * edges.size(), result);
+  const int32_t faces = place_cubic_faces(geometry, source, input, 2 * edges.size(), result);
   if (faces != PHX_MC_OK) return faces;
   return place_cubic_edges(source, input, edges, result.nodes);
 }

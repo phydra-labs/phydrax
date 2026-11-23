@@ -1130,6 +1130,12 @@ degree-one proof of embedding when its charts meet the radial tests.
 Unsupported maps or unresolved bounds are refused. Archive restore
 re-proves the same map and source.
 
+On spherical charts, curving proposes surface-owned nodes by normalizing
+the weighted corner directions in the unit chart before applying the physical
+frame. This also works with stretched frames. Curve-owned edges still use
+their authored curve parameters. The proof checks the resulting map, not
+the placement rule.
+
 `PHX_MESHCORE_THREADS` controls native CAD face preparation. Faces share
 the already discretized curves, run in bounded batches, and are assembled
 in source order, so the worker count does not change the mesh or findings.

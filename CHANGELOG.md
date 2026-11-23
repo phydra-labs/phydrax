@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- P2 and P3 curving place surface-owned nodes on spherical charts by
+  blending unit directions before applying the chart's physical frame.
+  Curve-owned placement and the affine mesh are unchanged. Newly constructed
+  curved maps on spherical charts can have new geometry and certificate IDs.
 - Native single-material CAD solids can construct cubic tetrahedral
   geometry. Deferred proof checks the actual degree-three map, including
   both directed CAD trace distances; cold archive restore replays the same

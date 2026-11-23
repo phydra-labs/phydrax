@@ -642,6 +642,51 @@ void sphere(bool quality) {
   PHX_CHECK(pole_edges > 0);
 }
 
+void stretched_sphere_places_nodes_in_the_source_chart() {
+  Bank bank = sphere_bank();
+  Surface surface;
+  TetMesh mesh;
+  if (!surface_mesh(bank.model(), 0.35, surface) || !fill(surface, mesh, true)) return;
+  constexpr double scale[]{1.5, 0.75, 1.25};
+  constexpr double shift[]{0.25, -0.5, 0.125};
+  const auto place = [&](int32_t child) {
+    const auto node = static_cast<int32_t>(bank.kinds.size());
+    bank.kinds.push_back(PHX_MC_CAD_NODE_AFFINE);
+    bank.integers.insert(bank.integers.end(), {child, 3});
+    bank.integer_offsets.push_back(static_cast<int64_t>(bank.integers.size()));
+    bank.reals.insert(bank.reals.end(), {scale[0], 0, 0, 0, scale[1], 0, 0, 0, scale[2],
+                                         shift[0], shift[1], shift[2]});
+    bank.real_offsets.push_back(static_cast<int64_t>(bank.reals.size()));
+    return node;
+  };
+  bank.surface_nodes[0] = place(bank.surface_nodes[0]);
+  bank.curve_nodes[0] = place(bank.curve_nodes[0]);
+  for (auto* bank_points : {&bank.corners, &mesh.points})
+    for (std::size_t i = 0; i < bank_points->size(); ++i)
+      (*bank_points)[i] = scale[i % 3] * (*bank_points)[i] + shift[i % 3];
+
+  const Quadratic curved = curve(bank.model(), surface, mesh);
+  PHX_CHECK(curved.status == PHX_MC_OK);
+  if (curved.status != PHX_MC_OK) return;
+  PHX_CHECK(curved.stats.final_invalid == 0 && curved.stats.final_unresolved == 0);
+  std::vector<bool> straight(curved.edge_kinds.size());
+  for (std::size_t i = 0; i < curved.records.size(); i += 2)
+    straight[static_cast<std::size_t>(curved.records[i])] = true;
+  std::size_t measured = 0;
+  for (std::size_t e = 0; e < curved.edge_kinds.size(); ++e) {
+    if (straight[e] || curved.edge_kinds[e] != PHX_MC_CAD_EDGE_SURFACE) continue;
+    auto direction = midpoint(mesh.points, curved.edges[2 * e], curved.edges[2 * e + 1]);
+    for (int axis = 0; axis < 3; ++axis)
+      direction[axis] = (direction[axis] - shift[axis]) / scale[axis];
+    const double norm = std::hypot(direction[0], direction[1], direction[2]);
+    for (int axis = 0; axis < 3; ++axis)
+      PHX_CHECK_NEAR(curved.nodes[3 * e + axis],
+                     shift[axis] + scale[axis] * direction[axis] / norm, 2e-14);
+    ++measured;
+  }
+  PHX_CHECK(measured > 0);
+}
+
 void torus(bool quality) {
   const Bank bank = torus_bank();
   const phx_mc_cad_model model = bank.model();
@@ -892,5 +937,6 @@ int main() {
     quadric(quality);
   }
   bore_repairs();
+  stretched_sphere_places_nodes_in_the_source_chart();
   return phx::mc::test::finish("test_cad_curving");
 }
