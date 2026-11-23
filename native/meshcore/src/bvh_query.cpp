@@ -738,6 +738,7 @@ int32_t locate_one(const phx_mc_bvh_tree_view& tree, const LocateTree& packed,
                    double tolerance, const double* point, LocateRange range,
                    std::vector<Accepted>& accepted) {
   accepted.clear();
+  if (tree.item_count == 0) return PHX_MC_LOCATE_OUTSIDE;
   bool candidate_seen = false;
   bool valid_seen = false;
   for (std::size_t next = range.first; next < range.second;) {

@@ -714,6 +714,24 @@ void test_tetrahedron_locate_refuses_malformed_input_without_writes() {
   check_invalid(valid, cells);
 }
 
+void test_tetrahedron_locate_handles_empty_tree_item_banks() {
+  const double lower[]{0, 0, 0}, upper[]{1, 1, 1};
+  const int64_t absent = -1, leaf = 0;
+  const phx_mc_bvh_tree_view view{1, 1, 1, 0, lower, upper, nullptr, &absent, &absent,
+                                  &leaf, &absent, nullptr, nullptr};
+  const double points[]{0.2, 0.2, 0.2, NAN, 0.0, 0.0};
+  int32_t found[2], status[2], containing[2], candidates[2];
+  double reference[6], residual[2], condition[2], candidate_reference[6];
+  const int32_t result = phx_mc_bvh_query_locate_tetrahedra(
+      &view, 0, nullptr, nullptr, nullptr, 0.0, 2, points, 1, found, reference, residual,
+      condition, status, containing, candidates, candidate_reference, 1);
+  PHX_CHECK(result == PHX_MC_OK);
+  if (result != PHX_MC_OK) return;
+  PHX_CHECK(status[0] == PHX_MC_LOCATE_OUTSIDE);
+  PHX_CHECK(status[1] == PHX_MC_LOCATE_NONFINITE);
+  PHX_CHECK(found[0] == -1 && found[1] == -1 && containing[0] == 0 && containing[1] == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -723,5 +741,6 @@ int main() {
   test_winding_routes();
   test_tetrahedron_locate();
   test_tetrahedron_locate_refuses_malformed_input_without_writes();
+  test_tetrahedron_locate_handles_empty_tree_item_banks();
   return phx::mc::test::finish("test_bvh_query");
 }
