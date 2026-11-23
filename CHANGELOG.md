@@ -103,6 +103,9 @@
   mappings in one native call, using a bounded caller-owned buffer.
 - Native CAD failures before volume recovery report the surface stage and
   retain every curve interval and face finding with per-entity counts.
+- Native CAD retries blocked faces with bounded subdivision of shared source
+  chords. First-pass findings remain separate from the final result, and
+  requested sizing and fidelity limits are unchanged.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6
