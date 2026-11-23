@@ -72,6 +72,14 @@ struct LocateTree {
 
 LocateTree prepare_locate_tree(const phx_mc_bvh_tree_view* tree, double tolerance);
 
+struct LocateItems {
+  int64_t item_count;
+  int64_t leaf_width;
+  const int64_t* leaf_items;
+  const double* item_min;
+  const double* item_max;
+};
+
 struct LocateOutput {
   int32_t* cells;
   double* reference;
@@ -83,7 +91,7 @@ struct LocateOutput {
   double* candidate_reference;
 };
 
-int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const LocateTree& nodes,
+int32_t tetrahedron_locate(const LocateItems& tree, const LocateTree& nodes,
                            const double* vertices, const int32_t* cells,
                            const uint8_t* cell_mask, double tolerance,
                            int64_t count, const double* points, int32_t capacity,

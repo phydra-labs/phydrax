@@ -14,13 +14,13 @@ library keep their JAX routes.
 from __future__ import annotations
 
 import ctypes
-from typing import NamedTuple
+from typing import final, NamedTuple
 
 import jax
 import numpy as np
 from jax.core import Tracer
 
-from ._meshcore import _raise_for_call, load_meshcore, meshcore_available
+from ._meshcore import _raise_for_call, load_meshcore, meshcore_available, MeshcoreLibrary
 
 
 # (node_min, node_max, left, right, leaf, leaf_items, item_min, item_max):
@@ -348,11 +348,9 @@ class TetrahedronLocation(NamedTuple):
 
 
 def _locate_call(
-    view: _TreeView,
-    vertices: np.ndarray,
-    cells: np.ndarray,
+    library: MeshcoreLibrary,
+    handle: ctypes.c_void_p,
     mask: np.ndarray | None,
-    tolerance: float,
     queries: np.ndarray,
     capacity: int,
     /,
@@ -370,80 +368,93 @@ def _locate_call(
         np.empty((count, capacity), dtype=np.int32),
         np.empty((count, capacity, 3), dtype=np.float64),
     )
-    status = load_meshcore()["phx_mc_bvh_query_locate_tetrahedra"](
-        ctypes.addressof(view),
-        vertices.shape[0],
-        _pointer(vertices),
-        _pointer(cells),
+    status = library["phx_mc_affine_tet_locator_query"](
+        handle,
         None if mask is None else _pointer(mask),
-        tolerance,
         count,
         _pointer(queries),
         capacity,
         *(_pointer(array) for array in result),
         exact_kernel_parallelism(),
     )
-    _raise_for_call(status, "bvh_query_locate_tetrahedra")
+    _raise_for_call(status, "affine_tet_locator_query")
     return result
 
 
-def tetrahedron_locate(
-    tree: HostTree,
-    vertices: np.ndarray,
-    cells: np.ndarray,
-    points: np.ndarray,
-    /,
-    *,
-    cell_mask: np.ndarray | None,
-    tolerance: float,
-) -> TetrahedronLocation:
-    """Locate points in positively oriented affine tetrahedra, lowest cell on ties.
+@final
+class AffineTetrahedronLocator:
+    """Checked native preorder and the immutable banks it borrows."""
 
-    Candidate lists are as wide as the most accepting cells of any point; the
-    few points beyond the first pass's width are located again at full width.
-    """
-    view, arrays = tree_view(tree, point_query=True)
-    vertex_values, cell_values = _simplices(vertices, cells, 4, tree[6].shape[0])
-    mask = None
-    if cell_mask is not None:
-        mask = np.ascontiguousarray(cell_mask, dtype=np.uint8)
-        if mask.shape != (cell_values.shape[0],):
-            raise ValueError("cell_mask must have one entry per cell.")
-    queries = _points(points)
-    capacity = 4
-    result = _locate_call(
-        view, vertex_values, cell_values, mask, tolerance, queries, capacity
-    )
-    width = max(1, int(np.max(result.containing, initial=0)))
-    if width > capacity:
-        wide = np.flatnonzero(result.containing > capacity)
-        again = _locate_call(
-            view, vertex_values, cell_values, mask, tolerance, queries[wide], width
+    __slots__ = ("_banks", "_cell_count", "_handle", "_library")
+
+    def __init__(
+        self,
+        library: MeshcoreLibrary,
+        tree: HostTree,
+        vertices: np.ndarray,
+        cells: np.ndarray,
+        tolerance: float,
+        /,
+    ) -> None:
+        self._library = library
+        self._handle = ctypes.c_void_p()
+        view, arrays = tree_view(tree, point_query=True)
+        vertex_values, cell_values = _simplices(vertices, cells, 4, view.item_count)
+        self._cell_count = cell_values.shape[0]
+        # Packed nodes own their bounds and links. Only leaf items, item
+        # bounds and the tetrahedral banks must outlive preparation.
+        self._banks = (*arrays[5:], vertex_values, cell_values)
+        status = library["phx_mc_affine_tet_locator_prepare"](
+            ctypes.addressof(view),
+            vertex_values.shape[0],
+            _pointer(vertex_values),
+            _pointer(cell_values),
+            tolerance,
+            ctypes.byref(self._handle),
         )
-        candidates = np.full((queries.shape[0], width), -1, dtype=np.int32)
-        candidate_reference = np.zeros((queries.shape[0], width, 3), dtype=np.float64)
-        candidates[:, :capacity] = result.candidates
-        candidate_reference[:, :capacity] = result.candidate_reference
-        candidates[wide] = again.candidates
-        candidate_reference[wide] = again.candidate_reference
-        result = result._replace(
-            candidates=candidates, candidate_reference=candidate_reference
-        )
-    else:
-        result = result._replace(
+        _raise_for_call(status, "affine_tet_locator_prepare")
+
+    def __del__(self) -> None:
+        self._library["phx_mc_affine_tet_locator_free"](self._handle)
+
+    def locate(
+        self, points: np.ndarray, /, *, cell_mask: np.ndarray | None
+    ) -> TetrahedronLocation:
+        """Return every accepting cell in ascending order, with native evidence."""
+        mask = None
+        if cell_mask is not None:
+            mask = np.ascontiguousarray(cell_mask, dtype=np.uint8)
+            if mask.shape != (self._cell_count,):
+                raise ValueError("cell_mask must have one entry per cell.")
+        queries = _points(points)
+        capacity = 4
+        library, handle = self._library, self._handle
+        result = _locate_call(library, handle, mask, queries, capacity)
+        width = max(1, int(np.max(result.containing, initial=0)))
+        if width > capacity:
+            wide = np.flatnonzero(result.containing > capacity)
+            again = _locate_call(library, handle, mask, queries[wide], width)
+            candidates = np.full((queries.shape[0], width), -1, dtype=np.int32)
+            candidate_reference = np.zeros((queries.shape[0], width, 3), dtype=np.float64)
+            candidates[:, :capacity] = result.candidates
+            candidate_reference[:, :capacity] = result.candidate_reference
+            candidates[wide] = again.candidates
+            candidate_reference[wide] = again.candidate_reference
+            return result._replace(
+                candidates=candidates, candidate_reference=candidate_reference
+            )
+        return result._replace(
             candidates=result.candidates[:, :width],
             candidate_reference=result.candidate_reference[:, :width],
         )
-    del arrays
-    return result
 
 
 __all__ = [
+    "AffineTetrahedronLocator",
     "HostTree",
     "TetrahedronLocation",
     "TriangleNearest",
     "native_point_queries",
-    "tetrahedron_locate",
     "tree_view",
     "triangle_nearest",
     "triangle_signed_distance",

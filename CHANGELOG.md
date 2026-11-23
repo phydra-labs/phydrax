@@ -18,11 +18,12 @@
 - Quadratic CAD curving groups edge incidences with the native stable key
   sort and prepares the repair workset only when initial validity requires
   it. Edge numbering, coordinates, and validity decisions are unchanged.
-- Native affine tetrahedron location packs the validated search tree in
-  preorder and shares common tree descent across nearby queries. Location
-  status, tie ordering, reference coordinates, and numerical evidence retain
-  the same rules. An empty item bank reports finite queries outside without
-  dereferencing cell data.
+- Native affine tetrahedron location validates and packs the search tree once
+  per live locator. Warm batches reuse the checked preorder and share common
+  descent across nearby queries. The prepared handle does not change the
+  locator's PyTree, identity, tie ordering, or numerical evidence. C clients
+  use `phx_mc_affine_tet_locator_prepare`, `phx_mc_affine_tet_locator_query`,
+  and `phx_mc_affine_tet_locator_free`.
 - Large native 3D point sets prepare Hilbert keys and copy coordinates into
   insertion order on the existing workers. Box quantization, stable key
   ordering, duplicate resolution, and all exported triangulation banks are
@@ -276,7 +277,7 @@
   tetrahedral case took 72.9 s and left 116 orphans before.
 - Native BVH point queries over the one packed `PackedBVH`
   (`phx_mc_bvh_query_nearest_triangles`, `phx_mc_bvh_query_signed_distance`,
-  `phx_mc_bvh_query_winding`, `phx_mc_bvh_query_locate_tetrahedra`).
+  `phx_mc_bvh_query_winding`, `phx_mc_affine_tet_locator_query`).
   `TriangleBVH.query`, `nearest_faces`, `winding_number`,
   `fast_winding_number`, the new `signed_distance(points, sign=...)`
   (`SignedDistanceSign`: `"pseudonormal"` or `"winding_number"`) and

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
 #include <random>
 #include <tuple>
 #include <utility>
@@ -20,6 +21,8 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr std::size_t kParallelQueryCount = 4099;
+using Locator = std::unique_ptr<phx_mc_affine_tet_locator,
+                                decltype(&phx_mc_affine_tet_locator_free)>;
 
 struct Tree {
   std::vector<double> node_min, node_max, node_size;
@@ -603,7 +606,7 @@ void test_tetrahedron_locate() {
       }
     }
   }
-  const Tree tree = build_tree(vertices, cells, 4, 4);
+  Tree tree = build_tree(vertices, cells, 4, 4);
   const phx_mc_bvh_tree_view view = tree.view();
   std::vector<double> points = random_points(kParallelQueryCount - 3, 1.6, 13);
   for (double& value : points) value += 1.5;
@@ -616,10 +619,19 @@ void test_tetrahedron_locate() {
   std::vector<double> reference(3 * count), residual(count), condition(count),
       candidate_reference(3 * count * capacity);
   const int64_t vertex_count = static_cast<int64_t>(vertices.size() / 3);
+  phx_mc_affine_tet_locator* handle = nullptr;
+  const int32_t prepared = phx_mc_affine_tet_locator_prepare(
+      &view, vertex_count, vertices.data(), cells.data(), tolerance, &handle);
+  PHX_CHECK(prepared == PHX_MC_OK);
+  if (prepared != PHX_MC_OK) return;
+  const Locator locator(handle, phx_mc_affine_tet_locator_free);
+  // Node bounds and links may be discarded after packing, unlike item banks.
+  std::fill(tree.node_min.begin(), tree.node_min.end(), INFINITY);
+  std::fill(tree.left.begin(), tree.left.end(), -1);
   const auto locate = [&](const uint8_t* mask, int32_t workers, auto&... output) {
-    return phx_mc_bvh_query_locate_tetrahedra(
-        &view, vertex_count, vertices.data(), cells.data(), mask, tolerance,
-        static_cast<int64_t>(count), points.data(), capacity, output.data()..., workers);
+    return phx_mc_affine_tet_locator_query(
+        locator.get(), mask, static_cast<int64_t>(count), points.data(), capacity,
+        output.data()..., workers);
   };
   check_query_workers(
       [&](int32_t workers, auto&... output) { return locate(nullptr, workers, output...); },
@@ -672,34 +684,37 @@ void test_tetrahedron_locate() {
   const std::vector<int32_t> flat_cell = {0, 1, 2, 3};
   const Tree flat_tree = build_tree(flat, flat_cell, 4, 1);
   const phx_mc_bvh_tree_view flat_view = flat_tree.view();
+  phx_mc_affine_tet_locator* flat_handle = nullptr;
+  const int32_t flat_prepared = phx_mc_affine_tet_locator_prepare(
+      &flat_view, 4, flat.data(), flat_cell.data(), 0.0, &flat_handle);
+  PHX_CHECK(flat_prepared == PHX_MC_OK);
+  if (flat_prepared != PHX_MC_OK) return;
+  const Locator flat_locator(flat_handle, phx_mc_affine_tet_locator_free);
   const double inside[3] = {0.2, 0.2, 0.0};
-  PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
-                &flat_view, 4, flat.data(), flat_cell.data(), nullptr, 0.0, 1, inside, 1,
+  PHX_CHECK(phx_mc_affine_tet_locator_query(
+                flat_locator.get(), nullptr, 1, inside, 1,
                 found.data(), reference.data(), residual.data(), condition.data(), status.data(),
                 containing.data(), candidates.data(), candidate_reference.data(), 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_LOCATE_DEGENERATE_CELL && found[0] == -1);
-  PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
-                &flat_view, 4, flat.data(), flat_cell.data(), nullptr, -1.0, 1, inside, 1,
-                found.data(), reference.data(), residual.data(), condition.data(), status.data(),
-                containing.data(), candidates.data(), candidate_reference.data(), 1) ==
+  phx_mc_affine_tet_locator* rejected = nullptr;
+  PHX_CHECK(phx_mc_affine_tet_locator_prepare(
+                &flat_view, 4, flat.data(), flat_cell.data(), -1.0, &rejected) ==
             PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(rejected == nullptr);
 }
 
 void test_tetrahedron_locate_refuses_malformed_input_without_writes() {
   const std::vector<double> vertices{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1};
   const std::vector<int32_t> cells{0, 1, 2, 3, 1, 2, 3, 4};
-  const double query[]{0.2, 0.2, 0.2};
   Tree tree = build_tree(vertices, cells, 4, 1);
   const auto valid = tree.view();
-  int32_t found = 42, status = 42, containing = 42, candidate = 42;
-  double reference[3]{}, residual = 42.0, condition = 42.0, candidate_reference[3]{};
   const auto check_invalid = [&](const phx_mc_bvh_tree_view& view,
                                  const std::vector<int32_t>& rows) {
-    PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
-                  &view, 5, vertices.data(), rows.data(), nullptr, 0.0, 1, query, 1, &found,
-                  reference, &residual, &condition, &status, &containing, &candidate,
-                  candidate_reference, 1) == PHX_MC_INVALID_ARGUMENT);
-    PHX_CHECK(found == 42 && status == 42 && containing == 42 && candidate == 42);
+    phx_mc_affine_tet_locator* locator = nullptr;
+    PHX_CHECK(phx_mc_affine_tet_locator_prepare(
+                  &view, 5, vertices.data(), rows.data(), 0.0, &locator) ==
+              PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(locator == nullptr);
   };
   auto bad_cells = cells;
   for (int32_t invalid : {-1, 5}) {
@@ -719,11 +734,17 @@ void test_tetrahedron_locate_handles_empty_tree_item_banks() {
   const int64_t absent = -1, leaf = 0;
   const phx_mc_bvh_tree_view view{1, 1, 1, 0, lower, upper, nullptr, &absent, &absent,
                                   &leaf, &absent, nullptr, nullptr};
+  phx_mc_affine_tet_locator* handle = nullptr;
+  const int32_t prepared =
+      phx_mc_affine_tet_locator_prepare(&view, 0, nullptr, nullptr, 0.0, &handle);
+  PHX_CHECK(prepared == PHX_MC_OK);
+  if (prepared != PHX_MC_OK) return;
+  const Locator locator(handle, phx_mc_affine_tet_locator_free);
   const double points[]{0.2, 0.2, 0.2, NAN, 0.0, 0.0};
   int32_t found[2], status[2], containing[2], candidates[2];
   double reference[6], residual[2], condition[2], candidate_reference[6];
-  const int32_t result = phx_mc_bvh_query_locate_tetrahedra(
-      &view, 0, nullptr, nullptr, nullptr, 0.0, 2, points, 1, found, reference, residual,
+  const int32_t result = phx_mc_affine_tet_locator_query(
+      locator.get(), nullptr, 2, points, 1, found, reference, residual,
       condition, status, containing, candidates, candidate_reference, 1);
   PHX_CHECK(result == PHX_MC_OK);
   if (result != PHX_MC_OK) return;

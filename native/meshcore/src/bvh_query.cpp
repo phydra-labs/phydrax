@@ -733,7 +733,7 @@ LocateRange shared_range(const LocateTree& tree, const double* points,
 }
 
 // Locates one finite point; returns its status.
-int32_t locate_one(const phx_mc_bvh_tree_view& tree, const LocateTree& packed,
+int32_t locate_one(const LocateItems& tree, const LocateTree& packed,
                    const double* vertices, const int32_t* cells, const uint8_t* cell_mask,
                    double tolerance, const double* point, LocateRange range,
                    std::vector<Accepted>& accepted) {
@@ -830,7 +830,7 @@ void cell_evidence(const double* vertices, const int32_t* cell, const double* re
 
 }  // namespace
 
-int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const LocateTree& nodes,
+int32_t tetrahedron_locate(const LocateItems& tree, const LocateTree& nodes,
                            const double* vertices, const int32_t* cells,
                            const uint8_t* cell_mask, double tolerance,
                            int64_t count, const double* points, int32_t capacity,

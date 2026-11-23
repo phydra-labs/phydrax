@@ -549,6 +549,10 @@ invalid points and their `FieldQueryStatus`.
 
 Affine interval and n-D simplex queries use `PreparedSimplicialCellLocator`;
 every containing cell is reported, never replaced by a nearest cell.
+Concrete float64 affine tetrahedron locators with meshcore available validate
+and pack their native traversal once. The prepared index belongs to the live
+locator, not its PyTree or persistence data. Traced calls still use the JAX
+route and return the same location evidence.
 Quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
 Support geometry still follows exact region admission: warped hex needs an
 explicit curved witness. Prepared quadrature/node interpolation also supports

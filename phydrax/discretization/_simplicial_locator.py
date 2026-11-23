@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import threading
+import weakref
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -22,10 +24,11 @@ from .._bvh import (
     point_select_leaf_items,
     prepare_bvh,
 )
-from .._bvh_native import native_point_queries, tetrahedron_locate
+from .._bvh_native import AffineTetrahedronLocator, native_point_queries
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._fixed_order import cross3, dot3, norm3, ordered_sum, product, root
 from .._jax_config import x64_enabled
+from .._meshcore import load_meshcore, MeshcoreLibrary
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import Bool, checked, ConvertibleToArray, Dim, Float, Int32, Integer
@@ -42,6 +45,18 @@ from .fem._cell_map import PreparedFiniteElementCellMap
 _NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 # Rows (point x candidate x seed) Newton-resolved at once by a locator.
 _RESOLVE_ROW_BUDGET = 1 << 14
+
+# Host-native preparation is derived, not part of the locator's PyTree or ID.
+# Cache only immutable arrays; the handle must not retain its owning locator.
+_NATIVE_LOCATORS: dict[
+    int,
+    tuple[
+        weakref.ref[PreparedSimplicialCellLocator],
+        MeshcoreLibrary,
+        AffineTetrahedronLocator,
+    ],
+] = {}
+_NATIVE_LOCATORS_LOCK = threading.Lock()
 
 
 @final
@@ -240,6 +255,8 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 "policy": policy.policy_id,
             }
         )
+        if self._native_affine_tetrahedra(values, None):
+            self._native_locator()
 
     @property
     def dimension(self) -> int:
@@ -362,6 +379,34 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             )
         )
 
+    def _native_locator(self) -> AffineTetrahedronLocator:
+        library = load_meshcore()
+
+        def prepare() -> AffineTetrahedronLocator:
+            return AffineTetrahedronLocator(
+                library,
+                host_tree_arrays(self.bvh),
+                np.asarray(self.coordinates),
+                np.asarray(self.cells),
+                self.policy.reference_tolerance,
+            )
+
+        arrays = jax.tree.leaves((self.coordinates, self.cells, self.bvh))
+        if any(isinstance(array, Array) and array.is_deleted() for array in arrays):
+            raise RuntimeError("A native affine locator operand was deleted.")
+        if not all(isinstance(array, Array) for array in arrays):
+            return prepare()
+        key = id(self)
+        with _NATIVE_LOCATORS_LOCK:
+            entry = _NATIVE_LOCATORS.get(key)
+            if entry is not None and entry[0]() is self and entry[1] is library:
+                return entry[2]
+            prepared = prepare()
+            if entry is None:
+                weakref.finalize(self, _NATIVE_LOCATORS.pop, key, None)
+            _NATIVE_LOCATORS[key] = (weakref.ref(self), library, prepared)
+            return prepared
+
     def _resolve_affine_tetrahedra(
         self,
         values: Array,
@@ -373,7 +418,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         """Affine tetrahedra by exact signed-volume ratios, lowest accepting cell.
 
         The schedule of `phydrax._fixed_order` and the native
-        `phx_mc_bvh_query_locate_tetrahedra` agree bit for bit: a candidate with a
+        `phx_mc_affine_tet_locator_query` agree bit for bit: a candidate with a
         finite positive determinant accepts `r >= -tol`, `sum(r) <= 1 + tol`.
         Reference coordinates are exact, so located points report zero
         iterations and no seed fallback.
@@ -490,13 +535,9 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
 
         The native search is always complete and lists every accepting cell.
         """
-        located = tetrahedron_locate(
-            host_tree_arrays(self.bvh),
-            np.asarray(self.coordinates),
-            np.asarray(self.cells),
+        located = self._native_locator().locate(
             np.asarray(values),
             cell_mask=None if cell_mask is None else np.asarray(cell_mask),
-            tolerance=self.policy.reference_tolerance,
         )
         inside = located.status == int(CellLocationStatus.LOCATED)
         reference = located.reference

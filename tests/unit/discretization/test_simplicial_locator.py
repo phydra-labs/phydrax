@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import weakref
 from typing import Any
 
 import jax
@@ -162,3 +163,27 @@ def test_native_affine_location_statuses() -> None:
     assert int(located.candidate_count[0]) == 24
     assert int(located.cell_ids[0]) == min(_accepted(located.candidate_cells)[0])
     assert np.asarray(located.cell_ids[1:]).tolist() == [-1, -1]
+
+
+def test_affine_location_works_after_pytree_reconstruction_releases_original() -> None:
+    locator = _locator(2)
+    points = np.asarray(((1.0, 1.0, 1.0), (-1.0, 0.0, 0.0)), dtype=np.float64)
+    expected = locator.locate(points)
+    restored = jax.tree.map(lambda array: array, locator)
+    original = weakref.ref(locator)
+    del locator
+    assert original() is None
+
+    actual = restored.locate(points)
+    assert actual.locator_id == expected.locator_id
+    _assert_identical(actual.candidate_cells, expected.candidate_cells)
+    _assert_identical(actual.reference_coordinates, expected.reference_coordinates)
+
+
+def test_cached_affine_location_cannot_use_deleted_geometry() -> None:
+    locator = _locator(2)
+    points = np.asarray(((0.1, 0.2, 0.3),), dtype=np.float64)
+    assert locator.locate(points).successful[0]
+    locator.coordinates.delete()
+    with pytest.raises(RuntimeError, match="deleted"):
+        locator.locate(points)

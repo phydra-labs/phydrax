@@ -6,11 +6,20 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 #include "bvh_query.hpp"
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
+
+struct phx_mc_affine_tet_locator {
+  phx::mc::bvh::LocateTree nodes;
+  phx::mc::bvh::LocateItems items;
+  const double* vertices;
+  const int32_t* cells;
+  double tolerance;
+};
 
 namespace {
 
@@ -144,30 +153,51 @@ int32_t phx_mc_bvh_query_winding(
   });
 }
 
-int32_t phx_mc_bvh_query_locate_tetrahedra(
+int32_t phx_mc_affine_tet_locator_prepare(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
-    const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
-    const double* points, int32_t capacity, int32_t* cells_out, double* reference,
-    double* residual, double* condition, int32_t* status, int32_t* containing,
-    int32_t* candidates, double* candidate_reference, int32_t parallelism) {
-  if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
+    const int32_t* cells, double tolerance, phx_mc_affine_tet_locator** locator) {
+  if (locator == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    if (capacity < 1 || !std::isfinite(tolerance) || tolerance < 0.0 ||
-        !query_points_valid(vertex_count, count, points) ||
-        !phx::mc::addressable(count, int64_t{capacity} * 3, sizeof(double)) ||
-        (count > 0 && (cells_out == nullptr || reference == nullptr || residual == nullptr ||
-                       condition == nullptr || status == nullptr || containing == nullptr ||
-                       candidates == nullptr || candidate_reference == nullptr))) {
+    if (!std::isfinite(tolerance) || tolerance < 0.0 ||
+        !phx::mc::addressable(vertex_count, 3, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const auto nodes = phx::mc::bvh::prepare_locate_tree(tree, tolerance);
+    auto nodes = phx::mc::bvh::prepare_locate_tree(tree, tolerance);
     if (!nodes.nodes || !simplex_indices_valid(tree->item_count, vertex_count, vertices, cells, 4)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    *locator = new phx_mc_affine_tet_locator{
+        std::move(nodes),
+        {tree->item_count, tree->leaf_width, tree->leaf_items, tree->item_min, tree->item_max},
+        vertices, cells, tolerance};
+    return PHX_MC_OK;
+  });
+}
+
+void phx_mc_affine_tet_locator_free(phx_mc_affine_tet_locator* locator) { delete locator; }
+
+int32_t phx_mc_affine_tet_locator_query(
+    const phx_mc_affine_tet_locator* locator, const uint8_t* cell_mask, int64_t count,
+    const double* points, int32_t capacity, int32_t* cells_out, double* reference,
+    double* residual, double* condition, int32_t* status, int32_t* containing,
+    int32_t* candidates, double* candidate_reference, int32_t parallelism) {
+  if (locator == nullptr || parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (capacity < 1 || !phx::mc::addressable(count, 3, sizeof(double)) ||
+        !phx::mc::addressable(count, int64_t{capacity} * 3, sizeof(double)) ||
+        (count > 0 && (points == nullptr || cells_out == nullptr || reference == nullptr ||
+                       residual == nullptr || condition == nullptr || status == nullptr ||
+                       containing == nullptr ||
+                       candidates == nullptr || candidate_reference == nullptr))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     return phx::mc::bvh::tetrahedron_locate(
-        *tree, nodes, vertices, cells, cell_mask, tolerance, count, points, capacity,
+        locator->items, locator->nodes, locator->vertices, locator->cells, cell_mask,
+        locator->tolerance, count, points, capacity,
         {cells_out, reference, residual, condition, status, containing, candidates,
          candidate_reference},
         parallelism);

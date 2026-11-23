@@ -1891,9 +1891,18 @@ enum phx_mc_locate_status {
   PHX_MC_LOCATE_DEGENERATE_CELL = 2,
   PHX_MC_LOCATE_NONFINITE = 3
 };
-PHX_MC_API int32_t phx_mc_bvh_query_locate_tetrahedra(
+/* Validates the tree and tetrahedral connectivity once. The prepared handle
+ * owns its packed node records. The caller keeps vertices, cells, leaf_items,
+ * item_min and item_max alive and unchanged until free; the tree view and
+ * its other arrays are only needed during preparation. On failure no handle
+ * is published. Independent queries can share a prepared handle. */
+typedef struct phx_mc_affine_tet_locator phx_mc_affine_tet_locator;
+PHX_MC_API int32_t phx_mc_affine_tet_locator_prepare(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
-    const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
+    const int32_t* cells, double tolerance, phx_mc_affine_tet_locator** locator);
+PHX_MC_API void phx_mc_affine_tet_locator_free(phx_mc_affine_tet_locator* locator);
+PHX_MC_API int32_t phx_mc_affine_tet_locator_query(
+    const phx_mc_affine_tet_locator* locator, const uint8_t* cell_mask, int64_t count,
     const double* points, int32_t capacity, int32_t* cells_out, double* reference,
     double* residual, double* condition, int32_t* status, int32_t* containing,
     int32_t* candidates, double* candidate_reference, int32_t parallelism);
