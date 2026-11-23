@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "capi_guard.hpp"
@@ -17,6 +18,8 @@ struct phx_mc_cad_surface_result {
   phx::mc::CadSurfaceMesh mesh;
   phx::mc::cad::CurveDiscretization curves;
   phx::mc::CadVolumeMesh volume;
+  std::vector<phx_mc_cad_face_failure> initial_face_failures;
+  int32_t refinement_retries = 0;
 };
 
 namespace {
@@ -36,33 +39,101 @@ bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
 // passes its minimum dihedral target as rim_dihedral_degrees (CurveControls;
 // 0 for a surface), which also grades its pole rings (cad_mesh_face).
 // Returns OK/UNRESOLVED with a candidate, else the failure. proximity (solid
-// route, null: none) is the proximity size field of both stages.
+// route, null: none) is the proximity size field of both stages. A pass
+// used only as a proxy keeps its first surface, without shared-curve retries.
 int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
                      const phx_mc_cad_surface_controls& controls, double rim_dihedral_degrees,
                      phx_mc_cad_surface_result& candidate, int32_t parallelism,
-                     const phx::mc::cad::ProximityField* proximity = nullptr) {
+                     const phx::mc::cad::ProximityField* proximity = nullptr,
+                     bool refine_shared_curves = true) {
   const double* face_sizes = controls.face_sizes;
   phx::mc::cad::CurveControls curve_controls{
       face_sizes, controls.face_tolerances, controls.curve_tolerances,
       controls.tolerance_fraction, controls.grading, controls.minimum_size};
   curve_controls.rim_dihedral_degrees = rim_dihedral_degrees;
   curve_controls.proximity = proximity;
-  const auto start = std::chrono::steady_clock::now();
+  using Clock = std::chrono::steady_clock;
+  const auto elapsed_ns = [](Clock::time_point start) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+  };
+  auto& stats = candidate.volume.stats;
+  const auto start = Clock::now();
   const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
                                                                candidate.curves);
-  candidate.volume.stats.curve_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::steady_clock::now() - start).count();
+  stats.curve_ns = elapsed_ns(start);
   if (curve_status != PHX_MC_OK && curve_status != PHX_MC_UNRESOLVED) return curve_status;
   if (candidate.curves.offsets.size() != static_cast<std::size_t>(model.curve_count) + 1)
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
-  const int32_t surface_status = phx::mc::cad_mesh_surface(
-      geometry, candidate.curves.view(), face_sizes, controls.face_tolerances,
-      controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity,
-      parallelism);
-  candidate.volume.stats.face_ns = candidate.mesh.face_ns;
-  candidate.volume.stats.assembly_ns = candidate.mesh.assembly_ns;
+  const auto build_faces = [&](const phx::mc::cad::CurveDiscretization& curves) {
+    return phx::mc::cad_mesh_surface(
+        geometry, curves.view(), face_sizes, controls.face_tolerances,
+        controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity,
+        parallelism);
+  };
+  int32_t surface_status = build_faces(candidate.curves);
+  stats.face_ns = candidate.mesh.face_ns;
+  stats.assembly_ns = candidate.mesh.assembly_ns;
   if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
-  return curve_status == PHX_MC_UNRESOLVED ? curve_status : surface_status;
+  if (curve_status == PHX_MC_UNRESOLVED) return curve_status;
+  if (!refine_shared_curves || surface_status != PHX_MC_UNRESOLVED ||
+      candidate.mesh.triangles.empty())
+    return surface_status;
+
+  using phx::mc::cad::CurveDiscretization;
+  using phx::mc::cad::CurveInterval;
+  std::vector<CurveInterval> intervals;
+  for (const auto& failure : candidate.mesh.face_failures) {
+    if (failure.reason == PHX_MC_CAD_FACE_REFINEMENT &&
+        failure.refusal_kind == static_cast<int32_t>(phx::mc::CadRefine2DRefusal::encroachment) &&
+        failure.curve >= 0 && failure.curve_segment >= 0)
+      intervals.push_back({failure.curve, failure.curve_segment});
+  }
+  if (intervals.empty()) return surface_status;
+  const auto key = [](const CurveInterval& i) { return std::pair{i.curve, i.segment}; };
+  std::sort(intervals.begin(), intervals.end(),
+            [&](const CurveInterval& a, const CurveInterval& b) { return key(a) < key(b); });
+  intervals.erase(
+      std::unique(intervals.begin(), intervals.end(),
+                  [&](const CurveInterval& a, const CurveInterval& b) { return key(a) == key(b); }),
+      intervals.end());
+
+  // Both attempts are independent refinements of the first shared bank.
+  // Retain that bank only once an actual rebuild is about to replace it.
+  CurveDiscretization initial;
+  for (const bool whole_curves : {false, true}) {
+    CurveDiscretization refined;
+    const auto curve_start = Clock::now();
+    const int32_t status = phx::mc::cad::refine_curve_intervals(
+        geometry, curve_controls, candidate.refinement_retries == 0 ? candidate.curves : initial,
+        intervals, whole_curves, refined);
+    stats.curve_ns += elapsed_ns(curve_start);
+    if (status == PHX_MC_UNRESOLVED) continue;
+    if (status != PHX_MC_OK) return status;
+    if (candidate.refinement_retries != 0 && refined.offsets == candidate.curves.offsets &&
+        refined.parameters == candidate.curves.parameters)
+      continue;
+
+    if (candidate.refinement_retries == 0) {
+      initial = std::move(candidate.curves);
+      candidate.initial_face_failures = std::move(candidate.mesh.face_failures);
+    }
+    candidate.mesh = phx::mc::CadSurfaceMesh{};
+    const auto face_start = Clock::now();
+    surface_status = build_faces(refined);
+    if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED)
+      return surface_status;
+    ++candidate.refinement_retries;
+    candidate.curves = std::move(refined);
+    if (surface_status == PHX_MC_UNRESOLVED && candidate.mesh.triangles.empty()) {
+      // An early trim refusal publishes findings, but no stage clocks.
+      stats.face_ns += elapsed_ns(face_start);
+      break;
+    }
+    stats.face_ns += candidate.mesh.face_ns;
+    stats.assembly_ns += candidate.mesh.assembly_ns;
+    if (surface_status == PHX_MC_OK) break;
+  }
+  return surface_status;
 }
 
 // The proximity field of a solid's controls over a first surface pass at the
@@ -181,7 +252,7 @@ extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
     int32_t status =
         mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate,
-                     parallelism);
+                     parallelism, nullptr, volume->proximity_count == 0);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     // Proximity controls: the first pass at the request is the field's proxy
     // (cad_proximity.hpp); the solid is the second pass under the field, and
@@ -374,6 +445,22 @@ extern "C" int32_t phx_mc_cad_surface_pole_sectors(
   if (capacity < required || !present(rows, sectors.size())) return PHX_MC_INVALID_ARGUMENT;
   copy_flat(sectors, rows);
   *count = required;
+  return PHX_MC_OK;
+}
+
+extern "C" int32_t phx_mc_cad_surface_refinement(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    phx_mc_cad_face_failure* initial_face_failures, int64_t* initial_count, int32_t* retries) {
+  if (!result || !initial_count || !retries || capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+  const auto& failures = result->initial_face_failures;
+  const int64_t required = static_cast<int64_t>(failures.size());
+  if (capacity != 0 || initial_face_failures) {
+    if (capacity < required || !present(initial_face_failures, failures.size()))
+      return PHX_MC_INVALID_ARGUMENT;
+    copy_rows(failures, initial_face_failures);
+  }
+  *initial_count = required;
+  *retries = result->refinement_retries;
   return PHX_MC_OK;
 }
 

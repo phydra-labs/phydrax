@@ -1132,10 +1132,75 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
         assert counts[f"face_{int(face)}_findings"] == np.count_nonzero(
             failures["face"] == face
         )
-    for finding, row in zip(error.evidence.logical_findings, failures, strict=True):
+    findings = error.evidence.logical_findings
+    initial = result.initial_face_failures
+    assert len(findings) == failures.size + initial.size
+    for finding, row in zip(findings[: failures.size], failures, strict=True):
         assert finding.startswith(f"face_finding:face={int(row['face'])}:")
         assert f":triangle={int(row['triangle'])}:" in finding
         assert f":triangle_uv={row['triangle_uv'].tolist()!r}:" in finding
+    if initial.size:
+        assert counts["initial_face_findings"] == initial.size
+        assert counts["surface_refinement_retries"] == result.surface_refinement_retries
+        assert all(
+            finding.startswith(f"initial_face_finding:face={int(row['face'])}:")
+            for finding, row in zip(findings[failures.size :], initial, strict=True)
+        )
+
+
+def test_washer_recovery_refusal_preserves_initial_face_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax._meshcore import PlcFailureReason
+    from phydrax.meshing.providers import _native_cad_mesh as route
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    model, _, _, _ = _external_case("external-routine", "step", tmp_path)
+    meshing = phx.meshing
+    scope = MeshingScope.whole(model, 2)
+    target = meshing.CellMeshingTarget(
+        3, 3, meshing.CellFamilyPolicy(required=("tetrahedron",))
+    )
+    strength = meshing.SizeControlStrength.SOFT
+    specification = VolumeMeshingSpec(
+        target,
+        scope,
+        meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(meshing.UniformSizeControl(scope, 3.97e-3, strength=strength),),
+        maximum_deviation=4e-5,
+    )
+    schedule = meshing.NativeVolumeSchedule(shape_strength=strength)
+    options = NativeMeshingOptions("cad_tetrahedral", volume_schedule=schedule)
+    construct = route.construct_cad_solid
+
+    def refuse_recovery(prepared: _PreparedDirectBRepCadVolume) -> CadSolidResult:
+        solid = construct(prepared)
+        assert solid.surface.face_failures.size == 0 and solid.volume.tetrahedra.size > 0
+        stats = solid.volume.stats.copy()
+        stats["recovery_reason"] = PlcFailureReason.FIXED_FACET
+        stats["recovery_status"] = MeshcoreStatus.UNRESOLVED
+        volume = solid.volume._replace(
+            stats=stats, tetrahedra=solid.volume.tetrahedra[:0]
+        )
+        return solid._replace(status=MeshcoreStatus.UNRESOLVED, volume=volume)
+
+    monkeypatch.setattr(route, "construct_cad_solid", refuse_recovery)
+    plan = meshing.NativeMeshingProvider(options).plan(model, specification)
+    with pytest.raises(meshing.MeshingFailure) as failure:
+        plan.execute()
+    assert failure.value.stage == "volume_meshing"
+    assert failure.value.provider_code == "native_cad_volume_unresolved"
+    evidence = failure.value.evidence
+    assert evidence is not None and evidence.checkpoint == "cad_volume_recovery"
+    counts = dict(evidence.achieved_quantities)
+    assert counts["recovery_reason"] == PlcFailureReason.FIXED_FACET
+    assert counts["recovery_attempts"] == 1
+    assert counts["face_findings"] == 0
+    assert counts["initial_face_findings"] == len(evidence.logical_findings) == 198
+    assert all(
+        row.startswith("initial_face_finding:") for row in evidence.logical_findings
+    )
 
 
 def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(

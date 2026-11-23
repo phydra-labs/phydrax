@@ -1131,8 +1131,16 @@ the already discretized curves, run in bounded batches, and are assembled
 in source order, so the worker count does not change the mesh or findings.
 Curve discretization and the fixed-boundary volume fill remain sequential.
 
+When surface refinement stalls on an identified source chord, the native CAD
+route can subdivide the shared curve samples and rebuild the faces with the
+same size, angle, and deviation limits. It tries the affected intervals first,
+then at most one retry on their source curves. Every incident chart uses the
+same added samples. The minimum spacing and sag checks still apply. A
+successful first pass is not rebuilt; on refusal, initial and final face
+findings are reported separately.
+
 The native CAD solid (`cad_tetrahedral`, `prove=False`) keeps the requested size
-h and refines only where fidelity or the rim rule needs it. `ProximitySizeControl`
+h. `ProximitySizeControl`
 on source faces is its thickness sizing: at a point of a scoped face the size is
 the gap to the other scope over `elements_per_gap`, clamped to the control's
 bounds. The gap is a lower bound taken from a first surface pass at h (proxy

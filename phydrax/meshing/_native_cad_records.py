@@ -1952,6 +1952,8 @@ def retarget_native_cad_surface(
         face_failures=empty,
         pole_sectors=empty,
         chart=chart,
+        initial_face_failures=empty,
+        surface_refinement_retries=0,
     )
     return NativeCadSurfaceWitness(target, surface_result, witness.loop_count)
 

@@ -4,6 +4,7 @@ import base64
 import gzip
 import hashlib
 import math
+import os
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -27,10 +28,21 @@ from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._measure import brep_mass_properties
 from phydrax.meshing._association import GeometryAssociationArchiveRecipe
+from phydrax.meshing._model_codec import (
+    model_archive_content_id,
+    MODEL_ARCHIVE_LIMITS,
+    read_model_artifact,
+    restore_model_archive_value,
+    write_model_artifact,
+)
+from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
+from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
+from phydrax.meshing.providers._native_cad_mesh import cad_solid_support_issues
 
 from .._runtime import accepted_result_record, single_cell_kind
+from .cold_restore import _BLOCK_ENGINE_IMPORTS, _run_child
 
 
 _SOURCE_BRANCH = "feature/native-meshing-20260929"
@@ -1855,6 +1867,140 @@ def _volume_run(
     }
 
 
+def _native_step_certificate_record(
+    result: CellMeshingResult, source_id: str, source_revision: str, tolerance: float, /
+) -> dict[str, object]:
+    record = accepted_result_record(result)
+    report = result.certification
+    if report is None or report.native_cad is None or report.fidelity is not None:
+        raise RuntimeError("The direct STEP row requires native CAD certification.")
+    certificate = report.native_cad
+    records = report.inputs.native_cad_records
+    bound = certificate.maximum_deviation
+    row_bounds = certificate.triangle_deviation
+    if (
+        records is None
+        or (records.source_id, records.source_revision) != (source_id, source_revision)
+        or certificate.records_id != records.records_id
+        or certificate.source_shell is None
+        or certificate.status != "certified"
+        or certificate.tolerance != tolerance
+        or bound is None
+        or not 0.0 <= bound <= tolerance
+        or row_bounds is None
+        or not row_bounds.size
+        or row_bounds.shape != (certificate.witness.chart_triangles.shape[0],)
+        or not np.all(np.isfinite(row_bounds))
+        or np.max(row_bounds) != bound
+    ):
+        raise RuntimeError(
+            "The direct STEP row lacks source-bound native chart, material, or fidelity evidence."
+        )
+    records.require_associations(result.mesh, result.associations)
+    record.update(
+        mesh_id=result.mesh.mesh_id,
+        native_cad_certificate_id=certificate.certificate_id,
+        native_cad_records_id=records.records_id,
+        source_shell_id=certificate.source_shell,
+        source_revision=source_revision,
+        maximum_two_sided_deviation_m=bound,
+        tolerance_m=tolerance,
+        association_ids=[value.association_id for value in result.associations],
+        compliance=dict(result.compliance.achieved),
+    )
+    return record
+
+
+def _read_direct_step_archive(
+    path: str, content_id: str, source_id: str, source_revision: str, tolerance: float, /
+) -> dict[str, object]:
+    result = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        expected_content_id=content_id,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    return _native_step_certificate_record(result, source_id, source_revision, tolerance)
+
+
+def _direct_step_p1(
+    model: phx.geometry.brep.BRepModel, expected_volume: float, directory: Path, /
+) -> dict[str, object]:
+    """Qualify the matched STEP P1 request without replacing the feature row."""
+    scope = MeshingScope.whole(model, 2)
+    size, tolerance = 3.97e-3, 4e-5
+    strength = phx.meshing.SizeControlStrength.SOFT
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(scope, size, strength=strength),),
+        maximum_deviation=tolerance,
+    )
+    plan = NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=phx.meshing.NativeVolumeSchedule(shape_strength=strength),
+        )
+    ).plan(model, specification, coordinate_contract=model.coordinate_contract)
+    prepared = plan.prepared
+    if not isinstance(prepared, _PreparedDirectBRepCadVolume):
+        raise RuntimeError("The direct STEP P1 request selected another route.")
+    issues = cad_solid_support_issues(prepared)
+    if issues:
+        raise RuntimeError(f"The direct STEP P1 request is not admitted: {issues!r}.")
+    result = plan.execute(prove=True)
+    producer = _native_step_certificate_record(
+        result, model.source_id, model.source_revision, tolerance
+    )
+    measures = np.asarray(result.quality.evaluation.measures, dtype=np.float64)
+    if not measures.size:
+        raise RuntimeError("The direct STEP P1 result has no tetrahedral measures.")
+    volume = float(np.add.accumulate(measures, dtype=np.float64)[-1])
+    archive = directory / "direct-step-p1.phx"
+    write_model_artifact(archive, result, limits=MODEL_ARCHIVE_LIMITS)
+    content_id = model_archive_content_id(archive, limits=MODEL_ARCHIVE_LIMITS)
+    del result, measures
+    arguments = (
+        str(archive),
+        content_id,
+        model.source_id,
+        model.source_revision,
+        tolerance,
+    )
+    replay = _run_child(
+        _BLOCK_ENGINE_IMPORTS
+        + f"""
+import json
+from tools.meshing_qualification.scenarios.native_cad_profiles import _read_direct_step_archive
+record = _read_direct_step_archive(*{arguments!r})
+_assert_engine_free()
+print(json.dumps(record))
+""",
+        environment=dict(os.environ),
+    )
+    if replay != producer:
+        raise RuntimeError(
+            "Cold STEP replay changed native mesh, source, or proof evidence."
+        )
+    return {
+        "passed": True,
+        "route": plan.route,
+        "specification_id": specification.specification_id,
+        "requested_size_m": size,
+        "native_result": producer,
+        "source_volume_oracle_m3": expected_volume,
+        "straight_mesh_volume_m3": volume,
+        "straight_mesh_volume_relative_defect": abs(volume - expected_volume)
+        / expected_volume,
+        "archive_content_id": content_id,
+        "cold_replay_passed": True,
+    }
+
+
 def _record_float(record: dict[str, object], name: str) -> float:
     value = record.get(name)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -2036,6 +2182,21 @@ def _profile_record(
                 validation_failures.append(
                     {"stage": stage, "type": type(error).__name__, "detail": str(error)}
                 )
+            if format_name == "step" and case == "external-routine":
+                stage = "direct_native_step_p1"
+                report_phase()
+                try:
+                    record["direct_native_p1"] = _direct_step_p1(
+                        model, expected_volume, directory
+                    )
+                except (RuntimeError, ValueError) as error:
+                    validation_failures.append(
+                        {
+                            "stage": stage,
+                            "type": type(error).__name__,
+                            "detail": str(error),
+                        }
+                    )
             if case == "planar-box":
                 stage = "native_surface_mesh_and_fe_solve"
                 report_phase()

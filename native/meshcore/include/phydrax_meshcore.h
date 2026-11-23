@@ -3754,6 +3754,17 @@ PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
     const phx_mc_cad_surface_result* result, int64_t capacity,
     int64_t* rows, int64_t* count);
 
+/* First-pass face findings, in their original order, and the number of
+ * actual shared-curve face rebuilds (0 to 2). The ordinary surface export
+ * reports terminal findings and samples. Initial findings are only retained
+ * when a rebuild ran, and refer to the preceding curve bank. For a proximity
+ * solid, the first pass here is the first one under its proximity field.
+ * With capacity zero and initial_face_failures null, only initial_count and
+ * retries are returned. */
+PHX_MC_API int32_t phx_mc_cad_surface_refinement(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    phx_mc_cad_face_failure* initial_face_failures, int64_t* initial_count, int32_t* retries);
+
 /* Chart rows include collapsed pole slivers; chart_to_mesh is -1 for those
  * rows, otherwise the index in the exported physical triangle array.
  * edge_chord is -1 for interior edges. Chord rows include pole uses. */

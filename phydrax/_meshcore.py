@@ -1369,6 +1369,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_free": (None, (_P,)),
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
+    "phx_mc_cad_surface_refinement": (_I32, (_P, _I64, _P, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
     "phx_mc_cad_mesh_volume": (_I32, (_P, _P, _P, _P, _I32)),
@@ -14755,7 +14756,11 @@ class CadChartResult(NamedTuple):
 
 
 class CadSurfaceResult(NamedTuple):
-    """Owned surface candidate and the curve/face construction findings."""
+    """Owned surface candidate and the curve/face construction findings.
+
+    ``initial_face_failures`` contains the ordered findings before the first
+    shared-curve retry. ``face_failures`` describes only the emitted surface.
+    """
 
     status: MeshcoreStatus
     points: np.ndarray
@@ -14781,6 +14786,8 @@ class CadSurfaceResult(NamedTuple):
     face_failures: np.ndarray
     pole_sectors: np.ndarray
     chart: CadChartResult
+    initial_face_failures: np.ndarray
+    surface_refinement_retries: int
 
 
 class _CadProximityControl(ctypes.Structure):
@@ -15095,6 +15102,35 @@ def _cad_volume_export(
     return CadVolumeResult(*banks, wedges)
 
 
+def _cad_surface_refinement(
+    library: MeshcoreLibrary, handle: ctypes.c_void_p, /
+) -> tuple[np.ndarray, int]:
+    count = ctypes.c_int64()
+    retries = ctypes.c_int32()
+    read = library["phx_mc_cad_surface_refinement"]
+    _raise_for_call(
+        read(handle, 0, None, ctypes.addressof(count), ctypes.addressof(retries)),
+        "cad_surface_refinement",
+    )
+    if count.value < 0 or retries.value < 0:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, "negative CAD surface refinement size"
+        )
+    findings = np.empty((count.value,), dtype=_CAD_FACE_FAILURE_DTYPE)
+    if count.value:
+        _raise_for_call(
+            read(
+                handle,
+                count.value,
+                findings.ctypes.data,
+                ctypes.addressof(count),
+                ctypes.addressof(retries),
+            ),
+            "cad_surface_refinement",
+        )
+    return findings, retries.value
+
+
 def _cad_mesh(
     model: CadModel,
     face_sizes: object,
@@ -15257,8 +15293,14 @@ def _cad_mesh(
             library["phx_mc_cad_chart_export"](handle, ctypes.addressof(chart_outputs)),
             "cad_chart_export",
         )
+        initial_faces, retries = _cad_surface_refinement(library, handle)
         surface = CadSurfaceResult(
-            status, *banks, pole_sectors, CadChartResult(*chart_banks)
+            status,
+            *banks,
+            pole_sectors,
+            CadChartResult(*chart_banks),
+            initial_faces,
+            retries,
         )
         if volume is None:
             return surface, None

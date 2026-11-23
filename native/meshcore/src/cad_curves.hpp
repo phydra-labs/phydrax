@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "cad_curve_discretization.hpp"
@@ -74,5 +75,19 @@ int32_t repair_curve_sag(const CadGeometry& geometry, const CurveControls& contr
 
 int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& controls,
                           CurveDiscretization& result);
+
+// Indices in the initial bank: segment joins samples segment and segment + 1.
+struct CurveInterval {
+  int32_t curve;
+  int32_t segment;
+};
+
+// The requests are strictly ordered by (curve, segment). Quarter-subdivide
+// those intervals, or all initial intervals on their curves if whole_curves.
+// Only PHX_MC_OK publishes a complete bank with at least one added sample.
+int32_t refine_curve_intervals(const CadGeometry& geometry, const CurveControls& controls,
+                               const CurveDiscretization& initial,
+                               std::span<const CurveInterval> intervals, bool whole_curves,
+                               CurveDiscretization& refined);
 
 }  // namespace phx::mc::cad

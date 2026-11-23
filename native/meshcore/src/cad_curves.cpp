@@ -3,6 +3,7 @@
 #include "cad_faces.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -70,13 +71,13 @@ struct Context {
   }
 
   double parameter(double s) const {
-    const double* r = geometry.model().curve_ranges + 2 * curve;
+    const double* r = geometry.model().curve_ranges + 2 * int64_t{curve};
     if (s == 0) return r[0];
     if (s == 1) return r[1];
     return r[0] + s * (r[1] - r[0]);
   }
   double use_parameter(int32_t use, double s) const {
-    const double* r = geometry.model().use_ranges + 2 * use;
+    const double* r = geometry.model().use_ranges + 2 * int64_t{use};
     if (s == 0) return r[0];
     if (s == 1) return r[1];
     return r[0] + s * (r[1] - r[0]);
@@ -640,14 +641,12 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
   }
   return true;
 }
-bool sag(Context& c, double a, double b, const double* x, const double* y,
-         int depth, std::vector<double>& out) {
+int32_t screen_sag(Context& c, double a, double b, const double* x, const double* y) {
+  if (!c.controls.sag_check) return PHX_MC_OK;
+  constexpr double q = 0.28867513459481288225;
+  const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
   double p[3]{}, r[3]{};
-  if (c.controls.sag_check) {
-    constexpr double q = 0.28867513459481288225;
-    const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
-    if (!c.value(s1,p) || !c.value(s2,r)) return false;
-  }
+  if (!c.value(s1,p) || !c.value(s2,r)) return PHX_MC_INVALID_INPUT;
   double tol=c.controls.curve_tolerances[c.curve];
   for (const Use& u:c.uses) tol=std::min(tol,c.controls.face_tolerances[u.face]);
   tol*=c.controls.tolerance_fraction;
@@ -658,37 +657,40 @@ bool sag(Context& c, double a, double b, const double* x, const double* y,
     const double t=length2>0 ? std::clamp((px*dx+py*dy+pz*dz)/length2,0.0,1.0) : 0.0;
     return std::hypot(px-t*dx,py-t*dy,pz-t*dz);
   };
+  if (!(deviation(p)<=tol && deviation(r)<=tol)) return PHX_MC_UNRESOLVED;
   // Each use's lens at the segment's middle: the face's chart arc vs its
   // chart chord at the same parameter, mapped, within the lens share
   // kLensShare of the face's theta tol (both are quadratic in the segment
-  // and largest about its middle). -1: an evaluation failed.
-  const auto lens = [&]() -> int {
-    const double mid=(a+b)*0.5;
-    for (const Use& u:c.uses) {
-      double ends[3][2], xyz[2][3];
-      const double at[3]={a,b,mid};
-      for (int k=0;k<3;++k) {
-        const double t=c.use_parameter(u.row,at[k]);
-        ++c.stats.value_evaluations;
-        if (!c.geometry.jets(c.geometry.pcurve_node(u.row),&t,0,ends[k],c.workspace)) return -1;
-      }
-      const double chord[2]={(ends[0][0]+ends[1][0])*0.5,(ends[0][1]+ends[1][1])*0.5};
-      c.stats.value_evaluations+=2;
-      if (!c.geometry.jets(c.geometry.surface_node(u.face),ends[2],0,xyz[0],c.workspace) ||
-          !c.geometry.jets(c.geometry.surface_node(u.face),chord,0,xyz[1],c.workspace)) return -1;
-      if (std::hypot(xyz[0][0]-xyz[1][0],xyz[0][1]-xyz[1][1],xyz[0][2]-xyz[1][2]) >
-          kLensShare*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face]) return 0;
+  // and largest about its middle).
+  const double mid=(a+b)*0.5;
+  for (const Use& u:c.uses) {
+    double ends[3][2], xyz[2][3];
+    const double at[3]={a,b,mid};
+    for (int k=0;k<3;++k) {
+      const double t=c.use_parameter(u.row,at[k]);
+      ++c.stats.value_evaluations;
+      if (!c.geometry.jets(c.geometry.pcurve_node(u.row),&t,0,ends[k],c.workspace))
+        return PHX_MC_INVALID_INPUT;
     }
-    return 1;
-  };
-  int lens_ok=1;
-  if (c.controls.sag_check && deviation(p)<=tol && deviation(r)<=tol) {
-    lens_ok=lens();
-    if (lens_ok<0) return false;
+    const double chord[2]={(ends[0][0]+ends[1][0])*0.5,(ends[0][1]+ends[1][1])*0.5};
+    c.stats.value_evaluations+=2;
+    if (!c.geometry.jets(c.geometry.surface_node(u.face),ends[2],0,xyz[0],c.workspace) ||
+        !c.geometry.jets(c.geometry.surface_node(u.face),chord,0,xyz[1],c.workspace))
+      return PHX_MC_INVALID_INPUT;
+    if (std::hypot(xyz[0][0]-xyz[1][0],xyz[0][1]-xyz[1][1],xyz[0][2]-xyz[1][2]) >
+        kLensShare*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face])
+      return PHX_MC_UNRESOLVED;
   }
-  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol && lens_ok)) {
+  return PHX_MC_OK;
+}
+
+bool sag(Context& c, double a, double b, const double* x, const double* y,
+         int depth, std::vector<double>& out) {
+  const int32_t status=screen_sag(c,a,b,x,y);
+  if (status==PHX_MC_OK) {
     out.push_back(b); return true;
   }
+  if (status!=PHX_MC_UNRESOLVED) return false;
   const double mid=(a+b)*0.5;
   if (depth==kSagDepth || !(mid>a && mid<b) || out.size()>=kMaxPoints) {
     c.stats.unresolved.push_back({c.curve,a,b}); out.push_back(b); return true;
@@ -818,5 +820,185 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
   }
   const int32_t status=output.statistics.unresolved.empty()?PHX_MC_OK:PHX_MC_UNRESOLVED;
   result=std::move(output); return status;
+}
+
+namespace {
+
+int32_t validate_refinement_input(const phx_mc_cad_model& m, const CurveControls& controls,
+                                  const CurveDiscretization& initial, int64_t& max_parameters) {
+  constexpr int64_t index_limit = std::numeric_limits<int32_t>::max();
+  if (m.curve_count > index_limit || m.surface_count > index_limit ||
+      m.corner_count > index_limit || m.loop_count > index_limit || m.use_count > index_limit)
+    return PHX_MC_INDEX_RANGE_ERROR;
+  if ((m.curve_count && !controls.curve_tolerances) ||
+      (m.surface_count && !controls.face_tolerances) ||
+      !std::isfinite(controls.tolerance_fraction) || !(controls.tolerance_fraction > 0) ||
+      controls.tolerance_fraction > 1 ||
+      !std::isfinite(controls.minimum_size) || !(controls.minimum_size > 0))
+    return PHX_MC_INVALID_ARGUMENT;
+  for (int64_t f = 0; f < m.surface_count; ++f)
+    if (!(controls.face_tolerances[f] > 0)) return PHX_MC_INVALID_ARGUMENT;
+
+  if (initial.offsets.size() != static_cast<std::size_t>(m.curve_count) + 1 ||
+      initial.offsets.front() != 0 || initial.offsets.back() < 0 ||
+      static_cast<uint64_t>(initial.offsets.back()) != initial.parameters.size())
+    return PHX_MC_INVALID_INPUT;
+  // The global surface starts with the corners and the interior samples of
+  // every curve; the two endpoint parameters of each curve use corner IDs.
+  max_parameters = index_limit - m.corner_count + 2 * m.curve_count;
+  if (initial.offsets.back() > max_parameters) return PHX_MC_INDEX_RANGE_ERROR;
+  for (int64_t e = 0; e < m.curve_count; ++e) {
+    const int64_t begin = initial.offsets[e], end = initial.offsets[e + 1];
+    if (end < begin || end > initial.offsets.back() || end - begin < 2)
+      return PHX_MC_INVALID_INPUT;
+    if (end - begin > static_cast<int64_t>(kMaxPoints)) return PHX_MC_UNRESOLVED;
+    if (!(controls.curve_tolerances[e] > 0) ||
+        m.curve_ranges[2 * e] == m.curve_ranges[2 * e + 1])
+      return PHX_MC_INVALID_ARGUMENT;
+  }
+  return validate_cad_curve_discretization(m, initial.view());
+}
+
+struct RequestedCurve {
+  int32_t curve;
+  std::span<const CurveInterval> intervals;
+  std::vector<Use> uses;
+};
+
+int32_t prepare_refinement_requests(const phx_mc_cad_model& m,
+                                    const CurveDiscretization& initial,
+                                    std::span<const CurveInterval> intervals,
+                                    std::vector<RequestedCurve>& requested) {
+  for (std::size_t first = 0; first < intervals.size();) {
+    const int32_t curve = intervals[first].curve;
+    if (curve < 0 || curve >= m.curve_count ||
+        (!requested.empty() && curve <= requested.back().curve))
+      return PHX_MC_INVALID_INPUT;
+    const int64_t count = initial.offsets[curve + 1] - initial.offsets[curve];
+    int32_t previous = -1;
+    std::size_t last = first;
+    do {
+      const int32_t segment = intervals[last].segment;
+      if (segment <= previous || segment >= count - 1) return PHX_MC_INVALID_INPUT;
+      previous = segment;
+      ++last;
+    } while (last < intervals.size() && intervals[last].curve == curve);
+    requested.push_back({curve, intervals.subspan(first, last - first), {}});
+    first = last;
+  }
+  for (int64_t l = 0; l < m.loop_count; ++l) {
+    for (int64_t u = m.loop_use_offsets[l]; u < m.loop_use_offsets[l + 1]; ++u) {
+      if (m.use_kinds[u] != 0) continue;
+      const int32_t curve = m.use_entities[u];
+      const auto it = std::lower_bound(requested.begin(), requested.end(), curve,
+          [](const RequestedCurve& r, int32_t id) { return r.curve < id; });
+      if (it != requested.end() && it->curve == curve)
+        it->uses.push_back({static_cast<int32_t>(u), m.loop_surfaces[l]});
+    }
+  }
+  return requested.empty() ? PHX_MC_UNRESOLVED : PHX_MC_OK;
+}
+
+}  // namespace
+
+int32_t refine_curve_intervals(const CadGeometry& geometry, const CurveControls& controls,
+                               const CurveDiscretization& initial,
+                               std::span<const CurveInterval> intervals, bool whole_curves,
+                               CurveDiscretization& refined) {
+  const auto& m = geometry.model();
+  int64_t max_parameters = 0;
+  const int32_t valid = validate_refinement_input(m, controls, initial, max_parameters);
+  if (valid != PHX_MC_OK) return valid;
+  std::vector<RequestedCurve> requested;
+  const int32_t prepared = prepare_refinement_requests(m, initial, intervals, requested);
+  if (prepared != PHX_MC_OK) return prepared;
+
+  struct Addition {
+    int64_t after;
+    std::array<double, 3> quarters;
+  };
+  std::vector<Addition> additions;
+  CurveStatistics work;
+  const auto global_room = static_cast<std::size_t>((max_parameters - initial.offsets.back()) / 3);
+  for (const RequestedCurve& request : requested) {
+    const int32_t curve = request.curve;
+    const int64_t begin = initial.offsets[curve], end = initial.offsets[curve + 1];
+    const auto count = static_cast<std::size_t>(end - begin);
+    const std::size_t candidates = whole_curves ? count - 1 : request.intervals.size();
+    const std::size_t curve_room = (kMaxPoints - count) / 3;
+    const std::size_t before = additions.size();
+    const int32_t* corners = m.curve_corners + 2 * int64_t{curve};
+    Context c{geometry, controls, work, curve, request.uses};
+    int64_t last_evaluated = -1;
+    double xyz[5][3];
+    for (std::size_t j = 0; j < candidates; ++j) {
+      const int64_t i = begin + (whole_curves ? static_cast<int64_t>(j)
+                                             : request.intervals[j].segment);
+      const double a = initial.parameters[i], b = initial.parameters[i + 1];
+      const double s[5] = {a, std::lerp(a, b, 0.25), std::lerp(a, b, 0.5),
+                           std::lerp(a, b, 0.75), b};
+      if (!(s[0] < s[1] && s[1] < s[2] && s[2] < s[3] && s[3] < s[4])) continue;
+      if (last_evaluated == i) std::copy_n(xyz[4], 3, xyz[0]);
+      else if (!c.value(a, xyz[0])) return PHX_MC_INVALID_INPUT;
+      for (int k = 1; k < 5; ++k)
+        if (!c.value(s[k], xyz[k])) return PHX_MC_INVALID_INPUT;
+      last_evaluated = i + 1;
+
+      // The surface uses the model's corner position at a bank endpoint;
+      // the sag screen itself still uses evaluated curve endpoint positions.
+      const double* physical[5] = {
+          i == begin ? m.corner_points + 3 * int64_t{corners[0]} : xyz[0],
+          xyz[1], xyz[2], xyz[3],
+          i + 2 == end ? m.corner_points + 3 * int64_t{corners[1]} : xyz[4],
+      };
+      bool fits = true;
+      for (int k = 0; k < 4; ++k) {
+        const double* x = physical[k];
+        const double* y = physical[k + 1];
+        const double length = std::hypot(y[0] - x[0], y[1] - x[1], y[2] - x[2]);
+        if (!std::isfinite(length)) return PHX_MC_INVALID_INPUT;
+        fits = fits && length >= controls.minimum_size;
+      }
+      if (!fits) continue;
+      if (additions.size() >= global_room) return PHX_MC_INDEX_RANGE_ERROR;
+      if (additions.size() - before >= curve_room) return PHX_MC_UNRESOLVED;
+      for (int k = 0; k < 4; ++k) {
+        const int32_t status = screen_sag(c, s[k], s[k + 1], xyz[k], xyz[k + 1]);
+        if (status != PHX_MC_OK) return status;
+      }
+      additions.push_back({i, {s[1], s[2], s[3]}});
+    }
+  }
+  if (additions.empty()) return PHX_MC_UNRESOLVED;
+  constexpr int64_t count_limit = std::numeric_limits<int64_t>::max();
+  if (initial.statistics.value_evaluations > count_limit - work.value_evaluations ||
+      initial.statistics.sag_evaluations > count_limit - work.sag_evaluations)
+    return PHX_MC_INDEX_RANGE_ERROR;
+
+  // Copy original samples without recomputing them, merging only admitted
+  // insertions. Refusals never write to refined, including when it aliases initial.
+  CurveDiscretization output;
+  output.offsets.reserve(initial.offsets.size());
+  output.parameters.reserve(initial.parameters.size() + 3 * additions.size());
+  auto source = initial.parameters.cbegin();
+  std::size_t next = 0;
+  for (const int64_t end : initial.offsets) {
+    while (next < additions.size() && additions[next].after < end) {
+      const Addition& add = additions[next++];
+      const auto split = initial.parameters.cbegin() + add.after + 1;
+      output.parameters.insert(output.parameters.end(), source, split);
+      output.parameters.insert(output.parameters.end(), add.quarters.begin(), add.quarters.end());
+      source = split;
+    }
+    const auto stop = initial.parameters.cbegin() + end;
+    output.parameters.insert(output.parameters.end(), source, stop);
+    source = stop;
+    output.offsets.push_back(static_cast<int64_t>(output.parameters.size()));
+  }
+  output.statistics = initial.statistics;
+  output.statistics.value_evaluations += work.value_evaluations;
+  output.statistics.sag_evaluations += work.sag_evaluations;
+  refined = std::move(output);
+  return PHX_MC_OK;
 }
 }  // namespace phx::mc::cad
