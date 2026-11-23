@@ -27,6 +27,8 @@ constexpr std::int64_t kSeedSteps = 5;
 constexpr std::int64_t kLastStep = 2200;
 // The 53 resolutions of a carrier and one more, the bound the host states.
 constexpr std::int64_t kAllCarriers = 54;
+constexpr std::uint8_t kMeasured = 1;
+constexpr std::uint8_t kNeighborFirst = 2;
 
 bool same_point(const double* a, const double* b) noexcept {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
@@ -42,7 +44,7 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
                                    const double* source_logarithms, const RelocationStar& star,
                                    std::int64_t pull_count, const double* pulls,
                                    const double* origin, const double* projector,
-                                   std::vector<CarrierSimplex> simplices, RelocationMode mode)
+                                   CarrierChartView chart, RelocationMode mode)
     : source_(source),
       source_metrics_(source_metrics),
       source_logarithms_(source_logarithms),
@@ -51,13 +53,13 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
       cell_count_(star.cell_count),
       points_(star.points, star.points + 3 * star.point_count),
       metrics_(star.metrics, star.metrics + 9 * star.point_count),
-      measured_(star.measured, star.measured + (star.point_count - 1)),
+      spoke_flags_(static_cast<std::size_t>(spoke_count_)),
       cells_(star.cells, star.cells + 4 * star.cell_count),
       before_quality_(star.before_quality),
       determinant_floor_(star.determinant_floor),
       improvement_(star.improvement),
       pulls_(pulls, pulls + 3 * pull_count),
-      simplices_(std::move(simplices)),
+      chart_(chart),
       mode_(mode) {
   if (origin != nullptr && projector != nullptr) {
     framed_ = true;
@@ -65,10 +67,19 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
     std::copy(projector, projector + 9, projector_.begin());
   }
   const std::size_t spokes = static_cast<std::size_t>(spoke_count_);
+  if (!star.neighbor_first.empty() && star.neighbor_first.size() != spokes) {
+    throw std::invalid_argument("Relocation measurement directions must match the spokes.");
+  }
   scratch_.resize(spokes);
   selected_.reserve(spokes);
   for (std::size_t spoke = 0; spoke < spokes; ++spoke) {
-    if (measured_[spoke] != 0) selected_.push_back(star.before_lengths[spoke]);
+    if (star.measured[spoke] != 0) {
+      spoke_flags_[spoke] |= kMeasured;
+      selected_.push_back(star.before_lengths[spoke]);
+    }
+    if (!star.neighbor_first.empty() && star.neighbor_first[spoke] != 0) {
+      spoke_flags_[spoke] |= kNeighborFirst;
+    }
   }
   if (!band_violations(static_cast<std::int64_t>(selected_.size()), selected_.data(),
                        before_long_, before_short_)) {
@@ -127,9 +138,12 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
   selected_.clear();
   for (std::int64_t spoke = 0; spoke < spoke_count_; ++spoke) {
     const std::size_t index = static_cast<std::size_t>(spoke);
-    lengths[index] = length(position, point(spoke + 1), metric,
-                            metrics_.data() + 9 * (index + 1));
-    if (measured_[index] != 0) selected_.push_back(lengths[index]);
+    const double* neighbor = point(spoke + 1);
+    const double* tensor = metrics_.data() + 9 * (index + 1);
+    lengths[index] = (spoke_flags_[index] & kNeighborFirst) != 0
+                         ? length(neighbor, position, tensor, metric)
+                         : length(position, neighbor, metric, tensor);
+    if ((spoke_flags_[index] & kMeasured) != 0) selected_.push_back(lengths[index]);
   }
   if (!band_violations(static_cast<std::int64_t>(selected_.size()), selected_.data(), long_,
                        short_)) {
@@ -230,7 +244,7 @@ RelocationEnd RelocationSearch::next(std::vector<RelocationCandidate>& group,
       limit = 2;
     }
     const std::vector<Carrier> carriers =
-        source_.carriers(goal, vertex, simplices_, -1, order, limit);
+        source_.carriers(goal, vertex, chart_, -1, order, limit);
     for (std::size_t index = first; index < carriers.size(); ++index) {
       const Carrier& carrier = carriers[index];
       const double* position = carrier.point.data();
@@ -239,17 +253,22 @@ RelocationEnd RelocationSearch::next(std::vector<RelocationCandidate>& group,
         occupied = same_point(position, point(row));
       }
       if (occupied) continue;
-      // One stencil has one key: its rows with their weights in lowest terms.
-      std::vector<std::int64_t> stencil;
-      stencil.reserve(3 * static_cast<std::size_t>(carrier.size));
-      for (int slot = 0; slot < carrier.size; ++slot) {
-        const std::size_t at = static_cast<std::size_t>(slot);
-        const int zeros = std::countr_zero(static_cast<std::uint64_t>(carrier.weights[at]));
-        stencil.push_back(carrier.rows[at]);
-        stencil.push_back(carrier.weights[at] >> zeros);
-        stencil.push_back(carrier.bits - zeros);
+      // A common reduced denominator identifies the same fractions as
+      // reducing each term separately. Positive weights distinguish active
+      // rows from zero padding, even when source row zero is used.
+      std::uint64_t combined = 0;
+      const auto count = static_cast<std::size_t>(carrier.size);
+      for (std::size_t row = 0; row < count; ++row) {
+        combined |= static_cast<std::uint64_t>(carrier.weights[row]);
       }
-      if (!examined_.insert(std::move(stencil)).second) continue;
+      const int shift = std::countr_zero(combined);
+      std::array<std::int64_t, 9> stencil{};
+      stencil[0] = carrier.bits - shift;
+      for (std::size_t row = 0; row < count; ++row) {
+        stencil[1 + 2 * row] = carrier.rows[row];
+        stencil[2 + 2 * row] = carrier.weights[row] >> shift;
+      }
+      if (!examined_.insert(stencil).second) continue;
 
       RelocationCandidate candidate;
       candidate.carrier = carrier;

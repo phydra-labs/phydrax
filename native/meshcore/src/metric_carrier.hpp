@@ -15,12 +15,22 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "dyadic.hpp"
 
+struct phx_mc_metric_source;
+
 namespace phx::mc::metric {
+
+// One term of a stencil: source point row and its binary64 weight.
+struct StencilTerm {
+  std::int32_t row = 0;
+  double weight = 0.0;
+};
 
 // One carrier: the exact point sum_i weights[i] / 2^bits * X(rows[i]) over
 // `size` distinct source points, in ascending row order, with positive
@@ -50,6 +60,37 @@ struct CarrierSimplex {
   std::array<std::int64_t, 3> rows{};
   int size = 0;
   bool declared = false;
+  // Prepared by the source: coordinates preserved by orthogonal projection
+  // onto an axis-aligned hull. Zero leaves location entirely to the proof.
+  std::uint8_t projected_axes = 0;
+};
+
+// Buckets list overlapping boxes in input row order. Nonparticipating axes
+// use a single bucket; the caller still checks each box and exact location.
+class CarrierBoxGrid {
+ public:
+  void prepare(std::span<const double> lower, std::span<const double> upper,
+               std::uint8_t axes, std::size_t membership_limit);
+  bool indexed() const noexcept { return !offsets_.empty(); }
+  std::span<const std::int64_t> candidates(const double* target) const noexcept;
+
+ private:
+  std::array<double, 3> origin_{};
+  std::array<double, 3> scale_{};
+  std::array<std::int64_t, 3> size_{};
+  std::vector<std::int64_t> offsets_;
+  std::vector<std::int64_t> rows_;
+};
+
+struct CarrierChartView {
+  std::span<const CarrierSimplex> simplices;
+  const CarrierBoxGrid* grid = nullptr;
+};
+
+struct CarrierChart {
+  std::vector<CarrierSimplex> simplices;
+  CarrierBoxGrid grid;
+  CarrierChartView view() const noexcept { return {simplices, grid.indexed() ? &grid : nullptr}; }
 };
 
 class CarrierSource {
@@ -72,6 +113,17 @@ class CarrierSource {
   std::int64_t cell_count() const noexcept {
     return static_cast<std::int64_t>(cells_.size() / 4);
   }
+
+  // Identify a coordinate-subspace hull with exact source numerators.
+  CarrierSimplex prepare_simplex(CarrierSimplex simplex) const;
+  // Prepare an ordered screen for charts sharing exact projection axes.
+  // Other charts and overlarge bucket memberships keep the same linear lookup.
+  void prepare_chart(CarrierChart& chart) const;
+
+  bool matches_roundings(std::span<const double> points, std::span<const std::int64_t> cells) const;
+  // Correctly rounded image of one coordinate of a dyadic stencil.
+  double stencil_coordinate(std::span<const StencilTerm> stencil, int axis,
+                            bool require_exact, bool& admitted) const;
 
   // Carriers of `target` closer to it than `current`, at most `limit`, in the
   // order of `order`.
@@ -96,7 +148,7 @@ class CarrierSource {
   // `current` is (squared binary64 distances, summed x, y, z) and, on a
   // simplex, when the image is exact or the simplex is declared.
   std::vector<Carrier> carriers(const double* target, const double* current,
-                                const std::vector<CarrierSimplex>& simplices, std::int64_t cell,
+                                CarrierChartView chart, std::int64_t cell,
                                 CarrierOrder order, std::int64_t limit) const;
 
  private:
@@ -106,14 +158,18 @@ class CarrierSource {
   std::vector<std::int64_t> cells_;
   std::vector<double> lower_;  // closed binary64 box of each cell
   std::vector<double> upper_;
+  CarrierBoxGrid cell_grid_;
   // The numerators and then the denominator as 64-bit limbs, integer i in
   // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
   // of the search; a query that leaves their capacity runs on the unbounded
   // ones above.
+  std::int64_t binary_shift_ = -1;  // exponent of an inline power-of-two denominator
   bool inline_ = false;
   std::vector<std::uint64_t> inline_limbs_;
   std::vector<std::uint32_t> inline_offsets_;
   std::vector<std::uint8_t> inline_negative_;
 };
+
+const CarrierSource& metric_carrier_source(const phx_mc_metric_source& source) noexcept;
 
 }  // namespace phx::mc::metric

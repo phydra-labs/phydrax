@@ -17,7 +17,11 @@
 // curvature kappa). Thresholds follow MMGS: split above 4/3 of the size,
 // collapse below 4/5 of it.
 //
-// Passes: a size sweep (splits, then collapses, then valence flips, then
+// Passes: for an input much finer than the target, staged coarsening first
+// (endpoint collapses of edges below kShort times a stage size that starts
+// at twice the mean edge and doubles while below 3/4 of the target size,
+// each stage followed by valence flips); then a size sweep (splits, then
+// collapses, then valence flips, then
 // tangential relocation toward the area-weighted ring centroid) repeated a
 // fixed number of times; then a quality sweep (Delaunay flips, and for each
 // triangle below the minimum angle: relocation of its corners, collapse of

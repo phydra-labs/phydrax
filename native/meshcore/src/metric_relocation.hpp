@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <set>
+#include <span>
 #include <vector>
 
 #include "metric_carrier.hpp"
@@ -48,6 +49,9 @@ struct RelocationStar {
   // Per spoke: whether its length is measured, and its metric length now.
   const std::int8_t* measured = nullptr;
   const double* before_lengths = nullptr;
+  // A nonzero entry puts the neighbor first in the floating measurement.
+  // Empty means moving vertex first on every spoke, as for row-ordered stars.
+  std::span<const std::uint8_t> neighbor_first;
   // Smallest cell quality now.
   double before_quality = 0.0;
   // Cells of the star, four star rows each.
@@ -90,16 +94,15 @@ enum class RelocationEnd : int {
 class RelocationSearch {
  public:
   // Copies the star, the pulls (three values each), the frame (`origin`,
-  // three values, and `projector`, nine, or both null) and the simplices
-  // (none: the vertex moves in the source cells). `source` and the source
-  // tensors with their logarithms (nine values per source point) must outlive
-  // the search. Throws std::invalid_argument when a measured spoke of the
+  // three values, and `projector`, nine, or both null). The chart, source,
+  // and source tensors with their logarithms (nine values per source point)
+  // must outlive the search. An empty chart locates in the source cells.
+  // Throws std::invalid_argument when a measured spoke of the
   // star has no finite quantum now; may throw std::bad_alloc.
   RelocationSearch(const CarrierSource& source, const double* source_metrics,
                    const double* source_logarithms, const RelocationStar& star,
                    std::int64_t pull_count, const double* pulls, const double* origin,
-                   const double* projector, std::vector<CarrierSimplex> simplices,
-                   RelocationMode mode);
+                   const double* projector, CarrierChartView chart, RelocationMode mode);
 
   std::int64_t spoke_count() const noexcept { return spoke_count_; }
 
@@ -130,7 +133,7 @@ class RelocationSearch {
   std::int64_t cell_count_ = 0;
   std::vector<double> points_;
   std::vector<double> metrics_;
-  std::vector<std::int8_t> measured_;
+  std::vector<std::uint8_t> spoke_flags_;
   std::vector<std::int64_t> cells_;
   double before_quality_ = 0.0;
   double determinant_floor_ = 0.0;
@@ -141,7 +144,7 @@ class RelocationSearch {
   bool framed_ = false;
   std::array<double, 3> origin_{};
   std::array<double, 9> projector_{};
-  std::vector<CarrierSimplex> simplices_;
+  CarrierChartView chart_;
   RelocationMode mode_;
 
   // The cursor: the pull and step of the next raw goal, the goals seen, the
@@ -150,7 +153,7 @@ class RelocationSearch {
   std::int64_t pull_ = 0;
   std::int64_t step_ = 0;
   std::set<std::array<std::uint64_t, 3>> seen_;
-  std::set<std::vector<std::int64_t>> examined_;
+  std::set<std::array<std::int64_t, 9>> examined_;
   std::vector<double> admitted_goals_;
   bool second_pass_ = false;
   std::size_t revisit_ = 0;

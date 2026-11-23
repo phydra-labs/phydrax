@@ -7,12 +7,14 @@
 // than the current point), the three resolution orders and the argument
 // guards. The search is integer arithmetic, so these expectations are exact.
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <vector>
 
 #include "check.hpp"
+#include "metric_carrier.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -313,16 +315,19 @@ void guards_arguments() {
 // The exact points do not change when numerators and denominator share a
 // factor, so neither does any carrier, however long the integers are: about
 // 240 and about 1,110 bits of common factor here.
-void common_factor() {
-  const std::vector<std::int64_t> numerators = {0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 8, 9, 10};
+void common_factor(std::int64_t denominator, std::int64_t y_sign) {
+  const std::vector<std::int64_t> numerators{
+      0, 0, 0, 9, 0, 0, 0, y_sign * 10, 0, 0, 0, 11, 8, y_sign * 9, 10};
   const std::vector<std::int64_t> cells = {4, 1, 2, 3, 0, 1, 2, 3};
-  const double points[5][3] = {{0.0, 0.0, 0.0},
-                               {9.0 / 7.0, 0.0, 0.0},
-                               {0.0, 10.0 / 7.0, 0.0},
-                               {0.0, 0.0, 11.0 / 7.0},
-                               {8.0 / 7.0, 9.0 / 7.0, 10.0 / 7.0}};
+  double points[5][3];
+  for (std::size_t row = 0; row < 5; ++row) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      points[row][axis] = static_cast<double>(numerators[3 * row + axis]) /
+                          static_cast<double>(denominator);
+    }
+  }
   Source plain;
-  create(plain, numerators, 7, cells);
+  create(plain, numerators, denominator, cells);
   std::uint64_t state = 20261118;
   const auto unit = [&state]() {
     state = state * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -331,7 +336,7 @@ void common_factor() {
   std::int64_t compared = 0;
   for (const int power : {150, 700}) {
     Source scaled;
-    create(scaled, numerators, 7, cells, power);
+    create(scaled, numerators, denominator, cells, power);
     for (int query = 0; query < 40; ++query) {
       // A point of one cell, and a current point somewhere else.
       const std::int64_t* corners = cells.data() + 4 * (query % 2);
@@ -375,6 +380,175 @@ void common_factor() {
   PHX_CHECK(compared > 1000);
 }
 
+void prepared_projection_box_preserves_carrier_order() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSimplex;
+  using phx::mc::metric::CarrierSource;
+  // Two separated horizontal triangles followed by a sloped triangle.
+  // The out-of-plane goal coordinate must not limit a projected lookup.
+  const std::vector<double> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0,
+      2, 0, 0, 3, 0, 0, 2, 1, 0,
+      4, 0, 0, 5, 0, 1, 4, 1, 0};
+  std::vector<Dyadic> numerators;
+  for (double value : points) numerators.emplace_back(value);
+  const CarrierSource source(points, std::move(numerators), Dyadic(1.0), {});
+  const std::vector<CarrierSimplex> plain{
+      {{0, 1, 2}, 3}, {{3, 5, 4}, 3}, {{6, 7, 8}, 3}};
+  std::vector<CarrierSimplex> prepared;
+  for (CarrierSimplex simplex : plain) prepared.push_back(source.prepare_simplex(simplex));
+
+  const std::array<double, 3> current{0, 0, 0};
+  // The second goal projects exactly onto a chart edge.
+  const std::array<std::array<double, 3>, 3> goals{{
+      {2.25, 0.25, 4.0}, {2.0, 0.5, -4.0}, {3.75, 0.25, 0.75}}};
+  for (std::size_t row = 0; row < goals.size(); ++row) {
+    const auto& target = goals[row];
+    const auto expected =
+        source.carriers(target.data(), current.data(), {plain}, -1, CarrierOrder::kFineFirst, 4);
+    const auto found =
+        source.carriers(target.data(), current.data(), {prepared}, -1, CarrierOrder::kFineFirst, 4);
+    PHX_CHECK(!expected.empty() && found.size() == expected.size());
+    if (found.size() != expected.size()) continue;
+    for (std::size_t index = 0; index < found.size(); ++index) {
+      PHX_CHECK(found[index].rows == expected[index].rows);
+      PHX_CHECK(found[index].weights == expected[index].weights);
+      PHX_CHECK(found[index].bits == expected[index].bits);
+      PHX_CHECK(found[index].point == expected[index].point);
+      PHX_CHECK(found[index].exact == expected[index].exact);
+    }
+  }
+
+  const std::vector<CarrierSimplex> segment{source.prepare_simplex({{1, 0, -1}, 2})};
+  const double target[3]{0.5, 2.0, -3.0};
+  const auto found =
+      source.carriers(target, current.data(), {segment}, -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(found.size() == 1);
+  if (found.size() == 1) {
+    const std::array<double, 3> midpoint{0.5, 0, 0};
+    PHX_CHECK(found.front().point == midpoint);
+  }
+  const double endpoint[3]{1.0, 2.0, -3.0};
+  const double beyond[3]{std::nextafter(1.0, 2.0), 2.0, -3.0};
+  PHX_CHECK(!source.carriers(endpoint, current.data(), {segment}, -1,
+                             CarrierOrder::kFineFirst, 1).empty());
+  PHX_CHECK(source.carriers(beyond, current.data(), {segment}, -1,
+                            CarrierOrder::kFineFirst, 1).empty());
+}
+
+void rounded_source_coordinates_do_not_hide_an_oblique_hull() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSimplex;
+  using phx::mc::metric::CarrierSource;
+  // z = 1 + 2^-54 x. All three z coordinates round to 1, but the projected
+  // target lies in the simplex even though its original x is negative.
+  const Dyadic unit = Dyadic(1.0).scaled_power(54);
+  const Dyadic zero;
+  const CarrierSource source({0, 0, 1, 1, 0, 1, 0, 1, 1},
+                             {zero, zero, unit, unit, zero, unit + Dyadic(1.0),
+                              zero, unit, unit},
+                             unit, {});
+  const CarrierSimplex face{{0, 1, 2}, 3, true};
+  const double target[3]{-0x1p-56, 0.25, 5.0};
+  const double current[3]{1.0, 0.0, 1.0};
+  const std::array prepared{source.prepare_simplex(face)};
+  const auto result = source.carriers(target, current, {prepared}, -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(result.size() == 1);
+  if (result.size() == 1) {
+    PHX_CHECK(result.front().point[0] > 0.0);
+    PHX_CHECK(result.front().point[1] == 0.25);
+    PHX_CHECK(result.front().point[2] == 1.0 && !result.front().exact);
+  }
+}
+
+void indexed_charts_preserve_exact_first_carrier_on_closed_boxes() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierChart;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  // Two overlapping projected triangles, with different projections, followed
+  // by enough separated triangles for the prepared bucket lookup.
+  std::vector<double> points{0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 2, 2, 0, 2, 0, 1, 2};
+  CarrierChart chart;
+  chart.simplices = {{{0, 1, 2}, 3}, {{3, 4, 5}, 3}};
+  for (std::int64_t row = 2; row < 34; ++row) {
+    const double x = static_cast<double>(2 * row);
+    points.insert(points.end(), {x, 0, 1, x + 1, 0, 1, x, 1, 1});
+    chart.simplices.push_back({{3 * row, 3 * row + 1, 3 * row + 2}, 3});
+  }
+  const auto plain = chart.simplices;
+  std::vector<Dyadic> numerators;
+  for (const double value : points) numerators.emplace_back(value);
+  const CarrierSource source(std::move(points), std::move(numerators), Dyadic(1.0), {});
+  source.prepare_chart(chart);
+  const double current[3]{-4, 3, 0};
+  const std::array<std::array<double, 3>, 4> targets{{
+      {0.25, 0.25, 5}, {1, 0, -5}, {std::nextafter(1.0, 2.0), 0, 5}, {40.25, 0.25, 5}}};
+  const std::array<double, 4> heights{1, 1, 2, 1};
+  for (std::size_t row = 0; row < targets.size(); ++row) {
+    const double* target = targets[row].data();
+    const auto expected = source.carriers(target, current, {plain}, -1, CarrierOrder::kFineFirst, 1);
+    const auto actual = source.carriers(target, current, chart.view(), -1, CarrierOrder::kFineFirst, 1);
+    PHX_CHECK(expected.size() == 1 && actual.size() == 1);
+    if (expected.size() != 1 || actual.size() != 1) continue;
+    PHX_CHECK(actual.front().point[2] == heights[row]);
+    PHX_CHECK(actual.front().point == expected.front().point);
+    PHX_CHECK(actual.front().rows == expected.front().rows);
+    PHX_CHECK(actual.front().weights == expected.front().weights);
+    PHX_CHECK(actual.front().bits == expected.front().bits);
+    PHX_CHECK(actual.front().exact == expected.front().exact);
+  }
+}
+
+void crowded_chart_still_searches_past_the_bucket_budget() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierChart;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  std::vector<double> points{0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 2, 0, 1, 2, 1, 0, 2};
+  std::vector<Dyadic> numerators;
+  for (const double value : points) numerators.emplace_back(value);
+  const CarrierSource source(std::move(points), std::move(numerators), Dyadic(1.0), {});
+  CarrierChart chart;
+  // The square boxes overlap everywhere, but only the last exact triangle
+  // holds the target's projection. Partial bucket population loses it.
+  chart.simplices.assign(224, {{0, 1, 2}, 3});
+  chart.simplices.push_back({{3, 4, 5}, 3});
+  source.prepare_chart(chart);
+  const double target[3]{0.75, 0.75, 5};
+  const double current[3]{0, 0, 0};
+  const auto found = source.carriers(target, current, chart.view(), -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(found.size() == 1);
+  if (found.size() == 1) {
+    const std::array<double, 3> projected{0.75, 0.75, 2};
+    PHX_CHECK(found.front().point == projected && found.front().exact);
+  }
+}
+
+void axis_aligned_projection_retains_the_rounded_authored_coordinate() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  const Dyadic zero;
+  const Dyadic denominator(3.0);
+  const Dyadic exact_z(2.0);
+  const double z = 2.0 / 3.0;
+  const CarrierSource source({0, 0, z, 1, 0, z, 0, 1, z},
+                             {zero, zero, exact_z, denominator, zero, exact_z,
+                              zero, denominator, exact_z},
+                             denominator, {});
+  const std::array chart{source.prepare_simplex({{0, 1, 2}, 3, true})};
+  const double target[3]{0.25, 0.25, 5};
+  const auto result = source.carriers(target, target, {chart}, -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(result.size() == 1);
+  if (result.size() == 1) {
+    const std::array<double, 3> projected{0.25, 0.25, z};
+    PHX_CHECK(result.front().point == projected && !result.front().exact);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -384,6 +558,12 @@ int main() {
   simplices();
   declared_faces();
   guards_arguments();
-  common_factor();
+  common_factor(7, 1);
+  common_factor(8, -1);
+  prepared_projection_box_preserves_carrier_order();
+  rounded_source_coordinates_do_not_hide_an_oblique_hull();
+  indexed_charts_preserve_exact_first_carrier_on_closed_boxes();
+  crowded_chart_still_searches_past_the_bucket_budget();
+  axis_aligned_projection_retains_the_rounded_authored_coordinate();
   return phx::mc::test::finish("test_metric_carrier");
 }

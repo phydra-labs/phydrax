@@ -8,13 +8,18 @@
 // a goal as stated; malformed arguments and a star without a measured length
 // are refused. The composition against its definition is checked from the
 // host (tests/unit/geometry/test_metric_relocation.py).
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "check.hpp"
+#include "metric_float.hpp"
+#include "metric_relocation.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -210,6 +215,73 @@ void sequences() {
   }
 }
 
+void reversed_spoke_is_not_a_band_improvement() {
+  namespace metric = phx::mc::metric;
+  using phx::mc::Dyadic;
+  constexpr double h = 0x1.b7f92f0969ff9p-1;
+  const double x = std::nextafter(h, 1.0);
+  std::vector<double> source_points{h, h, h, 0, 0, 0, 0, 1, 0, 1, 0, 0};
+  std::vector<Dyadic> numerators;
+  for (double point : source_points) numerators.push_back(Dyadic(point).scaled_power(53));
+  const metric::CarrierSource source(source_points, std::move(numerators),
+                                     Dyadic(1.0).scaled_power(53), {0, 1, 2, 3});
+  auto points = source_points;
+  points[0] = x;
+  const std::array<double, 9> moving{1.25, 0, 0, 0, 1.25, 0, 0, 0, 1.25};
+  const std::array<double, 9> neighbor{0.64, 0, 0, 0, 0.64, 0, 0, 0, 0.64};
+  std::array<double, 36> source_metrics{};
+  std::array<double, 36> source_logs{};
+  for (std::size_t row = 0; row < 4; ++row) {
+    std::copy(moving.begin(), moving.end(), source_metrics.data() + 9 * row);
+    PHX_CHECK(metric::logarithm(moving.data(), source_logs.data() + 9 * row));
+  }
+  auto metrics = source_metrics;
+  std::copy(neighbor.begin(), neighbor.end(), metrics.data() + 9);
+  const double before = metric::length(points.data() + 3, points.data(), neighbor.data(),
+                                        moving.data());
+  const double after = metric::length(points.data() + 3, source_points.data(), neighbor.data(),
+                                       moving.data());
+  const double reversed = metric::length(source_points.data(), points.data() + 3, moving.data(),
+                                          neighbor.data());
+  PHX_CHECK(before > metric::kUpperLength && after > metric::kUpperLength &&
+            reversed <= metric::kUpperLength);
+  const auto carriers = source.carriers(source_points.data(), points.data(), {}, -1,
+                                       metric::CarrierOrder::kCoarseFirst, 1);
+  PHX_CHECK(carriers.size() == 1);
+  const std::array<double, 3> goal{h, h, h};
+  PHX_CHECK(!carriers.empty() && carriers.front().point == goal);
+  double determinant = 0.0, relative = 0.0;
+  metric::relative_determinant(source_points.data(), determinant, relative);
+  PHX_CHECK(determinant > 0.0 && relative > kFloor);
+  double before_long = 0, before_short = 0, after_long = 0, after_short = 0;
+  metric::band_quanta(before, before_long, before_short);
+  metric::band_quanta(after, after_long, after_short);
+  PHX_CHECK(before_long == after_long && before_short == after_short);
+
+  const std::int8_t measured[3]{1, 0, 0};
+  const std::uint8_t neighbor_first[3]{1, 0, 0};
+  const double lengths[3]{before, 1.0, 1.0};
+  const std::int64_t cells[4]{0, 1, 2, 3};
+  const double pull[3]{h - x, 0, 0};
+  metric::RelocationStar star;
+  star.point_count = 4;
+  star.points = points.data();
+  star.metrics = metrics.data();
+  star.measured = measured;
+  star.before_lengths = lengths;
+  star.neighbor_first = neighbor_first;
+  star.cell_count = 1;
+  star.cells = cells;
+  star.determinant_floor = kFloor;
+  metric::RelocationMode mode;
+  mode.band_only = true;
+  metric::RelocationSearch search(source, source_metrics.data(), source_logs.data(), star,
+                                  1, pull, nullptr, nullptr, {}, mode);
+  std::vector<metric::RelocationCandidate> group;
+  std::vector<double> candidate_lengths;
+  PHX_CHECK(search.next(group, candidate_lengths) == metric::RelocationEnd::kExhausted);
+}
+
 void refuses() {
   Source source;
   create(source, 4.0);
@@ -260,6 +332,7 @@ void refuses() {
 
 int main() {
   sequences();
+  reversed_spoke_is_not_a_band_improvement();
   refuses();
   return phx::mc::test::finish("test_metric_relocation");
 }

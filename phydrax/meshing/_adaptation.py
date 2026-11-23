@@ -157,7 +157,6 @@ from ._certification_inputs import (
     validate_fidelity_witnesses,
 )
 from ._device_metric import DeviceMetricEvidence
-from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._distribution import (
     MeshDistribution,
     MeshDistributionTransition,
@@ -232,6 +231,7 @@ from ._surface_metric_controller import SurfaceMetricController
 from ._tetra_metric import (
     execute_tetra_metric_adaptation,
     TetraMetricEvidence,
+    TetraMetricOutcome,
     TetraMetricStatus,
 )
 from ._topology_edit import (
@@ -282,8 +282,8 @@ class MeshAdaptationRoute(StrEnum):
     bisection route byte for byte. ``MMG`` and ``OMEGA_H``: metric adaptation by
     the configured provider. ``HP``: marked tensor-product h-refinement or
     coarsening of one prepared `FiniteElementHPEpoch`.
-    ``NATIVE_METRIC_3D`` and ``DEVICE_METRIC_3D``: host and compiled 3D tetrahedral
-    metric adaptation. ``NATIVE_METRIC_SURFACE``: source-chart surface metric
+    ``NATIVE_METRIC_3D``: native 3D tetrahedral metric adaptation.
+    ``NATIVE_METRIC_SURFACE``: source-chart surface metric
     adaptation. ``NATIVE_MIXED``: face-signature-closed mixed-family adaptation.
     ``NATIVE_POLYHEDRAL``: same-region polyhedral edits and site regeneration.
     """
@@ -296,7 +296,6 @@ class MeshAdaptationRoute(StrEnum):
     NATIVE_POLYHEDRAL = "native_polyhedral"
     DEVICE_BISECTION = "device_bisection"
     DEVICE_METRIC_2D = "device_metric_2d"
-    DEVICE_METRIC_3D = "device_metric_3d"
     MMG = "mmg"
     OMEGA_H = "omega_h"
     HP = "hp"
@@ -306,7 +305,6 @@ _DEVICE_ROUTES = frozenset(
     (
         MeshAdaptationRoute.DEVICE_BISECTION,
         MeshAdaptationRoute.DEVICE_METRIC_2D,
-        MeshAdaptationRoute.DEVICE_METRIC_3D,
     )
 )
 
@@ -573,7 +571,6 @@ def _check_provider(
             | MeshAdaptationRoute.NATIVE_POLYHEDRAL
             | MeshAdaptationRoute.DEVICE_BISECTION
             | MeshAdaptationRoute.DEVICE_METRIC_2D
-            | MeshAdaptationRoute.DEVICE_METRIC_3D
             | MeshAdaptationRoute.HP
         ):
             if provider is not None or options is not None:
@@ -1008,7 +1005,6 @@ def _resolve_constraints(
         MeshAdaptationRoute.NATIVE_METRIC_2D,
         MeshAdaptationRoute.DEVICE_METRIC_2D,
         MeshAdaptationRoute.NATIVE_METRIC_3D,
-        MeshAdaptationRoute.DEVICE_METRIC_3D,
         MeshAdaptationRoute.NATIVE_METRIC_SURFACE,
     )
     edge_feature_route = policy.route in (
@@ -1205,8 +1201,7 @@ def _check_route_request(
     # Host routes treat native 3-simplex blocks as T4; device layouts are T4 only.
     tetrahedra = (
         {"tetrahedron"}
-        if policy.route
-        in (MeshAdaptationRoute.DEVICE_BISECTION, MeshAdaptationRoute.DEVICE_METRIC_3D)
+        if policy.route is MeshAdaptationRoute.DEVICE_BISECTION
         else {"tetrahedron", "simplex:3"}
     )
     if (
@@ -1286,7 +1281,7 @@ def _check_route_request(
                     source, policy.association_transfer
                 )
             _require_native_source(source, policy.association_transfer)
-        case MeshAdaptationRoute.NATIVE_METRIC_3D | MeshAdaptationRoute.DEVICE_METRIC_3D:
+        case MeshAdaptationRoute.NATIVE_METRIC_3D:
             if not isinstance(request, MetricMeshAdaptation):
                 raise TypeError(f"{policy.route.name} requires a metric request.")
             if (
@@ -1723,7 +1718,6 @@ def prepare_mesh_adaptation(
             | MeshAdaptationRoute.NATIVE_METRIC_SURFACE
             | MeshAdaptationRoute.DEVICE_BISECTION
             | MeshAdaptationRoute.DEVICE_METRIC_2D
-            | MeshAdaptationRoute.DEVICE_METRIC_3D
             | MeshAdaptationRoute.NATIVE_POLYHEDRAL
         ):
             constraints = _resolve_constraints(
@@ -1811,7 +1805,6 @@ MeshAdaptationEvidence: TypeAlias = (
     | LocalMetricEvidence
     | DeviceMetricEvidence
     | TetraMetricEvidence
-    | DeviceTetraMetricEvidence
     | MixedAdaptationEvidence
     | PolyhedralAdaptationEvidence
     | SurfaceMetricOutcome
@@ -1844,7 +1837,6 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> Any:
             | LocalMetricEvidence()
             | DeviceMetricEvidence()
             | TetraMetricEvidence()
-            | DeviceTetraMetricEvidence()
             | MixedAdaptationEvidence()
             | PolyhedralAdaptationEvidence()
         ):
@@ -6749,8 +6741,7 @@ def _finalize_native(
         )
     implicit_fidelity_override = None
     if (
-        prepared.policy.route
-        in (MeshAdaptationRoute.NATIVE_METRIC_3D, MeshAdaptationRoute.DEVICE_METRIC_3D)
+        prepared.policy.route is MeshAdaptationRoute.NATIVE_METRIC_3D
         and retained_inputs is not None
         and isinstance(retained_inputs.fidelity_witness, SourceBoundaryChartWitness)
         and retained_inputs.fidelity_witness.implicit_cell_keys.size
@@ -7526,9 +7517,16 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
     request = prepared.request
     if not isinstance(request, MetricMeshAdaptation):
         raise TypeError("The 3D tetra metric route requires MetricMeshAdaptation.")
+    outcome = _construct_tetra_metric_edit(prepared, request)
+    return _finish_tetra_metric_route(prepared, request, outcome)
+
+
+def _construct_tetra_metric_edit(
+    prepared: PreparedMeshAdaptation, request: MetricMeshAdaptation, /
+) -> TetraMetricOutcome:
     policy = prepared.policy
     constraints = prepared.constraints
-    outcome = execute_tetra_metric_adaptation(
+    return execute_tetra_metric_adaptation(
         prepared.source,
         constraints.metric_values,
         cell_classes=constraints.cell_classes,
@@ -7541,6 +7539,14 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         relocation=policy.relocation,
         accepted_minimum_length=request.accepted_minimum_length,
     )
+
+
+def _finish_tetra_metric_route(
+    prepared: PreparedMeshAdaptation,
+    request: MetricMeshAdaptation,
+    outcome: TetraMetricOutcome,
+    /,
+) -> _RouteOutcome:
     evidence = outcome.evidence
     match evidence.status:
         case TetraMetricStatus.COMPLETE:
@@ -8320,10 +8326,6 @@ def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptati
             from ._device_metric import _execute_device_metric_route
 
             outcome = _execute_device_metric_route(prepared)
-        case MeshAdaptationRoute.DEVICE_METRIC_3D:
-            from ._device_tetra_metric import _execute_device_tetra_metric_route
-
-            outcome = _execute_device_tetra_metric_route(prepared)
         case MeshAdaptationRoute.MMG:
             outcome = _execute_mmg_route(prepared)
         case MeshAdaptationRoute.OMEGA_H:

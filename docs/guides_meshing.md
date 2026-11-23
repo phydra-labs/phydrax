@@ -2982,19 +2982,16 @@ cells), performs one transfer, and returns the `MeshAdaptationResult` with `Devi
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 
-`NATIVE_METRIC_3D` is the independent serial reference for SPD-metric tetrahedral
-split, collapse, flip, ring-reconnection, and relocation edits. `DEVICE_METRIC_3D`
-is a hybrid host/device route: compiled evaluation uses the full tensor metric on
-live edges, then stable-ID priority selects independent split cavities. The
-owning host resolves every proposed child-cell orientation exactly as one batch
-barrier before the native edit owner mutates its provisional state. An invalid
-batch discards provisional edits and returns the unchanged source with
-`NUMERICAL_STOP`; accepted edits retain the serial route's metric and lineage
-semantics. Only split-batch selection and its exact barrier are
-device-specific; the phase schedule, native edit owner and stable target-ID
-numbering are shared with `NATIVE_METRIC_3D`, so both routes publish the same
-target mesh. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
-and host-barrier counts, the native metric evidence, and whether edits committed.
+`NATIVE_METRIC_3D` performs SPD-metric tetrahedral split, collapse, flip,
+ring-reconnection, and relocation edits in one native adaptation loop
+(`TetMesh3D.metric_adapt`). Every edit strictly decreases the termination
+objective; when no edit applies, the loop enables in turn boundary relocation,
+collapses that move their survivor on its source carrier, deeper relocation
+searches, and joint moves of both ends of an out-of-band edge, and reports
+STALLED only after the last of these applies nothing. The route returns the
+exact dyadic source stencils, source-cell lineage, and `TetraMetricEvidence`
+measured on the final mesh. A periodic lift is adapted by the host phase
+schedule until native periodic local commits exist.
 
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.
@@ -3009,7 +3006,9 @@ Geometry validity, source fidelity, and embedding certification are not
 relaxed. Every other route refuses a declared value.
 
 Tetrahedral relocation rounds located source barycentric weights to dyadic
-weights, retaining their exact source image and binary64 carrier. Boundary
+weights, retaining their exact source image and binary64 carrier. If a P1 map
+has authored rational vertices, split and relocation carriers round the
+exact stencil images, not images of the already-rounded coordinates. Boundary
 vertices remain on their source facet or segment; source corners stay pinned.
 A collapse may relocate its survivor while replacing both endpoint stars.
 Its smallest-enclosing-ball goal uses a finite support search (at most four
@@ -3021,6 +3020,21 @@ stencil; collapsed source-vertex ancestry remains explicit after the move.
 Within one directed star, collapse reuses its invariant pre-edit objective and
 identical rejected numerical variants. Source-stencil checks and native
 admission remain independent; this does not retain proposals across changed stars.
+A stationary, witness-free boundary survivor can use a local commit when its
+exact stencil image and the correctly rounded binary64 point both lie inside
+one declared axis-aligned source facet group. The rounding displacement must
+avoid the group rim and every authored source segment. Crossing an internal
+triangle edge without a source feature is allowed.
+Edge worksets use persistent endpoint IDs for measurement and tie-breaking.
+Proposed edits and final band evidence measure in the same endpoint order,
+including when only one endpoint moves or a split introduces a new one.
+Persistent split parents, not storage slots, order fresh cell and facet IDs.
+After binding the input, a mesh already within both the requested band and
+the enabled topology triggers completes without building edit worksets.
+The native adapter may skip an exhausted deep relocation search only while
+its stage, ordered incident cells, carrier revisions, and source chart remain
+unchanged. Reuse is bounded per adaptation call and never skips a candidate
+that reached the native edit checks.
 For an adaptive implicit volume, a nonnested metric edit proposes root-chart
 ancestry from the actual oriented target boundary. The candidate ancestry is
 not a certificate: source fidelity, coverage, and embedding are checked again.

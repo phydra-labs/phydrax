@@ -461,6 +461,8 @@ replace-imports-with-any = [
   "dafoam.**",
   "design.**",
   "e3nn.**",
+  # Gmsh is the optional meshing-gmsh provider, imported only at its boundary.
+  "gmsh.**",
   "gpt.**",
   # Imported only by the docs-build hook mkdocstrings_setup.py (docs extra).
   "griffe.**",

@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -24,14 +25,16 @@ using LocalEdgeKey = std::pair<std::int32_t, std::int32_t>;
 
 LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept;
 
-// A caller's exact stencil for a witness-free boundary vertex: rows of the
-// mesh's source points and binary64 weights, one per row. Local edits verify
-// that the rows are distinct, the weights are finite and sum exactly to 1,
-// and the exact affine combination equals the candidate coordinates on all
-// three axes. Its support is the rows of nonzero weight.
+// Geometry proof for a caller's stencil of a witness-free boundary vertex.
+enum class SourceStencilImage { kExact, kRoundedPlane };
+
+// Distinct mesh source-point rows and finite binary64 weights summing to one.
+// Nonzero weights form the support. Rounded-plane support is confined to
+// stationary survivors; all other consumers require the exact image.
 struct SourceStencil {
   std::span<const std::int32_t> points;
   std::span<const double> weights;
+  SourceStencilImage image = SourceStencilImage::kExact;
 };
 
 class LocalIncidence {
@@ -141,11 +144,13 @@ class LocalIncidence {
   // it is a source point of r's carrier or, with `survivor_stencil`, where
   // the verified stencil (SourceStencil) of its coordinates has its support
   // within the source points common to the groups of r's constrained facets
-  // and segments; a stencil for a witnessed survivor, or one that fails
-  // verification, is refused (kRejectedTopology).
-  TetEditStatus collapse_boundary(TetMesh& mesh, const TetEdit& operation,
-                                  const Star& removed_star, const Star* survivor_star,
-                                  const SourceStencil* survivor_stencil = nullptr);
+  // and segments. A stencil for a witnessed survivor or a failed exact check
+  // is refused. A rounded stencil must prove its exact and represented points
+  // lie inside the same axis-aligned source group, off its rim. A missing
+  // result means no rounded-plane admission; no edit has been attempted.
+  std::optional<TetEditStatus> collapse_boundary(
+      TetMesh& mesh, const TetEdit& operation, const Star& removed_star,
+      const Star* survivor_star, const SourceStencil* survivor_stencil = nullptr);
   // Swaps the boundary edge ab for cd (a kRingReconnect `operation`): ab is
   // no constrained segment and lies in exactly two constrained facets, abc
   // and abd (operation.removed_facet_ids), of one source group and
@@ -163,8 +168,9 @@ class LocalIncidence {
   // around ab by its halves (b, then a, replaced by the vertex; IDs from the
   // mesh's next cell ID, each with its parent as ancestor) and abc, abd by
   // (a, m, c), (m, b, c), (b, m, d), (m, a, d) (vertex order, source and
-  // orientation kept; IDs from the next facet ID), whose finite cell IDs
-  // are returned. Verdict and state equal TetMesh::apply_edit_batch on that
+  // orientation kept; IDs from the next facet ID). Allocation follows each
+  // bank's parent IDs, not slot order. The created finite cell IDs are
+  // returned. Verdict and state equal TetMesh::apply_edit_batch on that
   // edit (whose coverage proof is exact, or the declared pair's of
   // TetMesh::declared_split_pair), except that a periodic or implicit-bound
   // mesh and a split outside this contract are refused (kRejectedTopology)
@@ -172,6 +178,14 @@ class LocalIncidence {
   TetEditStatus split_boundary_edge(TetMesh& mesh, std::int32_t a, std::int32_t b,
                                     const TetEditVertex& vertex,
                                     std::vector<std::uint64_t>& created_cells);
+
+  // From the bound mesh's current boundary index. kApplied with a null
+  // record means no constraint; a failed index is kStaleGeneration. Records
+  // are read-only borrows, valid only until the next edit or initialize.
+  TetEditStatus boundary_facet(std::array<std::uint64_t, 3> vertices,
+                                const TetSnapshotFacet*& record);
+  TetEditStatus boundary_segment(std::array<std::uint64_t, 2> vertices,
+                                  const TetSnapshotSegment*& record);
 
  private:
   struct FaceIdHash {
@@ -201,6 +215,8 @@ class LocalIncidence {
                     std::vector<std::int32_t>& cells) const;
   bool current_star(const Star& star, std::int32_t vertex) const noexcept;
   bool ensure_boundary_index(const TetMesh& mesh);
+  bool rounded_plane_support(const TetMesh& mesh, std::int32_t group,
+                             const SourceStencil& stencil, const double* carrier) const;
   // Validates and commits a boundary edit resolved by collapse_boundary or
   // swap_boundary_edge, in apply_edit_batch's refusal order, and updates
   // this index and the bank indexes.

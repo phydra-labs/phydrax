@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 
 #include "deterministic_float.hpp"
 #include "metric_float.hpp"
@@ -56,6 +57,9 @@ CollapseObjective::CollapseObjective(const CollapseStar& star) : star_(star) {
   before_measured_ =
       band_violations(star.before_count, star.before_lengths, before_long_, before_short_);
   const std::size_t spokes = static_cast<std::size_t>(star.spoke_count);
+  if (!star.neighbor_first.empty() && star.neighbor_first.size() != spokes) {
+    throw std::invalid_argument("Collapse measurement directions must match the spokes.");
+  }
   long_.reserve(spokes);
   short_.reserve(spokes);
 }
@@ -70,7 +74,13 @@ PositionVerdict CollapseObjective::evaluate(const double* point, const double* m
   }
   for (std::int64_t spoke = 0; spoke < star.spoke_count; ++spoke) {
     const std::int64_t other = star.spokes[spoke];
-    lengths[spoke] = length(point, star.points + 3 * other, metric, star.metrics + 9 * other);
+    const double* neighbor = star.points + 3 * other;
+    const double* tensor = star.metrics + 9 * other;
+    const bool neighbor_first = !star.neighbor_first.empty() &&
+                                star.neighbor_first[static_cast<std::size_t>(spoke)] != 0;
+    lengths[spoke] = neighbor_first
+                         ? length(neighbor, point, tensor, metric)
+                         : length(point, neighbor, metric, tensor);
   }
   if (!before_measured_) return PositionVerdict::kUnmeasured;
   if (!band_violations(star.spoke_count, lengths, long_, short_)) {
@@ -129,16 +139,16 @@ PositionVerdict CollapseObjective::evaluate(const double* point, const double* m
 
 SearchEnd survivor_search(const CarrierSource& source, const double* source_metrics,
                           const double* source_logarithms, const CollapseStar& star,
-                          const std::vector<CarrierSimplex>& simplices, bool every_resolution,
+                          CarrierChartView chart, bool every_resolution,
                           std::vector<SurvivorMove>& moves, std::vector<double>& lengths) {
   const double* survivor = star.points;
   const double* removed = star.points + 3;
   int corner_count = 0;
   double corners[9];
-  if (!simplices.empty()) {
+  if (!chart.simplices.empty()) {
     // The simplices of one carrier are coplanar or collinear: the first
     // spans their hull.
-    const CarrierSimplex& first = simplices.front();
+    const CarrierSimplex& first = chart.simplices.front();
     corner_count = first.size;
     for (int slot = 0; slot < first.size; ++slot) {
       const double* values = source.point(first.rows[static_cast<std::size_t>(slot)]);
@@ -160,7 +170,7 @@ SearchEnd survivor_search(const CarrierSource& source, const double* source_metr
   for (int goal = 0; goal < 3; ++goal) {
     if (!valid[goal]) return SearchEnd::kGoalNotFinite;
     const std::vector<Carrier> carriers = source.carriers(
-        goals + 3 * goal, survivor, simplices, -1, CarrierOrder::kCoarseFirst, limit);
+        goals + 3 * goal, survivor, chart, -1, CarrierOrder::kCoarseFirst, limit);
     for (const Carrier& carrier : carriers) {
       const double* point = carrier.point.data();
       if (same_point(point, survivor) || same_point(point, removed)) continue;

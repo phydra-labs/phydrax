@@ -913,7 +913,6 @@ def _register_model_archive_types() -> None:
         OwnerLocalPeriodicSizeStatistic,
     )
     from ._device_metric import DeviceMetricEvidence
-    from ._device_tetra_metric import DeviceTetraMetricEvidence
     from ._distribution import (
         MeshDistribution,
         MeshDistributionTransition,
@@ -1430,7 +1429,6 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", TetraMetricStatus),
         ("phydrax.meshing", TetraMetricUnmetEdge),
         ("phydrax.meshing", TetraMetricUnmetKind),
-        ("phydrax.meshing", DeviceTetraMetricEvidence),
         ("phydrax.meshing", MeshDistributionTransition),
         ("phydrax.meshing", MmgAdaptationResult),
         ("phydrax.meshing", MmgFieldTransfer),

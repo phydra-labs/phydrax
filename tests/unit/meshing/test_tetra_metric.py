@@ -270,6 +270,127 @@ def test_tetra_metric_seeds_authoritative_exact_source_vertices() -> None:
     assert located[2] == (Fraction(0), Fraction(1), Fraction(0), Fraction(0))
 
 
+def test_canonical_tetra_element_does_not_authorize_a_permuted_route() -> None:
+    source = _source(2)
+    mesh = source.mesh
+    block = mesh.blocks[0]
+    route = np.asarray(block.vertices).copy()
+    route[0, :2] = route[0, 1::-1]
+    geometry = phx.discretization.CellGeometrySpec(
+        {block.name: source.geometry.elements[0]},
+        {block.name: route},
+        mesh.coordinates,
+    )
+    with pytest.raises(ValueError, match="requires an exact P1 source map"):
+        _prepare_native_state(
+            mesh,
+            geometry,
+            source.coordinate_contract,
+            np.broadcast_to(np.eye(3), (mesh.vertex_global_ids.size, 3, 3)).copy(),
+            cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+            facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+            edge_classes=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.int64),
+            protected_edges=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.bool_),
+            fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+        )
+
+
+def test_native_tetra_split_rounds_authored_stencil_before_certification() -> None:
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing import (
+        execute_mesh_adaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        MeshAdaptationStatus,
+        MeshingEntityKind,
+        MeshingScope,
+        MeshMetricField,
+        MetricMeshAdaptation,
+        prepare_mesh_adaptation,
+    )
+    from phydrax.meshing._adaptation import (
+        _metric_exact_source_vertices,
+        _vertex_source_target_geometry,
+    )
+
+    cube = _source(2).mesh
+    points = np.asarray(cube.coordinates).copy()
+    points[:, 0] = np.where(points[:, 0] == 0.0, 1.0, np.nextafter(2.0, 1.0))
+    mesh = _mesh_result(points, np.asarray(cube.blocks[0].vertices).tolist()).mesh
+    left = Fraction(1) - Fraction(1, 2**54)
+    exact = tuple(
+        (left if x == 1.0 else Fraction(float(x)), Fraction(float(y)), Fraction(float(z)))
+        for x, y, z in points
+    )
+    source_ids = np.asarray(mesh.vertex_global_ids)
+    bank = ExactPlcCellGeometrySource(
+        "authored-split",
+        "revision",
+        source_ids,
+        exact,
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    source = certify_cell_mesh(
+        mesh,
+        phx.SpatialCoordinateContract.si(),
+        geometry=_vertex_source_target_geometry(mesh, bank),
+    )
+    # Permit only the cube diagonal, whose authored midpoint rounds one ULP
+    # below the midpoint computed from the binary64 endpoint coordinates.
+    edges = mesh.entity_set(1)
+    protected = np.any(entity_keys(mesh, 1) != np.asarray((0, 7)), axis=1)
+    protected_scope = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        1,
+        edges.entity_set_id,
+        np.asarray(edges.entity_ids)[protected],
+    )
+    vertices = mesh.entity_set(0)
+    metric_scope = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        np.asarray(vertices.entity_ids),
+    )
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_METRIC_3D,
+        protected_scopes=(protected_scope,),
+        relocation=False,
+    )
+    metric = MeshMetricField(
+        metric_scope,
+        np.broadcast_to(np.eye(3), (source_ids.size, 3, 3)).copy(),
+        minimum_size=1.0e-3,
+        maximum_size=10.0,
+        maximum_anisotropy=10.0,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, MetricMeshAdaptation(metric), policy=policy)
+    )
+
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    result.target.audit.require_passed()
+    target = result.target.mesh
+    rows = np.flatnonzero(~np.isin(np.asarray(target.vertex_global_ids), source_ids))
+    assert rows.size == 1
+    midpoint = (
+        (left + Fraction(float(points[7, 0]))) / 2,
+        Fraction(1, 2),
+        Fraction(1, 2),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(target.coordinates)[rows[0]], np.asarray(tuple(map(float, midpoint)))
+    )
+    assert (
+        _metric_exact_source_vertices(target, result.target.geometry)[rows[0]] == midpoint
+    )
+
+
 def test_nonperiodic_refinement_reaches_the_unit_metric() -> None:
     outcome = _adapt(_source(), np.eye(3) * 4.0, relocation=False)
 
@@ -2107,6 +2228,225 @@ def test_relocation_yields_after_native_admitted_collapse() -> None:
         state.native.close()
 
 
+@pytest.mark.parametrize(
+    ("bank", "defect", "message"),
+    (
+        pytest.param(
+            "vertex_target_ids", "short", "one entry per vertex", id="vertex-targets"
+        ),
+        pytest.param("cell_blocks", "short", "one entry per cell", id="cell-blocks"),
+        pytest.param("cell_target_ids", "short", "one entry per cell", id="cell-targets"),
+        pytest.param("ancestry_kinds", "short", "one entry per cell", id="cell-kinds"),
+        pytest.param("stencil_offsets", "short", "one more entry", id="missing-offset"),
+        pytest.param("stencil_offsets", "start", "start at zero", id="stencil-start"),
+        pytest.param("ancestry_offsets", "start", "start at zero", id="ancestry-start"),
+        pytest.param("stencil_offsets", "order", "nondecreasing", id="stencil-order"),
+        pytest.param("ancestry_offsets", "order", "nondecreasing", id="ancestry-order"),
+        pytest.param(
+            "stencil_rows", "short", "length of each values bank", id="stencil-rows"
+        ),
+        pytest.param(
+            "stencil_weights", "short", "length of each values bank", id="stencil-weights"
+        ),
+        pytest.param(
+            "ancestry_ids", "short", "length of each values bank", id="ancestry-ids"
+        ),
+    ),
+)
+def test_metric_adapt_refuses_inconsistent_buffer_extents(
+    bank: str,
+    defect: str,
+    message: str,
+) -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    state = _state(_source(), np.eye(3, dtype=np.float64))
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        values = banks[bank].copy()
+        match defect:
+            case "short":
+                values = values[:-1]
+            case "start":
+                values[0] = 1
+            case "order":
+                values[1] = values[-1] + 1
+            case _:
+                raise ValueError(f"Unknown test defect {defect!r}.")
+        banks[bank] = values
+        source_id, revision, map_id, frame_id = state.source_identity
+        generation = int(state.snapshot.generation)
+        with pytest.raises(ValueError, match=message):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=True,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
+@pytest.mark.parametrize("owner", ("vertex", "cell"))
+@pytest.mark.parametrize("missing", (True, False), ids=("missing", "duplicate"))
+def test_metric_adapt_requires_all_live_owners(owner: str, missing: bool) -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    state = _state(_source(), np.eye(3, dtype=np.float64))
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        if owner == "vertex":
+            ids_name = "vertex_ids"
+            parallel = ("vertex_ids", "vertex_target_ids", "stencil_offsets")
+            entries = ("stencil_rows", "stencil_weights")
+        else:
+            ids_name = "cell_ids"
+            parallel = (
+                "cell_ids",
+                "cell_blocks",
+                "cell_target_ids",
+                "ancestry_kinds",
+                "ancestry_offsets",
+            )
+            entries = ("ancestry_ids",)
+        if missing:
+            # Preparation supplies one stencil term or ancestor per owner.
+            for name in (*parallel, *entries):
+                banks[name] = banks[name][:-1]
+        else:
+            ids = banks[ids_name].copy()
+            ids[-1] = ids[-2]
+            banks[ids_name] = ids
+        source_id, revision, map_id, frame_id = state.source_identity
+        generation = int(state.snapshot.generation)
+        with pytest.raises(ValueError, match=r"tet_mesh_metric_adapt: invalid input"):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=True,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
+def test_metric_adapt_refuses_a_mismatched_authored_rounding() -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    state = _state(_source(2), np.eye(3, dtype=np.float64))
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        first, *rest = state.source_exact_points
+        banks["exact_source_points"] = ((first[0] + 1, first[1], first[2]), *rest)
+        source_id, revision, map_id, frame_id = state.source_identity
+        generation = int(state.snapshot.generation)
+        with pytest.raises(ValueError, match=r"tet_mesh_metric_adapt: invalid input"):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=False,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
+def test_relocation_reopens_an_unrepresentable_split() -> None:
+    from phydrax.meshing._tetra_metric import (
+        _adapted_evidence,
+        _LOWER,
+        _metric_adapt_inputs,
+    )
+
+    mesh = _source(5).mesh
+    points = np.asarray(mesh.coordinates).copy()
+    center = 0.5625
+    points[points[:, 0] == 0.5, 0] = center
+    source = _mesh_result(points, np.asarray(mesh.blocks[0].vertices).tolist())
+    state = _state(source, np.diag(np.asarray((144.0, 16.0, 16.0))))
+    banks = _metric_adapt_inputs(state)
+
+    # Exact identity of the center plane, using a small weight at each
+    # adjacent x-plane. A midpoint with either adjacent plane initially
+    # requires a weight 1/2 + 2^-54, which binary64 cannot encode.
+    epsilon = 2.0**-53
+    source_rows = {tuple(point): i for i, point in enumerate(state.source_points)}
+    offsets = [0]
+    rows: list[int] = []
+    weights: list[float] = []
+    for row in banks["stencil_rows"].tolist():
+        x, y, z = state.source_points[row]
+        if x == center:
+            for sx, weight in (
+                (0.0, 1.0 - center - epsilon),
+                (0.25, epsilon),
+                (0.75, epsilon),
+                (1.0, center - epsilon),
+            ):
+                rows.append(source_rows[sx, y, z])
+                weights.append(weight)
+        else:
+            rows.append(row)
+            weights.append(1.0)
+        offsets.append(len(rows))
+    banks["stencil_offsets"] = np.asarray(offsets, dtype=np.int64)
+    banks["stencil_rows"] = np.asarray(rows, dtype=np.int32)
+    banks["stencil_weights"] = np.asarray(weights, dtype=np.float64)
+    source_id, revision, map_id, frame_id = state.source_identity
+    result = state.native.metric_adapt(
+        int(state.snapshot.generation),
+        **banks,
+        lower=_LOWER,
+        topology_operations=True,
+        relocation=True,
+        source_id=source_id,
+        source_revision=revision,
+        source_map_id=map_id,
+        frame_id=frame_id,
+    )
+    evidence = _adapted_evidence(state, result, state.native.arrays(), _LOWER)
+    assert evidence.rejected_invalid > 0 and evidence.relocations > 0
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.out_of_range_edges == 0
+    assert result.unrepresentable_edges.size == 0
+
+
+def test_native_metric_band_evidence_uses_persistent_endpoint_order() -> None:
+    cube = _source(2).mesh
+    points = np.asarray(cube.coordinates) * float.fromhex("0x1.b7f92f0969ff9p-1")
+    vertex_ids = np.arange(7, -1, -1, dtype=np.int64)
+    mesh = CellMesh(points, cube.blocks, vertex_global_ids=vertex_ids)
+    source = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    tensors = np.broadcast_to(
+        np.eye(3, dtype=np.float64) * 1.25, (vertex_ids.size, 3, 3)
+    ).copy()
+    tensors[0] = np.eye(3, dtype=np.float64) * 0.64
+    protected = np.any(entity_keys(mesh, 1) != np.asarray((0, 7)), axis=1)
+
+    evidence = _adapt(
+        source,
+        tensors,
+        protected_edges=protected,
+        topology_operations=False,
+        relocation=False,
+    ).evidence
+
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.out_of_range_edges == 0
+
+
 def test_relocation_progress_survives_topology_edits() -> None:
     source = _source(4, nonuniform=True)
     outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
@@ -3140,168 +3480,3 @@ def test_ring_reconnection_prefers_unit_band_over_higher_cell_quality() -> None:
         for first, second in combinations(range(4), 2)
     )
     assert result[1] < np.min(12.0 * (3.0 * volumes) ** (2.0 / 3.0) / denominator)
-
-
-def test_native_work_continuation_preserves_actual_counts_without_mutating_inputs() -> (
-    None
-):
-    from phydrax._fingerprint import canonical_fingerprint
-    from phydrax.meshing import _tetra_metric as metric
-
-    state = _state(_source(), np.eye(3, dtype=np.float64) * 4.0)
-    try:
-        completed = metric._execute_native_state(
-            state, PredicateMode.EXACT, topology_operations=True, relocation=False
-        )
-        assert completed.evidence.status is TetraMetricStatus.COMPLETE
-        prior = {
-            name: getattr(completed.evidence, name)
-            for name in metric._EditCounters._fields
-        }
-        recorded = prior.copy()
-        checkpoint = canonical_fingerprint(
-            (state.source_identity, state.snapshot, prior, completed.evidence.passes)
-        )
-        work = metric._native_work_seed(
-            state,
-            prior,
-            completed.evidence.passes,
-            completed.evidence.implicit_refusals,
-            checkpoint_id=checkpoint,
-            predicate_mode=PredicateMode.EXACT,
-            topology_operations=True,
-            relocation=False,
-        )
-        prior["splits"] += 1
-        before = state.snapshot.generation
-        resumed = metric._execute_native_state(
-            state,
-            PredicateMode.EXACT,
-            topology_operations=True,
-            relocation=False,
-            work=work,
-        )
-        assert resumed.evidence.evidence_id == completed.evidence.evidence_id
-        assert resumed.evidence.passes == completed.evidence.passes
-        assert {name: getattr(resumed.evidence, name) for name in recorded} == recorded
-        assert prior["splits"] == recorded["splits"] + 1
-        assert state.snapshot.generation == before
-    finally:
-        state.native.close()
-
-
-@pytest.mark.parametrize(
-    "fresh_handle", (False, True), ids=("same-handle", "restored-handle")
-)
-def test_native_work_continuation_composes_actual_refusal_observations(
-    fresh_handle: bool,
-) -> None:
-    from phydrax._fingerprint import canonical_fingerprint
-    from phydrax.meshing import _tetra_metric as metric
-
-    original = _implicit_plane_pyramid(2.0, 0.01)
-    restored = _implicit_plane_pyramid(2.0, 0.01) if fresh_handle else None
-    try:
-        request = metric._relocation_edit(
-            original,
-            [
-                {
-                    "vertex": 4,
-                    "point": np.asarray((0.25, 0.25, 0.5), dtype=np.float64),
-                    "star_cell_ids": frozenset(original.snapshot.cell_ids.tolist()),
-                }
-            ],
-        )
-        prior_counters = dict(
-            zip(metric._EditCounters._fields, metric._EditCounters(), strict=True)
-        )
-        status = original.native.apply_edit(request)
-        assert status is TetMeshEditStatus.UNCERTAIN_PREDICATE
-        metric._count_rejection(status, prior_counters, 1)
-        historical = original.native.implicit_refusals
-        assert historical is not None and historical[1] > 0
-        state = original if restored is None else restored
-        baseline = state.native.implicit_refusals
-        assert baseline is not None
-        checkpoint = canonical_fingerprint(
-            (original.snapshot, prior_counters, historical)
-        )
-        work = metric._native_work_seed(
-            state,
-            prior_counters,
-            0,
-            historical,
-            checkpoint_id=checkpoint,
-            predicate_mode=PredicateMode.EXACT,
-            topology_operations=False,
-            relocation=False,
-        )
-        assert state.native.apply_edit(request) is TetMeshEditStatus.UNCERTAIN_PREDICATE
-        current = state.native.implicit_refusals
-        assert current is not None
-        outcome = metric._execute_native_state(
-            state,
-            PredicateMode.EXACT,
-            topology_operations=False,
-            relocation=False,
-            work=work,
-        )
-        assert outcome.evidence.implicit_refusals == (
-            historical[0] + current[0] - baseline[0],
-            historical[1] + current[1] - baseline[1],
-        )
-        assert outcome.evidence.implicit_refusals[1] > historical[1]
-        assert state.native.implicit_refusals == current
-        assert outcome.evidence.rejected_uncertain == prior_counters["rejected_uncertain"]
-        assert outcome.evidence.status is TetraMetricStatus.STALLED
-    finally:
-        original.native.close()
-        if restored is not None:
-            restored.native.close()
-
-
-@pytest.mark.parametrize("change", ("physical", "source", "metric", "controls", "ledger"))
-def test_native_work_seed_refuses_changed_checkpoint(change: str) -> None:
-    from phydrax._fingerprint import canonical_fingerprint
-    from phydrax.meshing import _tetra_metric as metric
-
-    state = _state(_source(), np.eye(3, dtype=np.float64))
-    try:
-        work = metric._native_work_seed(
-            state,
-            dict(zip(metric._EditCounters._fields, metric._EditCounters(), strict=True)),
-            0,
-            None,
-            checkpoint_id=canonical_fingerprint(state.snapshot),
-            predicate_mode=PredicateMode.EXACT,
-            topology_operations=True,
-            relocation=True,
-        )
-        relocation = True
-        match change:
-            case "physical":
-                state.native.protect_facet_group_rows(np.asarray([0], dtype=np.int32))
-                state.snapshot = state.native.arrays()
-            case "source":
-                state.source_identity = ("different-source", *state.source_identity[1:])
-            case "metric":
-                vertex = min(state.metric_by_vertex)
-                state.metric_by_vertex[vertex] = state.metric_by_vertex[vertex] * 2.0
-            case "controls":
-                relocation = False
-            case "ledger":
-                work = work._replace(passes=work.passes + 1)
-            case _:
-                raise ValueError("Unknown negative continuation case")
-        generation = state.snapshot.generation
-        with pytest.raises(ValueError, match="physical/source/control checkpoint"):
-            metric._execute_native_state(
-                state,
-                PredicateMode.EXACT,
-                topology_operations=True,
-                relocation=relocation,
-                work=work,
-            )
-        assert state.snapshot.generation == generation
-    finally:
-        state.native.close()

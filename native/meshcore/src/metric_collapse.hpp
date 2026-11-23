@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "metric_carrier.hpp"
@@ -31,6 +32,8 @@ struct CollapseStar {
   // of each spoke's other end.
   std::int64_t spoke_count = 0;
   const std::int64_t* spokes = nullptr;
+  // A nonzero entry puts the neighbor first. Empty uses survivor first.
+  std::span<const std::uint8_t> neighbor_first;
   // Metric lengths of the measured edges the collapse removes.
   std::int64_t before_count = 0;
   const double* before_lengths = nullptr;
@@ -120,7 +123,7 @@ enum class SearchEnd : int {
 // std::bad_alloc.
 SearchEnd survivor_search(const CarrierSource& source, const double* source_metrics,
                           const double* source_logarithms, const CollapseStar& star,
-                          const std::vector<CarrierSimplex>& simplices, bool every_resolution,
+                          CarrierChartView chart, bool every_resolution,
                           std::vector<SurvivorMove>& moves, std::vector<double>& lengths);
 
 // The nonzero band quanta (metric_float.hpp) of `count` lengths, largest

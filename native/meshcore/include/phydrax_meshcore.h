@@ -886,6 +886,105 @@ PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     int32_t* edit_status, int32_t* run_status, int64_t* inserted_vertices,
     int64_t* collapsed_vertices, int64_t* relocated_vertices, int64_t* unmet_cells,
     double* score_quantum);
+/* Metric adaptation of a live, unbound, nonperiodic mesh toward unit metric
+ * edge length, in place (metric_adapt3d.hpp). The source holds the P1 point
+ * roundings (exact when exact_source is null), SPD tensors and tensor
+ * logarithms (nine values each), target vertex IDs and source cells (four
+ * point rows each, where relocation carriers are located). Every live mesh vertex (ascending
+ * native ID) carries a stencil, ascending source rows with binary64 weights
+ * (CSR), and a target ID; every live cell (ascending native ID) its block,
+ * target ID and source-cell ancestry (CSR) with its lineage kind (the
+ * EntityLineageKind value). Protected edges are native vertex ID pairs. The
+ * fresh allocators name unused native vertex and cell IDs and unused target
+ * vertex and cell IDs. Completion requires every measured edge length in
+ * [lower, sqrt 2], 0 < lower <= 1.
+ *
+ * *edit_status is the commit status of a fatal failure (stale state,
+ * allocation, identifier range) or APPLIED; only APPLIED returns *result,
+ * which the caller frees with phx_mc_metric_adaptation_free. */
+typedef struct phx_mc_metric_adapt3d_request {
+  int64_t source_count;
+  const double* source_points;
+  const double* source_metrics;
+  const double* source_logarithms;
+  const uint64_t* source_vertex_ids;
+  int64_t source_cell_count;
+  const int64_t* source_cells;
+  int64_t vertex_count;
+  const uint64_t* vertex_ids;
+  const int64_t* stencil_offsets;
+  const int32_t* stencil_rows;
+  const double* stencil_weights;
+  const uint64_t* vertex_target_ids;
+  int64_t cell_count;
+  const uint64_t* cell_ids;
+  const int32_t* cell_blocks;
+  const uint64_t* cell_target_ids;
+  const int64_t* ancestry_offsets;
+  const uint64_t* ancestry_ids;
+  const int32_t* ancestry_kinds;
+  int64_t protected_edge_count;
+  const uint64_t* protected_edges;
+  uint64_t next_vertex_id;
+  uint64_t next_cell_id;
+  uint64_t next_target_vertex;
+  uint64_t next_target_cell;
+  double lower;
+  int32_t topology_operations;
+  int32_t relocation;
+  /* Optional authored rational source; the point and cell rows above must
+   * match this bank's binary64 points and cells. Borrowed for this call. */
+  const struct phx_mc_metric_source* exact_source;
+} phx_mc_metric_adapt3d_request;
+typedef struct phx_mc_metric_adaptation phx_mc_metric_adaptation;
+PHX_MC_API int32_t phx_mc_tet_mesh_metric_adapt(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length,
+    const char* source_revision, int64_t source_revision_length,
+    const char* source_map_id, int64_t source_map_id_length,
+    const char* frame_id, int64_t frame_id_length,
+    const phx_mc_metric_adapt3d_request* request, int32_t* edit_status,
+    phx_mc_metric_adaptation** result);
+/* Bank sizes of a result: live vertices, stencil terms, live cells, ancestry
+ * IDs, vertex relations, unrepresentable edges. */
+#define PHX_MC_METRIC_ADAPTATION_SIZES 6
+PHX_MC_API int32_t phx_mc_metric_adaptation_sizes(
+    const phx_mc_metric_adaptation* result, int64_t* sizes);
+/* The result's banks, sized by phx_mc_metric_adaptation_sizes: status (0
+ * complete, 1 stalled, 2 numerical stop), passes and the ten counters
+ * (splits, collapses, flips 2-3, flips 3-2, ring reconnections, relocations,
+ * refusals for topology, protection, uncertainty, invalidity); per vertex its
+ * native and target ID, stencil (CSR, offsets of vertex count + 1) and
+ * tensor (nine values); per cell its native and target ID, block, ancestry
+ * (CSR) with lineage kind and whether a relocation changed it; the vertex
+ * relations (source target ID, target ID, lineage kind) of collapsed and
+ * relocated source vertices; and the long edges without an exact split point
+ * (target vertex ID pairs). */
+typedef struct phx_mc_metric_adaptation_output {
+  int32_t* status;
+  int64_t* passes;
+  int64_t* counters;
+  uint64_t* vertex_ids;
+  uint64_t* vertex_target_ids;
+  int64_t* stencil_offsets;
+  int32_t* stencil_rows;
+  double* stencil_weights;
+  double* metrics;
+  uint64_t* cell_ids;
+  uint64_t* cell_target_ids;
+  int32_t* cell_blocks;
+  int64_t* ancestry_offsets;
+  uint64_t* ancestry_ids;
+  int32_t* ancestry_kinds;
+  int8_t* cell_relocated;
+  uint64_t* vertex_relation_sources;
+  uint64_t* vertex_relation_targets;
+  int32_t* vertex_relation_kinds;
+  uint64_t* unrepresentable_edges;
+} phx_mc_metric_adaptation_output;
+PHX_MC_API int32_t phx_mc_metric_adaptation_read(
+    const phx_mc_metric_adaptation* result, const phx_mc_metric_adaptation_output* banks);
+PHX_MC_API void phx_mc_metric_adaptation_free(phx_mc_metric_adaptation* result);
 PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 
 #define PHX_MC_QUADRATIC_VALIDITY_VALID 0

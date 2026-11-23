@@ -17,12 +17,14 @@
 // does not depend on which one ran.
 #include "metric_carrier.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "exact_scalar.hpp"
 #include "wide_integer.hpp"
@@ -96,6 +98,42 @@ class Small {
     exponent = start;
     return static_cast<double>(top);
   }
+  // Round this integer times 2^power using the discarded bits, without division.
+  double nearest_binary64(std::int64_t power, bool& exact) const {
+    const std::int64_t length = bits();
+    if (length == 0) {
+      exact = true;
+      return 0.0;
+    }
+    const std::int64_t biased = length - 1 + power + 1023;
+    if (biased < 1 || biased > 2046) throw CapacityExceeded{};
+    std::uint64_t mantissa;
+    exact = true;
+    if (length <= 53) {
+      mantissa = limb_[0] << (53 - length);
+    } else {
+      const std::int64_t discarded = length - 53;
+      const auto word = static_cast<std::size_t>(discarded / 64);
+      const int offset = static_cast<int>(discarded % 64);
+      mantissa = limb_[word] >> offset;
+      if (offset != 0 && word + 1 < size_) mantissa |= limb_[word + 1] << (64 - offset);
+      const auto guard_word = static_cast<std::size_t>((discarded - 1) / 64);
+      const int guard_offset = static_cast<int>((discarded - 1) % 64);
+      const std::uint64_t guard_mask = std::uint64_t{1} << guard_offset;
+      const bool guard = (limb_[guard_word] & guard_mask) != 0;
+      bool sticky = (limb_[guard_word] & (guard_mask - 1)) != 0;
+      for (std::size_t index = 0; index < guard_word && !sticky; ++index) {
+        sticky = limb_[index] != 0;
+      }
+      exact = !guard && !sticky;
+      if (guard && (sticky || (mantissa & 1) != 0)) ++mantissa;
+    }
+    // The leading mantissa bit supplies one exponent unit; addition also
+    // carries when rounding over a binade boundary.
+    const std::uint64_t magnitude = (static_cast<std::uint64_t>(biased - 1) << 52) + mantissa;
+    if (magnitude >= 0x7ff0000000000000ULL) throw CapacityExceeded{};
+    return std::bit_cast<double>(magnitude | (static_cast<std::uint64_t>(negative_) << 63));
+  }
   // value * 2^count for count >= 0.
   Small shifted(std::int64_t count) const {
     if (size_ == 0 || count == 0) return *this;
@@ -124,6 +162,12 @@ class Small {
   friend Small operator*(const Small& a, const Small& b) {
     Small out;
     if (a.size_ == 0 || b.size_ == 0) return out;
+    if (a.size_ == 1 && b.size_ == 1) {
+      out.limb_[0] = multiply_wide(a.limb_[0], b.limb_[0], out.limb_[1]);
+      out.size_ = out.limb_[1] == 0 ? 1 : 2;
+      out.negative_ = a.negative_ != b.negative_;
+      return out;
+    }
     if (a.size_ + b.size_ > kLimbs) throw CapacityExceeded{};
     const std::size_t size = a.size_ + b.size_;
     for (std::size_t index = 0; index < size; ++index) out.limb_[index] = 0;
@@ -378,6 +422,9 @@ struct ExactView {
     return (*numerators)[static_cast<std::size_t>(3 * row + axis)];
   }
   const Dyadic& denominator() const { return *common; }
+  double round_coordinate(const Dyadic& value, int bits, bool& exact) const {
+    return rounded_quotient(value, denominator(), bits, exact);
+  }
 };
 
 // The same numbers as inline integers, read from their limb bank.
@@ -387,6 +434,7 @@ struct InlineView {
   const std::vector<std::uint32_t>* offsets;
   const std::vector<std::uint8_t>* negative;
   Small common;
+  std::int64_t binary_shift;
   Small at(std::size_t index) const {
     const std::uint32_t begin = (*offsets)[index];
     return Small::from_limbs(limbs->data() + begin, (*offsets)[index + 1] - begin,
@@ -396,6 +444,10 @@ struct InlineView {
     return at(static_cast<std::size_t>(3 * row + axis));
   }
   const Small& denominator() const { return common; }
+  double round_coordinate(const Small& value, int bits, bool& exact) const {
+    if (binary_shift >= 0) return value.nearest_binary64(-binary_shift - bits, exact);
+    return rounded_quotient(value, denominator(), bits, exact);
+  }
 };
 
 // A located goal: weights[i] / (denominator 2^shift) at point rows[i].
@@ -407,6 +459,7 @@ struct Located {
   std::int64_t shift = 0;
   int size = 0;
   bool declared = false;
+  std::uint8_t projected_axes = 0;
 };
 
 struct Geometry {
@@ -414,7 +467,21 @@ struct Geometry {
   const std::vector<std::int64_t>& cells;
   const std::vector<double>& lower;
   const std::vector<double>& upper;
+  const CarrierBoxGrid& grid;
 };
+
+// The grid bucket coordinate of `value` on `axis`: monotone in value, so a
+// box [lower, upper] meets every bucket between those of its corners.
+std::int64_t bucket_coordinate(const std::array<double, 3>& origin,
+                               const std::array<double, 3>& scale,
+                               const std::array<std::int64_t, 3>& size, int axis,
+                               double value) {
+  const auto at = static_cast<std::size_t>(axis);
+  const double position = std::floor((value - origin[at]) * scale[at]);
+  if (!(position > 0.0)) return 0;
+  const auto last = static_cast<double>(size[at] - 1);
+  return position >= last ? size[at] - 1 : static_cast<std::int64_t>(position);
+}
 
 // The target as integer numerators over (denominator 2^shift).
 template <class View>
@@ -445,9 +512,20 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
                  const Target<View>& exact_target, std::int64_t only,
                  Located<typename View::Value>& located) {
   using Z = typename View::Value;
-  const std::size_t begin = only < 0 ? 0 : static_cast<std::size_t>(only);
-  const std::size_t end = only < 0 ? geometry.cells.size() / 4 : begin + 1;
-  for (std::size_t cell = begin; cell < end; ++cell) {
+  // The cells to try, ascending: `only`, or the target's grid bucket (every
+  // cell whose box can hold the target is listed there, so the first holding
+  // cell is the one a scan of all cells would find).
+  std::span<const std::int64_t> candidates;
+  if (only >= 0) {
+    candidates = std::span(&only, 1);
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!std::isfinite(target[axis])) return false;
+    }
+    candidates = geometry.grid.candidates(target);
+  }
+  for (const std::int64_t row : candidates) {
+    const auto cell = static_cast<std::size_t>(row);
     // Rounding is monotone and the box corners are binary64 source points, so
     // a cell that holds the exact target passes this comparison.
     bool inside = true;
@@ -496,9 +574,52 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
   return false;
 }
 
+// On a coordinate subspace projection leaves the participating coordinates
+// unchanged. Solve only those exact equations, without squaring a Gram matrix.
 template <class View>
-bool locate_simplex(const View& view, const Target<View>& exact_target,
-                    const CarrierSimplex& simplex, Located<typename View::Value>& located) {
+bool projected_weights(const View& view, const Target<View>& target,
+                       const CarrierSimplex& simplex, typename View::Value* weights,
+                       typename View::Value& total) {
+  using Z = typename View::Value;
+  const unsigned axes = simplex.projected_axes;
+  const int x = std::countr_zero(axes);
+  const Z px = view.numerator(simplex.rows[0], x);
+  const Z ax = view.numerator(simplex.rows[1], x) - px;
+  const Z rx = target.numerators[static_cast<std::size_t>(x)] -
+               Integer<Z>::shifted(px, target.shift);
+  if (simplex.size == 2) {
+    total = ax;
+    weights[1] = rx;
+  } else {
+    const int y = std::countr_zero(axes & (axes - 1));
+    const Z py = view.numerator(simplex.rows[0], y);
+    const Z ay = view.numerator(simplex.rows[1], y) - py;
+    const Z bx = view.numerator(simplex.rows[2], x) - px;
+    const Z by = view.numerator(simplex.rows[2], y) - py;
+    const Z ry = target.numerators[static_cast<std::size_t>(y)] -
+                 Integer<Z>::shifted(py, target.shift);
+    total = ax * by - ay * bx;
+    weights[1] = rx * by - ry * bx;
+    weights[2] = ax * ry - ay * rx;
+  }
+  const int orientation = total.sign();
+  if (orientation == 0) return false;
+  if (orientation < 0) total = Integer<Z>::negated(total);
+  Z remaining = Integer<Z>::shifted(total, target.shift);
+  for (int corner = 1; corner < simplex.size; ++corner) {
+    Z& weight = weights[corner];
+    if (orientation < 0) weight = Integer<Z>::negated(weight);
+    if (weight.sign() < 0 || Integer<Z>::order(weight, remaining) > 0) return false;
+    remaining = remaining - weight;
+  }
+  weights[0] = std::move(remaining);
+  return true;
+}
+
+template <class View>
+bool gram_weights(const View& view, const Target<View>& exact_target,
+                  const CarrierSimplex& simplex, typename View::Value* weights,
+                  typename View::Value& total) {
   using Z = typename View::Value;
   Vector<Z> edges[2];
   Vector<Z> offset;
@@ -511,8 +632,6 @@ bool locate_simplex(const View& view, const Target<View>& exact_target,
     }
     offset[slot] = exact_target.numerators[slot] - Integer<Z>::shifted(origin, exact_target.shift);
   }
-  Z weights[3];
-  Z total;
   if (simplex.size == 2) {
     total = dot(edges[0], edges[0]);
     if (total.sign() == 0) return false;
@@ -536,36 +655,70 @@ bool locate_simplex(const View& view, const Target<View>& exact_target,
     if (weights[2].sign() < 0 || Integer<Z>::order(weights[2], remaining) > 0) return false;
     weights[0] = remaining - weights[2];
   }
+  return true;
+}
+
+template <class View>
+bool locate_simplex(const View& view, const Target<View>& target, const CarrierSimplex& simplex,
+                    Located<typename View::Value>& located) {
+  auto& weights = located.weights;
+  auto& total = located.denominator;
+  const bool found = simplex.projected_axes != 0
+                         ? projected_weights(view, target, simplex, weights.data(), total)
+                         : gram_weights(view, target, simplex, weights.data(), total);
+  if (!found) return false;
   located.size = simplex.size;
   located.declared = simplex.declared;
-  located.shift = exact_target.shift;
-  located.denominator = total;
+  located.projected_axes = simplex.projected_axes;
+  located.shift = target.shift;
   for (int corner = 0; corner < simplex.size; ++corner) {
     const std::size_t slot = static_cast<std::size_t>(corner);
     located.rows[slot] = simplex.rows[slot];
-    located.weights[slot] = weights[corner];
+  }
+  return true;
+}
+
+bool within_projection_box(const Geometry& geometry, const CarrierSimplex& simplex,
+                           const double* target) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if ((simplex.projected_axes & (1U << axis)) == 0) continue;
+    const double first = geometry.points[3 * simplex.rows[0] + axis];
+    const double second = geometry.points[3 * simplex.rows[1] + axis];
+    const double third = simplex.size == 3 ? geometry.points[3 * simplex.rows[2] + axis] : first;
+    // The projected coordinate is unchanged. Monotone rounding implies
+    // that a binary64 target in the exact box is also in the rounded box.
+    if (target[axis] < std::min({first, second, third}) ||
+        target[axis] > std::max({first, second, third})) return false;
   }
   return true;
 }
 
 template <class View>
 std::vector<Carrier> search(const View& view, const Geometry& geometry, const double* target,
-                            const double* current, const std::vector<CarrierSimplex>& simplices,
+                            const double* current, CarrierChartView chart,
                             std::int64_t only, CarrierOrder order, std::int64_t limit) {
   using Z = typename View::Value;
   std::vector<Carrier> found;
   if (limit <= 0) return found;
   const Target<View> exact_target(view, target);
   Located<Z> located;
-  const bool on_simplex = !simplices.empty();
+  const bool on_simplex = !chart.simplices.empty();
   bool has_location = false;
   if (on_simplex) {
-    for (const CarrierSimplex& simplex : simplices) {
-      if (simplex.size != 2 && simplex.size != 3) continue;
-      if (locate_simplex(view, exact_target, simplex, located)) {
-        has_location = true;
-        break;
+    const auto holds = [&](const CarrierSimplex& simplex) {
+      return (simplex.size == 2 || simplex.size == 3) &&
+             (simplex.projected_axes == 0 || within_projection_box(geometry, simplex, target)) &&
+             locate_simplex(view, exact_target, simplex, located);
+    };
+    if (chart.grid != nullptr) {
+      for (const std::int64_t row : chart.grid->candidates(target)) {
+        if (holds(chart.simplices[static_cast<std::size_t>(row)])) {
+          has_location = true;
+          break;
+        }
       }
+    } else {
+      has_location = std::ranges::any_of(chart.simplices, holds);
     }
   } else {
     has_location = locate_cell(view, geometry, target, exact_target, only, located);
@@ -599,7 +752,14 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
 
   // The goal: the target in a cell, the correctly rounded projection on a simplex.
   double goal[3] = {target[0], target[1], target[2]};
-  if (on_simplex) {
+  if (located.projected_axes != 0) {
+    // The exact projection keeps the target on participating axes and the
+    // common source coordinate on the rest; each is already rounded.
+    const double* origin = geometry.points.data() + 3 * located.rows[0];
+    for (int axis = 0; axis < 3; ++axis) {
+      if ((located.projected_axes & (1U << axis)) == 0) goal[axis] = origin[axis];
+    }
+  } else if (on_simplex) {
     const Z image_denominator = located.denominator * view.denominator();
     for (int axis = 0; axis < 3; ++axis) {
       Z sum;
@@ -686,8 +846,7 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
                             numerators[slot][axis];
       }
       bool whole = false;
-      carrier.point[static_cast<std::size_t>(axis)] =
-          rounded_quotient(value, view.denominator(), bits, whole);
+      carrier.point[static_cast<std::size_t>(axis)] = view.round_coordinate(value, bits, whole);
       if (!whole) carrier.exact = false;
     }
     const double dx = carrier.point[0] - goal[0];
@@ -729,6 +888,91 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
 
 }  // namespace
 
+void CarrierBoxGrid::prepare(std::span<const double> lower, std::span<const double> upper,
+                             std::uint8_t axes, std::size_t membership_limit) {
+  if (lower.size() != upper.size() || lower.size() % 3 != 0 || axes == 0 || axes > 7) {
+    throw std::invalid_argument("Carrier boxes require aligned bounds and projection axes.");
+  }
+  const std::size_t count = lower.size() / 3;
+  const double rows = static_cast<double>(std::max<std::size_t>(count, 1));
+  const int dimension = std::popcount(axes);
+  const auto side = static_cast<std::int64_t>(
+      std::ceil(dimension == 3 ? std::cbrt(rows) : dimension == 2 ? std::sqrt(rows) : rows));
+  std::size_t buckets = 1;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (count == 0 || (axes & (1U << axis)) == 0) {
+      size_[axis] = 1;
+      continue;
+    }
+    double low = lower[axis];
+    double high = upper[axis];
+    for (std::size_t row = 1; row < count; ++row) {
+      low = std::min(low, lower[3 * row + axis]);
+      high = std::max(high, upper[3 * row + axis]);
+    }
+    const double extent = high - low;
+    origin_[axis] = low;
+    size_[axis] = extent > 0.0 ? side : 1;
+    scale_[axis] = size_[axis] == 1 ? 0.0 : static_cast<double>(side) / extent;
+    buckets *= static_cast<std::size_t>(size_[axis]);
+  }
+  rows_.clear();
+  offsets_.assign(buckets + 1, 0);
+  const auto each_bucket = [&](std::size_t row, auto&& visit) {
+    std::array<std::int64_t, 3> first{};
+    std::array<std::int64_t, 3> last{};
+    for (int axis = 0; axis < 3; ++axis) {
+      if (size_[axis] == 1) continue;
+      const auto at = static_cast<std::size_t>(axis);
+      first[at] = bucket_coordinate(origin_, scale_, size_, axis, lower[3 * row + at]);
+      last[at] = bucket_coordinate(origin_, scale_, size_, axis, upper[3 * row + at]);
+    }
+    for (std::int64_t z = first[2]; z <= last[2]; ++z) {
+      for (std::int64_t y = first[1]; y <= last[1]; ++y) {
+        for (std::int64_t x = first[0]; x <= last[0]; ++x) {
+          if (!visit(static_cast<std::size_t>((z * size_[1] + y) * size_[0] + x))) return false;
+        }
+      }
+    }
+    return true;
+  };
+  std::size_t memberships = 0;
+  for (std::size_t row = 0; row < count; ++row) {
+    if (!each_bucket(row, [&](std::size_t bucket) {
+          if (memberships == membership_limit) return false;
+          ++memberships;
+          ++offsets_[bucket + 1];
+          return true;
+        })) {
+      offsets_.clear();
+      return;
+    }
+  }
+  for (std::size_t bucket = 0; bucket < buckets; ++bucket) {
+    offsets_[bucket + 1] += offsets_[bucket];
+  }
+  rows_.resize(memberships);
+  std::vector<std::int64_t> cursor(offsets_.begin(), offsets_.end() - 1);
+  for (std::size_t row = 0; row < count; ++row) {
+    each_bucket(row, [&](std::size_t bucket) {
+      rows_[static_cast<std::size_t>(cursor[bucket]++)] = static_cast<std::int64_t>(row);
+      return true;
+    });
+  }
+}
+
+std::span<const std::int64_t> CarrierBoxGrid::candidates(const double* target) const noexcept {
+  std::int64_t bucket = 0;
+  for (int axis = 2; axis >= 0; --axis) {
+    if (size_[axis] == 1) continue;
+    bucket = bucket * size_[axis] + bucket_coordinate(origin_, scale_, size_, axis, target[axis]);
+  }
+  const auto row = static_cast<std::size_t>(bucket);
+  const auto begin = static_cast<std::size_t>(offsets_[row]);
+  const auto end = static_cast<std::size_t>(offsets_[row + 1]);
+  return std::span(rows_).subspan(begin, end - begin);
+}
+
 CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> numerators,
                              Dyadic denominator, std::vector<std::int64_t> cells)
     : points_(std::move(points)),
@@ -756,6 +1000,9 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
       }
     }
   }
+
+  cell_grid_.prepare(lower_, upper_, 7, std::numeric_limits<std::int64_t>::max());
+  if (!cell_grid_.indexed()) throw std::length_error("Carrier cell buckets exceed the index range.");
 
   // The same integers as 64-bit limbs for the inline route, when every one
   // of them and their offsets fit.
@@ -795,6 +1042,9 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     if (inline_) append(value);
   }
   if (inline_) append(denominator_);
+  if (inline_ && denominator_.magnitude().size() == 1 && denominator_.magnitude()[0] == 1) {
+    binary_shift_ = denominator_.exponent();
+  }
   if (!inline_) {
     inline_limbs_.clear();
     inline_offsets_.clear();
@@ -802,22 +1052,101 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
   }
 }
 
+CarrierSimplex CarrierSource::prepare_simplex(CarrierSimplex simplex) const {
+  simplex.projected_axes = 0;
+  if (simplex.size != 2 && simplex.size != 3) return simplex;
+  for (int corner = 0; corner < simplex.size; ++corner) {
+    const auto row = simplex.rows[static_cast<std::size_t>(corner)];
+    if (row < 0 || row >= point_count()) {
+      throw std::invalid_argument("A carrier simplex names an absent source point.");
+    }
+  }
+  unsigned axes = 0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const Dyadic& origin = numerators_[3 * simplex.rows[0] + axis];
+    for (int corner = 1; corner < simplex.size; ++corner) {
+      const auto row = simplex.rows[static_cast<std::size_t>(corner)];
+      if (!(numerators_[3 * row + axis] - origin).is_zero()) {
+        axes |= 1U << axis;
+        break;
+      }
+    }
+  }
+  // An independent simplex spanning exactly this many coordinate directions
+  // fills its coordinate subspace. Degenerate candidates still fail location.
+  if (std::popcount(axes) == simplex.size - 1) {
+    simplex.projected_axes = static_cast<std::uint8_t>(axes);
+  }
+  return simplex;
+}
+
+void CarrierSource::prepare_chart(CarrierChart& chart) const {
+  chart.grid = CarrierBoxGrid{};
+  std::uint8_t axes = 7;
+  for (CarrierSimplex& simplex : chart.simplices) {
+    simplex = prepare_simplex(simplex);
+    axes &= simplex.projected_axes;
+  }
+  const std::size_t count = chart.simplices.size();
+  if (axes == 0 || count < 16) return;
+  // All boxes constrain the shared projection coordinates. Broad overlapping
+  // charts keep the linear screen rather than materializing dense membership.
+  std::vector<double> lower(3 * count);
+  std::vector<double> upper(3 * count);
+  for (std::size_t row = 0; row < count; ++row) {
+    const CarrierSimplex& simplex = chart.simplices[row];
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      if ((axes & (1U << axis)) == 0) continue;
+      double low = point(simplex.rows[0])[axis];
+      double high = low;
+      for (int corner = 1; corner < simplex.size; ++corner) {
+        const double value = point(simplex.rows[static_cast<std::size_t>(corner)])[axis];
+        low = std::min(low, value);
+        high = std::max(high, value);
+      }
+      lower[3 * row + axis] = low;
+      upper[3 * row + axis] = high;
+    }
+  }
+  chart.grid.prepare(lower, upper, axes, 16 * count);
+}
+
+bool CarrierSource::matches_roundings(std::span<const double> points,
+                                      std::span<const std::int64_t> cells) const {
+  if (!std::ranges::equal(points_, points) || !std::ranges::equal(cells_, cells)) return false;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    if (exact::rounded_quotient(numerators_[index], denominator_) != points[index]) return false;
+  }
+  return true;
+}
+
+double CarrierSource::stencil_coordinate(std::span<const StencilTerm> stencil, int axis,
+                                         bool require_exact, bool& admitted) const {
+  Dyadic numerator;
+  for (const StencilTerm& term : stencil) {
+    const auto row = static_cast<std::size_t>(term.row);
+    numerator = numerator + Dyadic(term.weight) * numerators_[3 * row + axis];
+  }
+  const double rounded = exact::rounded_quotient(numerator, denominator_);
+  admitted = !require_exact || (numerator - Dyadic(rounded) * denominator_).is_zero();
+  return rounded;
+}
+
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,
-                                             const std::vector<CarrierSimplex>& simplices,
-                                             std::int64_t cell, CarrierOrder order,
-                                             std::int64_t limit) const {
-  const Geometry geometry{points_, cells_, lower_, upper_};
+                                             CarrierChartView chart, std::int64_t cell,
+                                             CarrierOrder order, std::int64_t limit) const {
+  const Geometry geometry{points_, cells_, lower_, upper_, cell_grid_};
   if (inline_) {
     try {
-      InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small()};
+      InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small(), binary_shift_};
       view.common = view.at(numerators_.size());
-      return search(view, geometry, target, current, simplices, cell, order, limit);
+      return search(view, geometry, target, current, chart, cell, order, limit);
     } catch (const CapacityExceeded&) {
       // The unbounded integers below repeat the query.
     }
   }
   const ExactView view{&numerators_, &denominator_};
-  return search(view, geometry, target, current, simplices, cell, order, limit);
+  return search(view, geometry, target, current, chart, cell, order, limit);
 }
 
 }  // namespace phx::mc::metric
