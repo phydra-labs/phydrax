@@ -144,6 +144,62 @@ using MeasuredEdge = std::pair<double, IdEdge>;
 
 using IdFace = std::array<std::uint64_t, 3>;
 
+// A first-order pull can vanish on a seam or be blocked by a nearly active
+// spoke. A tangent to the short spoke's metric ellipsoid lengthens it to
+// second order. The fixed metric only chooses goals; carrier search and the
+// edit transaction still decide admissibility with the actual metric.
+std::int64_t boundary_tangent_pulls(std::span<const double> points,
+                                   std::span<const double> lengths,
+                                   std::span<const std::int8_t> measured,
+                                   const double* tensor, int rank, const double* basis,
+                                   double* pulls) {
+  const double zero[3]{};
+  std::int64_t count = 0;
+  for (std::size_t spoke = 0; spoke < lengths.size(); ++spoke) {
+    const double short_length = lengths[spoke];
+    if (measured[spoke] == 0 || short_length >= kLowerLength) continue;
+    const double deficit = (kLowerLength - short_length) * (kLowerLength + short_length);
+    const auto emit = [&](const double* direction) {
+      const double norm = length(zero, direction, tensor, tensor);
+      if (!(norm > 0.0 && std::isfinite(norm))) return;
+      const double step = 2.0 * std::sqrt(deficit) / norm;
+      for (double sign : {1.0, -1.0}) {
+        for (int axis = 0; axis < 3; ++axis) {
+          pulls[3 * count + axis] = (sign * step) * direction[axis];
+        }
+        ++count;
+      }
+    };
+    if (rank == 1) {
+      emit(basis);
+    } else if (rank == 2) {
+      const double* neighbor = points.data() + 3 * (spoke + 1);
+      const double d[3]{neighbor[0] - points[0], neighbor[1] - points[1],
+                        neighbor[2] - points[2]};
+      double normal[2]{};
+      for (int axis = 0; axis < 3; ++axis) {
+        const double* row = tensor + 3 * axis;
+        const double component = (row[0] * d[0] + row[1] * d[1]) + row[2] * d[2];
+        normal[0] += component * basis[axis];
+        normal[1] += component * basis[3 + axis];
+      }
+      const double scale = std::max(std::abs(normal[0]), std::abs(normal[1]));
+      if (scale == 0.0) {
+        emit(basis);
+        emit(basis + 3);
+      } else if (std::isfinite(scale)) {
+        const double u = normal[0] / scale;
+        const double v = normal[1] / scale;
+        const double tangent[3]{v * basis[0] - u * basis[3],
+                                v * basis[1] - u * basis[4],
+                                v * basis[2] - u * basis[5]};
+        emit(tangent);
+      }
+    }
+  }
+  return count;
+}
+
 Stencil carrier_stencil(const Carrier& carrier);
 
 struct CellLineage {
@@ -347,7 +403,7 @@ class Adapter {
   bool boundary_moves_ = false;
   // Relocation stage: 0 out-of-band vertices, 1 deep, 2 deep and refined
   // (both band improvements only), 3 every vertex, 4 also pairs of ends of
-  // out-of-band edges; back to 0 after a topology edit.
+  // out-of-band edges, 5 terminal boundary tangents; back to 0 after topology.
   int relocation_stage_ = 0;
   // Direct-mapped, bounded, and local to this adaptation call.
   std::vector<RelocationAttempt> relocation_attempts_;
@@ -2477,6 +2533,8 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   const auto chart = carrier_chart(vertex, star);
   if (!chart) return TetEditStatus::kApplied;
   const bool interior = chart->simplices.empty();
+  const bool tangents = relocation_stage_ == 5;
+  if (tangents && interior) return TetEditStatus::kApplied;
   if (!interior && !boundary_moves_) return TetEditStatus::kApplied;
   const bool deep_stage = relocation_stage_ == 1 || relocation_stage_ == 2;
   RelocationAttempt* attempt = nullptr;
@@ -2520,10 +2578,8 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
     outside = outside || (measured[row - 1] != 0 &&
                           !(lengths[row - 1] >= kLowerLength && lengths[row - 1] <= kUpperLength));
   }
-  // Until the last stage only a vertex with an out-of-band spoke is pulled:
-  // in-band stars are left to the swaps, so relocations do not trickle
-  // through the whole mesh.
-  if (!outside && relocation_stage_ < 3) return TetEditStatus::kApplied;
+  // Stages 3 and 4 can improve quality before the terminal band-only search.
+  if (!outside && (relocation_stage_ < 3 || tangents)) return TetEditStatus::kApplied;
   const bool deep = outside && (relocation_stage_ == 1 || relocation_stage_ == 2);
   // A boundary vertex is pulled within the hull of its first carrier simplex.
   std::array<double, 9> basis{};
@@ -2532,6 +2588,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   int basis_count = 0;
   if (!interior) {
     const CarrierSimplex& hull = chart->simplices.front();
+    if (hull.size != 2 && hull.size != 3) return TetEditStatus::kStaleGeneration;
     std::array<double, 9> corners{};
     for (int corner = 0; corner < hull.size; ++corner) {
       std::copy_n(input_.source_points.data() +
@@ -2543,20 +2600,25 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   }
   std::vector<double> pulls(3 * (4 * spokes + 8));
   std::int64_t pull_count = -1;
-  for (;;) {
-    pull_count = relocation_pulls(
-        static_cast<std::int64_t>(spokes), points.data(), metric(vertex), lengths.data(),
-        measured.data(), deep, interior, basis_count, interior ? nullptr : basis.data(),
-        interior ? nullptr : projector.data(), nullptr,
-        static_cast<std::int64_t>(pulls.size() / 3), pulls.data());
-    if (pull_count >= 0) break;
-    pulls.resize(2 * pulls.size());  // a deep search's tangents need more room
+  if (tangents) {
+    pull_count = boundary_tangent_pulls(points, lengths, measured, metric(vertex), basis_count,
+                                        basis.data(), pulls.data());
+  } else {
+    for (;;) {
+      pull_count = relocation_pulls(
+          static_cast<std::int64_t>(spokes), points.data(), metric(vertex), lengths.data(),
+          measured.data(), deep, interior, basis_count, interior ? nullptr : basis.data(),
+          interior ? nullptr : projector.data(), nullptr,
+          static_cast<std::int64_t>(pulls.size() / 3), pulls.data());
+      if (pull_count >= 0) break;
+      pulls.resize(2 * pulls.size());  // a deep search's tangents need more room
+    }
   }
   if (pull_count == 0) return TetEditStatus::kApplied;
   RelocationMode mode;
   mode.deep = deep;
-  mode.refine = deep && relocation_stage_ == 2;
-  mode.band_only = deep;
+  mode.refine = tangents || (deep && relocation_stage_ == 2);
+  mode.band_only = tangents || deep;
   RelocationStar relocation_star;
   relocation_star.point_count = static_cast<std::int64_t>(rows.size());
   relocation_star.points = points.data();
@@ -2992,7 +3054,7 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
       boundary_moves_ = true;
     } else if (input_.topology_operations && carriers_ && !survivor_moves_) {
       survivor_moves_ = true;
-    } else if (input_.relocation && carriers_ && relocation_stage_ < 4) {
+    } else if (input_.relocation && carriers_ && relocation_stage_ < 5) {
       ++relocation_stage_;
     } else {
       status = AdaptStatus::kStalled;

@@ -8,6 +8,9 @@
   transfers. An edit that would exhaust a native or target ID allocator
   reports identifier overflow before it commits; publication also refuses
   IDs outside the signed 64-bit public range.
+  When first-order relocation stalls at a short boundary spoke, a bounded
+  tangential search can recover progress without relaxing the metric band,
+  source-carrier checks, or exact cell validity.
 - Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
   `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
   core refined to half size at the boundary with exact inside/outside, one
