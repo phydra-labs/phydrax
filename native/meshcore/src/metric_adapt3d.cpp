@@ -3018,6 +3018,9 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
   }
   AdaptStatus status = AdaptStatus::kComplete;
   std::int64_t passes = 0;
+  // A stall certifies exhaustion only for a generation that was fully
+  // queued at stage zero with all requested search gates enabled.
+  std::optional<std::uint64_t> exhaustion_generation;
   for (;;) {
     ++passes;
     std::int64_t applied = 0;
@@ -3057,9 +3060,17 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
       survivor_moves_ = true;
     } else if (input_.relocation && carriers_ && relocation_stage_ < 5) {
       ++relocation_stage_;
+    } else if (input_.relocation && carriers_ && exhaustion_generation != mesh_.generation()) {
+      relocation_stage_ = 0;
     } else {
       status = AdaptStatus::kStalled;
       break;
+    }
+    if (relocation_stage_ == 0 && boundary_moves_ && carriers_ &&
+        (!input_.topology_operations || survivor_moves_)) {
+      // Reached only when opening the last gate or restarting at stall.
+      // A local topology reset never records a new full-sweep generation.
+      exhaustion_generation = mesh_.generation();
     }
     for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
       if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));

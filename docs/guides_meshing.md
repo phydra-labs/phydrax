@@ -2994,11 +2994,14 @@ ring-reconnection, and relocation edits in one native adaptation loop
 (`TetMesh3D.metric_adapt`). Every edit strictly decreases the termination
 objective; when no edit applies, the loop enables in turn boundary relocation,
 collapses that move their survivor on its source carrier, deeper relocation
-searches, and joint moves of both ends of an out-of-band edge, and reports
-STALLED only after the last of these applies nothing. The route returns the
-exact dyadic source stencils, source-cell lineage, and `TetraMetricEvidence`
-measured on the final mesh. A periodic lift is adapted by the host phase
-schedule until native periodic local commits exist.
+searches, joint moves of both ends of an out-of-band edge, and boundary
+tangents. With relocation enabled, the native loop reports STALLED only
+after exhausting the enabled searches on one unchanged mesh generation.
+If an edit invalidates an earlier sweep, the loop requeues the live mesh
+before reporting residual edges.
+The route returns the exact dyadic source stencils, source-cell lineage, and
+`TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
+by the host phase schedule until native periodic local commits exist.
 
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.
