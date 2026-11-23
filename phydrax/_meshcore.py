@@ -14737,7 +14737,11 @@ class CadSurfaceResult(NamedTuple):
     """Owned surface candidate and the curve/face construction findings.
 
     ``initial_face_failures`` contains the ordered findings before the first
-    shared-curve retry. ``face_failures`` describes only the emitted surface.
+    shared-curve retry; it is empty if no retry ran. ``face_failures`` and
+    ``face_stats`` describe only the emitted surface. ``curve_statistics``
+    counts the initial discretization and the refinement that produced the
+    emitted curve bank, not discarded proposals. The solid's curve phase
+    time includes work on discarded proposals.
     """
 
     status: MeshcoreStatus
