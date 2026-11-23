@@ -407,6 +407,30 @@ Measure covered area, positive orientation, and maximum area as well as the
 minimum angle. The star's input tips force angles smaller than 30 degrees;
 report the actual minimum and the number of triangles below the requested target.
 
+### Matched fixed-wall volume qualification
+
+The original torus25 case uses the same archived 122,926 fixed boundary
+triangles and numeric size request for both tools. Phydrax times site
+preparation, recovery, state adoption, refinement, improvement, and export.
+Gmsh 4.15.2 times HXT `generate(3)` with its optimizer enabled. These are
+the best samples of three interleaved rounds on macOS:
+
+| Workers | Phydrax (s) | HXT (s) |
+|---:|---:|---:|
+| 1 | 2.010 | 4.020 |
+| 2 | 1.890 | 2.621 |
+| 4 | 1.612 | 1.950 |
+| 8 | 1.475 | 1.754 |
+
+Both preserved the literal input wall. Phydrax published 1,522,556 cells
+with identical full output banks at every worker count. The independent exact
+affine embedding check certified the mesh, and common numerical measurements
+found zero nonpositive tetrahedra on both tools. Phydrax met the 15° minimum
+dihedral, radius-edge 2, and circumradius h targets. HXT's measured minima
+were 12.92–13.39°; its size setting is a characteristic length, not the same
+circumradius bound. Output counts differ; this is a same-input construction
+comparison, not equal-cell throughput or a proof-time comparison.
+
 ### Qualified sequential routes in the thread matrix
 
 - F13 overset remains sequential. On the same ordered binary input, it beats
