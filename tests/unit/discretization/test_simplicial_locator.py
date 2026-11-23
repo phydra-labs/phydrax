@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import weakref
+from copy import copy, deepcopy
 from typing import Any
 
 import jax
@@ -13,7 +14,9 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._meshcore import meshcore_available
+from phydrax._bvh import host_tree_arrays, prepare_bvh
+from phydrax._bvh_native import AffineTetrahedronLocator
+from phydrax._meshcore import load_meshcore, meshcore_available
 
 
 pytestmark = [
@@ -187,3 +190,72 @@ def test_cached_affine_location_cannot_use_deleted_geometry() -> None:
     locator.coordinates.delete()
     with pytest.raises(RuntimeError, match="deleted"):
         locator.locate(points)
+
+
+@pytest.fixture
+def native_affine_banks() -> tuple[AffineTetrahedronLocator, tuple[np.ndarray, ...]]:
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    lower, upper = (
+        vertices.min(axis=0, keepdims=True),
+        vertices.max(axis=0, keepdims=True),
+    )
+    tree = host_tree_arrays(prepare_bvh(lower, upper))
+    leaf_items = tree[5].copy()
+    readonly_alias = leaf_items.view()
+    readonly_alias.setflags(write=False)
+    locator = AffineTetrahedronLocator(
+        load_meshcore(), (*tree[:5], readonly_alias, lower, tree[7]), vertices, cells, 0.0
+    )
+    return locator, (vertices, cells, leaf_items, lower)
+
+
+def test_prepared_affine_copy_preserves_one_handle_owner(
+    native_affine_banks: tuple[AffineTetrahedronLocator, tuple[np.ndarray, ...]],
+) -> None:
+    locator, _ = native_affine_banks
+    assert copy(locator) is locator
+    assert deepcopy(locator) is locator
+
+
+@pytest.mark.parametrize(
+    ("bank", "replacement"),
+    ((0, 10.0), (1, 0), (2, -1), (3, 0.25)),
+    ids=("vertices", "cells", "readonly-leaf-view", "item-bound"),
+)
+def test_prepared_affine_snapshot_isolated_from_caller_mutation(
+    native_affine_banks: tuple[AffineTetrahedronLocator, tuple[np.ndarray, ...]],
+    bank: int,
+    replacement: float | int,
+) -> None:
+    locator, inputs = native_affine_banks
+    inputs[bank].fill(replacement)
+
+    points = np.asarray(((0.125, 0.25, 0.375),), dtype=np.float64)
+    result = locator.locate(points, cell_mask=None)
+    assert result.cells.tolist() == [0]
+    np.testing.assert_array_equal(result.reference, points)
+
+
+def test_prepared_affine_snapshots_jax_view_of_mutable_host_indices(
+    native_affine_banks: tuple[AffineTetrahedronLocator, tuple[np.ndarray, ...]],
+) -> None:
+    _, (vertices, cells, _, lower) = native_affine_banks
+    storage = np.empty(20, dtype=np.int32)
+    offset = (-storage.ctypes.data % 64) // storage.itemsize
+    aligned = storage[offset : offset + 4].reshape(1, 4)
+    aligned[:] = cells
+    shared = jax.device_put(aligned, device=jax.devices("cpu")[0], may_alias=True)
+    tree = host_tree_arrays(prepare_bvh(lower, vertices.max(axis=0, keepdims=True)))
+    locator = AffineTetrahedronLocator(
+        load_meshcore(), tree, vertices, np.asarray(shared), 0.0
+    )
+    aligned.fill(0)
+
+    points = np.asarray(((0.125, 0.25, 0.375),), dtype=np.float64)
+    result = locator.locate(points, cell_mask=None)
+    assert result.cells.tolist() == [0]
+    np.testing.assert_array_equal(result.reference, points)

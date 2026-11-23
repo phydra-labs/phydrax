@@ -896,7 +896,7 @@ def test_bvh_stream_retains_owners_and_frees_on_every_exit(
 
     def view(tree: tuple[np.ndarray, ...]) -> Any:
         result, arrays = original_view(tree)
-        # Both are newly allocated, not kept alive by the caller's source tree.
+        # Track both a staged buffer and a possibly borrowed input buffer.
         owners.extend(weakref.ref(arrays[index]) for index in (0, 2))
         return result, arrays
 
@@ -926,6 +926,7 @@ def test_bvh_stream_retains_owners_and_frees_on_every_exit(
     tree = list(_small_host_tree())
     tree[0] = np.zeros((1, 4))[:, ::2]
     stream = _small_pair_stream(tuple(tree), tuple(tree))
+    del tree
     block = next(stream)
     assert list(zip(*block, strict=True)) == [(0, 0), (0, 1), (1, 0), (1, 1)]
     saved = tuple(value.copy() for value in block)

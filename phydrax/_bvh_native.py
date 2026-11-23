@@ -55,13 +55,14 @@ def _pointer(array: np.ndarray, /) -> int:
 
 
 def tree_view(
-    tree: HostTree, /, *, point_query: bool = False
+    tree: HostTree, /, *, point_query: bool = False, snapshot: bool = False
 ) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
     """The native view of a host tree and the contiguous arrays it points into.
 
     The caller keeps the returned arrays alive while the view is in use.
     Point queries validate index values in their C entry points and do not
     use the extent sum that orders pair-stream descent.
+    Snapshots isolate multi-pass native validation from caller mutation.
     """
     if len(tree) != 8:
         raise ValueError("host trees require eight arrays.")
@@ -69,6 +70,8 @@ def tree_view(
         dtype = np.float64 if index in (0, 1, 6, 7) else np.int64
         if not isinstance(value, np.ndarray) or value.dtype != dtype:
             raise ValueError("host tree bounds must be float64 and indices int64.")
+    if snapshot:
+        tree = tuple(_snapshot_bank(value) for value in tree)
     node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = tree
     if (
         node_min.ndim != 2
@@ -101,10 +104,8 @@ def tree_view(
             raise ValueError("child indices exceed the node arrays.")
         if np.any(leaf_items >= item_min.shape[0]):
             raise ValueError("leaf item indices exceed the item bounds.")
-    node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = (
-        np.ascontiguousarray(value) for value in tree
-    )
-    arrays = node_min, node_max, left, right, leaf, leaf_items, item_min, item_max
+    arrays = tree if snapshot else tuple(np.ascontiguousarray(value) for value in tree)
+    node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = arrays
     node_size = (
         None
         if point_query
@@ -381,6 +382,21 @@ def _locate_call(
     return result
 
 
+def _snapshot_bank(values: np.ndarray, /) -> np.ndarray:
+    """Borrow only contiguous, aligned storage with an immutable base."""
+    if type(values) is np.ndarray and values.flags.aligned and values.flags.c_contiguous:
+        base: object = values
+        while type(base) is np.ndarray and not base.flags.writeable:
+            base = base.base
+        # A read-only JAX export can still alias writable NumPy storage
+        # through device_put(may_alias=True), so it is not a sealed bank.
+        if isinstance(base, bytes):
+            return values
+    snapshot = np.array(values, copy=True, order="C")
+    snapshot.setflags(write=False)
+    return snapshot
+
+
 @final
 class AffineTetrahedronLocator:
     """Checked native preorder and the immutable banks it borrows."""
@@ -398,11 +414,13 @@ class AffineTetrahedronLocator:
     ) -> None:
         self._library = library
         self._handle = ctypes.c_void_p()
-        view, arrays = tree_view(tree, point_query=True)
+        view, arrays = tree_view(tree, point_query=True, snapshot=True)
         vertex_values, cell_values = _simplices(vertices, cells, 4, view.item_count)
         self._cell_count = cell_values.shape[0]
         # Packed nodes own their bounds and links. Only leaf items, item
         # bounds and the tetrahedral banks must outlive preparation.
+        vertex_values = _snapshot_bank(vertex_values)
+        cell_values = _snapshot_bank(cell_values)
         self._banks = (*arrays[5:], vertex_values, cell_values)
         status = library["phx_mc_affine_tet_locator_prepare"](
             ctypes.addressof(view),
@@ -413,6 +431,12 @@ class AffineTetrahedronLocator:
             ctypes.byref(self._handle),
         )
         _raise_for_call(status, "affine_tet_locator_prepare")
+
+    def __copy__(self) -> AffineTetrahedronLocator:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object], /) -> AffineTetrahedronLocator:
+        return self
 
     def __del__(self) -> None:
         self._library["phx_mc_affine_tet_locator_free"](self._handle)

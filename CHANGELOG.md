@@ -24,6 +24,8 @@
   locator's PyTree, identity, tie ordering, or numerical evidence. C clients
   use `phx_mc_affine_tet_locator_prepare`, `phx_mc_affine_tet_locator_query`,
   and `phx_mc_affine_tet_locator_free`.
+  Python preparation snapshots caller-owned mutable input banks before native
+  validation and keeps one handle owner under shallow and deep copy.
 - Large native 3D point sets prepare Hilbert keys and copy coordinates into
   insertion order on the existing workers. Box quantization, stable key
   ordering, duplicate resolution, and all exported triangulation banks are

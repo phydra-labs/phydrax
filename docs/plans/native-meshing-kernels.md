@@ -463,14 +463,15 @@ below HXT's 0.630 s.
 
 All eight F10 affine location comparisons passed against libigl 2.6.3 on the
 original query and tetrahedron banks. At eight workers, 100,000 queries took
-18.02 ms versus 18.78 ms; one million took 128.15 ms versus 176.25 ms.
+18.23 ms versus 19.59 ms; one million took 128.49 ms versus 179.77 ms.
 Three interleaved samples per row, with the acceleration structures prepared
 before timing. Both providers found the same points with zero wrong cells
 in the independent check, and Phydrax cell IDs were bit-identical across
-worker counts. Native preorder preparation including host marshaling took
-2.69 ms best and retained about 16 MiB for the packed nodes and widened
-leaf indices on this fixture. A separate cold run measured 29.71 s for the
-whole finite-element locator setup. The comparison above times queries only.
+worker counts. Preparing the native preorder and taking private snapshots of
+unsealed host buffers took about 9.4 ms on this fixture. The native index
+and retained snapshots occupy about 76 MiB. A separate cold run measured
+29.62 s for the whole finite-element locator setup. These comparisons time
+queries only.
 
 ### Qualified sequential routes in the thread matrix
 
