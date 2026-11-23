@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Native tetrahedral refinement uses the configured meshcore workers for
+  independent feature-size queries on large meshes. Query traversal,
+  refinement order, persistent IDs, and quality evidence do not depend on
+  worker count. The C ABI entry `phx_mc_tet_mesh_refine_circumcenters`
+  replaces `phx_mc_tet_mesh_refine` and requires a worker cap.
 - Nonperiodic tetrahedral metric adaptation now runs native edits with exact
   source-carrier checks and exports lineage for the public proofs and field
   transfers. An edit that would exhaust a native or target ID allocator

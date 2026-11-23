@@ -1656,17 +1656,16 @@ int32_t phx_mc_tet_mesh_probe_edit(phx_mc_tet_mesh* mesh,
   });
 }
 
-int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, uint64_t expected_generation,
-                               int32_t identity_bound, const char* source_id,
-                               int64_t source_id_length, const char* source_revision,
-                               int64_t source_revision_length, const char* source_map_id,
-                               int64_t source_map_id_length, const char* frame_id,
-                               int64_t frame_id_length, double radius_edge_bound,
-                               int64_t size_count, const double* sizes,
-                               int32_t* edit_status, int32_t* run_status,
-                               int64_t* inserted_count, int64_t* unmet_count) {
+int32_t phx_mc_tet_mesh_refine_circumcenters(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length, const char* source_revision,
+    int64_t source_revision_length, const char* source_map_id,
+    int64_t source_map_id_length, const char* frame_id, int64_t frame_id_length,
+    double radius_edge_bound, int64_t size_count, const double* sizes,
+    int32_t* edit_status, int32_t* run_status, int64_t* inserted_count,
+    int64_t* unmet_count, int32_t parallelism) {
   if (mesh == nullptr || edit_status == nullptr || run_status == nullptr ||
-      inserted_count == nullptr || unmet_count == nullptr || size_count < 0 ||
+      inserted_count == nullptr || unmet_count == nullptr || size_count < 0 || parallelism < 1 ||
       !addressable(size_count, 1, sizeof(double)) || (size_count > 0 && sizes == nullptr) ||
       !valid_identity_fields(identity_bound, source_id, source_id_length,
                              source_revision, source_revision_length, source_map_id,
@@ -1689,7 +1688,8 @@ int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, uint64_t expected_generati
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const std::int32_t status = phx::mc::refine_mesh(
         mesh->state, radius_edge_bound,
-        input_span(sizes, size_count), *inserted_count, *unmet_count);
+        input_span(sizes, size_count), *inserted_count, *unmet_count,
+        static_cast<std::uint32_t>(parallelism));
     *run_status = status;
     *edit_status = PHX_MC_TET_EDIT_APPLIED;
     return PHX_MC_OK;
