@@ -300,6 +300,35 @@ def test_face_fan_volume_includes_trailing_face_only_polyhedron() -> None:
     assert np.sum(volumes) == pytest.approx(1.0, abs=1e-13)
 
 
+def test_warped_wall_area_is_the_sum_over_its_published_fan() -> None:
+    from phydrax.meshing.providers._native_octree_hex import _fan_sizes
+
+    points = _cube_vertices()
+    # The top fan has four congruent triangles of area sqrt(2)/4.
+    points[4:, 2] += (0.5, -0.5, -0.5, 0.5)
+    mesh = meshcore.HexDominant(
+        status=meshcore.MeshcoreStatus.OK,
+        points=points,
+        face_offsets=np.arange(0, 25, 4, dtype=np.int64),
+        face_vertices=np.asarray(_QUADS, dtype=np.int32).reshape(-1),
+        face_owner=np.zeros(6, dtype=np.int32),
+        face_neighbor=np.full(6, -1, dtype=np.int32),
+        face_facets=np.arange(6, dtype=np.int32),
+        cell_kinds=np.ones(1, dtype=np.int32),
+        cell_roles=np.zeros(1, dtype=np.int32),
+        cell_vertex_offsets=np.zeros(2, dtype=np.int64),
+        cell_vertices=np.empty(0, dtype=np.int32),
+        vertex_triangles=np.full(8, -1, dtype=np.int32),
+        vertex_kinds=np.ones(8, dtype=np.int32),
+        stats=np.empty(0, dtype=np.float64),
+    )
+
+    volumes, wall_areas = _fan_sizes(mesh)
+    assert volumes[0] == pytest.approx(1.0)
+    assert wall_areas[0] == pytest.approx(1.0)
+    assert wall_areas[1] == pytest.approx(np.sqrt(2.0))
+
+
 def test_kernel_layers_lie_at_their_thicknesses_from_every_adjacent_wall() -> None:
     mesh = _kernel_cube(_LAYERS)
 

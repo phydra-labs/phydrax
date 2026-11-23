@@ -528,7 +528,17 @@ def _fan_sizes(native: meshcore.HexDominant, /) -> tuple[np.ndarray, np.ndarray]
         np.bincount(owner, owner_flux, minlength=cells)
         - np.bincount(inner_neighbors, neighbor_flux, minlength=cells)
     ) / 6.0
-    wall_areas = 0.5 * np.linalg.norm(twice_area[~inner], axis=1)
+    # Volume uses the vector sum above. Wall size uses actual triangle
+    # areas; the norm of that vector sum would project a warped fan.
+    wall_edges = ~inner[rows]
+    wall_rows = rows[wall_edges]
+    wall_centers = centers[wall_rows]
+    wall_normals = np.cross(
+        first[wall_edges] - wall_centers, second[wall_edges] - wall_centers
+    )
+    wall_areas = np.bincount(
+        wall_rows, 0.5 * np.linalg.norm(wall_normals, axis=1), minlength=sizes.size
+    )[~inner]
     return volumes, wall_areas
 
 
