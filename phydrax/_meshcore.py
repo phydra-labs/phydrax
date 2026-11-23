@@ -1718,6 +1718,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_Plc3DPrepareSourceRequest),),
     ),
+    "phx_mc_plc3d_recover_uniform_sized": (
+        _I32,
+        (ctypes.POINTER(_Plc3DPrepareSourceRequest), _F64, _I32, ctypes.POINTER(_F64)),
+    ),
     "phx_mc_plc3d_recover_with_affine_metric": (
         _I32,
         (ctypes.POINTER(_Plc3DPrepareSourceRequest), _P),
@@ -6056,13 +6060,21 @@ class NativePlcRecovery:
     It holds the recovered mesh's banks and cell adjacency natively, so the
     mesh is adopted from them rather than built from the exported arrays; it
     is released when no recovery or mesh construction refers to it.
+    ``preseeded_radius`` is nonzero when recovery adopted interior lattice sites.
     """
 
-    __slots__ = ("_handle", "_library")
+    __slots__ = ("_handle", "_library", "preseeded_radius")
 
-    def __init__(self, library: MeshcoreLibrary, handle: ctypes.c_void_p, /) -> None:
+    def __init__(
+        self,
+        library: MeshcoreLibrary,
+        handle: ctypes.c_void_p,
+        /,
+        preseeded_radius: float = 0.0,
+    ) -> None:
         self._library = library
         self._handle = handle
+        self.preseeded_radius = preseeded_radius
 
     def __del__(self) -> None:
         self._library["phx_mc_plc3d_free"](self._handle)
@@ -9133,7 +9145,7 @@ def arrange_tetrahedra_exact(
         library["phx_mc_tetrahedra_arrangement_free"](handle)
 
 
-def _plc3d_build(
+def _plc_3d_request(
     operation: str,
     points: object,
     polygon_offsets: object,
@@ -9152,6 +9164,7 @@ def _plc3d_build(
     facet_plane_tolerances: object | None = None,
     affine_metric: object | None = None,
     protected_facets: object | None = None,
+    uniform_radius: float | None = None,
     search_budget: PlcSearchBudget | None = None,
 ) -> tuple[PlcSourceData, NativePlcRecovery]:
     """Run native PLC source preparation or full protected tetrahedral recovery.
@@ -9164,6 +9177,17 @@ def _plc3d_build(
         if operation == "phx_mc_plc3d_prepare_source"
         else "recover_plc"
     )
+    radius = None
+    if uniform_radius is not None:
+        if operation != "phx_mc_plc3d_recover":
+            raise ValueError("uniform_radius applies only to PLC recovery.")
+        if affine_metric is not None or protected_facets is not None:
+            raise ValueError(
+                "uniform_radius cannot be combined with affine_metric or protected_facets."
+            )
+        radius = finite_real_scalar(uniform_radius, "uniform_radius")
+        if radius <= 0.0:
+            raise ValueError("uniform_radius must be positive or None.")
     point_array = _points(points, "points", 3)
     offsets = _native_integer_array(
         polygon_offsets, "polygon_offsets", np.dtype(np.int64)
@@ -9308,7 +9332,21 @@ def _plc3d_build(
         if affine_metric is None
         else _periodic_float_bank(affine_metric, "affine_metric", (3, 3))
     )
-    if protected_array is not None:
+    preseeded_radius = 0.0
+    if radius is not None:
+        from ._exact_kernels import exact_kernel_parallelism
+
+        parallelism = exact_kernel_parallelism()
+        if parallelism >= 2**31:
+            raise OverflowError("parallelism exceeds the native int32 range.")
+        used_radius = _F64()
+        code = MeshcoreStatus(
+            library["phx_mc_plc3d_recover_uniform_sized"](
+                ctypes.byref(request), radius, parallelism, ctypes.byref(used_radius)
+            )
+        )
+        preseeded_radius = used_radius.value
+    elif protected_array is not None:
         code = MeshcoreStatus(
             library["phx_mc_plc3d_recover_protected"](
                 ctypes.byref(request),
@@ -9332,7 +9370,7 @@ def _plc3d_build(
         )
     # The handle is owned from here on: released when the owner is dropped,
     # or kept with the recovery for TetMesh3D.from_recovery.
-    native = NativePlcRecovery(library, handle)
+    native = NativePlcRecovery(library, handle, preseeded_radius=preseeded_radius)
     failure_reason = np.zeros((1,), dtype=np.int32)
     first_kind = np.zeros((1,), dtype=np.int32)
     first = np.zeros((1,), dtype=np.int64)
@@ -9507,7 +9545,7 @@ def prepare_plc_source(
     distance.
     """
 
-    return _plc3d_build(
+    return _plc_3d_request(
         "phx_mc_plc3d_prepare_source",
         points,
         polygon_offsets,
@@ -9558,7 +9596,7 @@ def recover_plc(
     declared budget of the exhaustive suppression search (``PlcSearchBudget``).
     """
 
-    return _plc3d_build(
+    return _plc_3d_request(
         "phx_mc_plc3d_recover",
         points,
         polygon_offsets,
@@ -9597,6 +9635,7 @@ def recover_plc_3d(
     facet_plane_tolerances: object | None = None,
     affine_metric: object | None = None,
     protected_facets: object | None = None,
+    uniform_radius: float | None = None,
     search_budget: PlcSearchBudget = PLC_SEARCH_BUDGET,
 ) -> PlcRecovery3D:
     """Recover a PLC with raw carrier-row witnesses and region labels.
@@ -9605,11 +9644,13 @@ def recover_plc_3d(
     ``input_triangles``. These are not persistent canonical source-bank rows.
     Declared facet planes are as for ``prepare_plc_source``. ``affine_metric``
     is an optional nonsingular (3, 3) index-to-physical linear map.
+    ``uniform_radius`` is a positive finite circumradius target in the input
+    coordinate space; it cannot be combined with affine metrics or facet flags.
     ``search_budget`` is as for ``recover_plc``.
     """
 
     segment_bank = np.empty((0, 2), dtype=np.int32) if segments is None else segments
-    recovered, native = _plc3d_build(
+    recovered, native = _plc_3d_request(
         "phx_mc_plc3d_recover",
         points,
         polygon_offsets,
@@ -9626,6 +9667,7 @@ def recover_plc_3d(
         facet_plane_tolerances=facet_plane_tolerances,
         affine_metric=affine_metric,
         protected_facets=protected_facets,
+        uniform_radius=uniform_radius,
         search_budget=search_budget,
     )
     return PlcRecovery3D(

@@ -4937,6 +4937,43 @@ void recovery_handoff_matches_array_build() {
   check_handoff(small_angle_wedge());
 }
 
+void uniform_fixed_wall_keeps_authored_source_and_thread_identity() {
+  const auto sphere = icosphere_case(5);
+  std::vector<int32_t> polygons;
+  std::vector<int64_t> offsets{0};
+  for (const auto& face : sphere.polygons) {
+    polygons.insert(polygons.end(), face.begin(), face.end());
+    offsets.push_back(static_cast<int64_t>(polygons.size()));
+  }
+  phx::mc::PlcInput input;
+  input.point_count = static_cast<int64_t>(sphere.points.size() / 3);
+  input.points = sphere.points.data();
+  input.polygon_count = static_cast<int64_t>(sphere.polygons.size());
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = polygons.data();
+  input.polygon_facets = sphere.polygon_facets.data();
+  input.facet_count = 1;
+  input.facet_regions = sphere.facet_regions.data();
+  input.policy = phx::mc::BoundaryPolicy::kFixed;
+  input.uniform_radius = 0.037;
+  phx::mc::PlcRecovery serial, parallel;
+  const int32_t first = phx::mc::recover_plc(input, serial);
+  input.parallelism = 8;
+  const int32_t second = phx::mc::recover_plc(input, parallel);
+  PHX_CHECK(first == PHX_MC_OK && second == first);
+  if (first != PHX_MC_OK || second != first) return;
+  PHX_CHECK(serial.preseeded_radius == input.uniform_radius);
+  PHX_CHECK(parallel.preseeded_radius == serial.preseeded_radius);
+  PHX_CHECK(serial.points.size() > sphere.points.size());
+  if (serial.points.size() <= sphere.points.size()) return;
+  PHX_CHECK(std::equal(sphere.points.begin(), sphere.points.end(), serial.points.begin()));
+  PHX_CHECK(serial.input_triangles == polygons);
+  PHX_CHECK(serial.faces.size() == polygons.size());
+  PHX_CHECK(parallel.points == serial.points && parallel.tets == serial.tets &&
+            parallel.tet_neighbors == serial.tet_neighbors && parallel.faces == serial.faces &&
+            parallel.tet_regions == serial.tet_regions);
+}
+
 void interior_cone_refuses_same_direction_edges_atomically() {
   using namespace phx::mc;
   // A square bipyramid with an integer ring (512 equator vertices plus
@@ -5048,6 +5085,7 @@ int main() {
   periodic_closure_accepts_edit_touching_one_orbit_copy();
   flat_build_matches_reference_sets();
   recovery_handoff_matches_array_build();
+  uniform_fixed_wall_keeps_authored_source_and_thread_identity();
   interior_cone_refuses_same_direction_edges_atomically();
   return phx::mc::test::finish("test_tet_mesh");
 }

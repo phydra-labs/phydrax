@@ -1523,6 +1523,13 @@ targets as aims; the profile records that source.
   at its position, and a removed vertex's entry is erased. `improve()` without
   `sizes` uses the retained field, so a route's refinement size field (for
   example a `UniformSizeControl`) constrains improvement too.
+- **Uniform fixed-wall fill.** Large single-material triangular walls with one
+  hard size over every facet can propose interior lattice sites before
+  tetrahedralization. The native route keeps the combined triangulation only
+  if it recovers every fixed wall triangle, and classifies the cells from that
+  wall before refinement. If the wall does not qualify, ordinary PLC recovery
+  applies. Interior IDs can change on this route; the requested radius,
+  boundary, and subsequent quality and proof requirements do not.
 - **Refinement.** Circumcenters of cells violating an active radius-edge bound or
   their size target are inserted through a checked cavity; an encroached
   splittable boundary face is split instead. No point is inserted closer than

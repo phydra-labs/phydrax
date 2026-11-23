@@ -95,6 +95,9 @@ struct PlcInput {
   // first state a search would expand).
   int64_t search_node_budget = kPlcSearchNodeBudget;
   int64_t search_byte_budget = kPlcSearchByteBudget;
+  // Optional target for proposing interior sites before fixed-wall recovery.
+  double uniform_radius = 0.0;
+  int32_t parallelism = 1;
 };
 
 namespace detail {
@@ -266,6 +269,9 @@ struct PlcRecovery {
   // local edit, Steiner point or metric shaped them, so no published vertex
   // lies strictly inside a published cell's circumsphere.
   bool delaunay = false;
+  // Adopted at generation zero only; matching uniform refinement need not
+  // repeat lattice preparation. Only classified interior sites are published.
+  double preseeded_radius = 0.0;
   PlcFailure failure;
 };
 

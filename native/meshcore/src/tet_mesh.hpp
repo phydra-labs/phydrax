@@ -499,6 +499,7 @@ struct RecoveredTopology {
   // and, the points being the ones its exact predicates read, every cell is
   // positively oriented.
   bool delaunay = false;
+  double preseeded_radius = 0.0;
 };
 
 class TetMesh {
@@ -1084,6 +1085,7 @@ class TetMesh {
   // Delaunay PLC recovery adopted, RecoveredTopology::delaunay); any edit
   // advances the generation past it. UINT64_MAX: never.
   std::uint64_t delaunay_generation_ = std::numeric_limits<std::uint64_t>::max();
+  double initial_preseeded_radius_ = 0.0;
   std::uint64_t next_vertex_id_ = 0;
   std::uint64_t next_cell_id_ = 0;
   std::uint64_t next_facet_id_ = 0;

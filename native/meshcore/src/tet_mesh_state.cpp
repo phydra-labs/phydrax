@@ -488,6 +488,9 @@ int32_t TetMesh::build(std::span<const double> points,
                                           !staged.metric_active_
                                       ? 0
                                       : std::numeric_limits<std::uint64_t>::max();
+    if (staged.delaunay_generation_ == 0 && staged.policy_ == BoundaryPolicy::kFixed) {
+      staged.initial_preseeded_radius_ = recovered->preseeded_radius;
+    }
     staged.swap_state(*this);
     unmet_records_.clear();
     return PHX_MC_OK;
@@ -1085,6 +1088,7 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.segment_index_ = segment_index_;
   destination.generation_ = generation_;
   destination.delaunay_generation_ = delaunay_generation_;
+  destination.initial_preseeded_radius_ = initial_preseeded_radius_;
   destination.next_vertex_id_ = next_vertex_id_;
   destination.next_cell_id_ = next_cell_id_;
   destination.next_facet_id_ = next_facet_id_;
@@ -1147,6 +1151,7 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(segment_index_, other.segment_index_);
   swap(generation_, other.generation_);
   swap(delaunay_generation_, other.delaunay_generation_);
+  swap(initial_preseeded_radius_, other.initial_preseeded_radius_);
   swap(next_vertex_id_, other.next_vertex_id_);
   swap(next_cell_id_, other.next_cell_id_);
   swap(next_facet_id_, other.next_facet_id_);

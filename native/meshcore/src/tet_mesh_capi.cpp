@@ -968,6 +968,7 @@ static int32_t create_tet_mesh(
       recovered.self_covered = !explicit_source && witnesses.empty();
     }
     recovered.delaunay = recovery != nullptr && recovery->delaunay;
+    if (recovery != nullptr) recovered.preseeded_radius = recovery->preseeded_radius;
     const int32_t status = handle->state.build(
         input_span(request->points, request->point_count * 3),
         input_span(request->tetrahedra, request->tetrahedron_count * 4),

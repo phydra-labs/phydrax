@@ -45,6 +45,7 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
+  src/volume_lattice.cpp
   src/cell_map_validity.cpp
   src/welded_topology.cpp
   src/polyhedral_certificates.cpp
@@ -170,6 +171,7 @@ set(PHX_MC_HEADERS
   src/mesh.hpp
   src/parallel.hpp
   src/plc3d.hpp
+  src/volume_lattice.hpp
   src/predicates.hpp
   src/restricted_delaunay.hpp
   src/rounding.hpp

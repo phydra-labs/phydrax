@@ -427,7 +427,12 @@ def _uv_torus(
 
 
 def _recover(
-    vertices: np.ndarray, faces: np.ndarray, facets: np.ndarray, /
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    facets: np.ndarray,
+    /,
+    *,
+    uniform_radius: float | None = None,
 ) -> _meshcore.PlcRecovery3D:
     # The surface's triangles are polygons of the given PLC facets, all
     # bounding region 0.
@@ -440,6 +445,7 @@ def _recover(
         facets.astype(np.int32),
         np.tile(np.asarray([[-1, 0]], dtype=np.int32), (facet_count, 1)),
         boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
+        uniform_radius=uniform_radius,
     )
 
 
@@ -512,7 +518,7 @@ def _surface_to_tets(
     # The whole task Gmsh's generate(3) performs from a surface: boundary
     # recovery, state creation (adopted from the recovery), refinement,
     # improvement and export.
-    recovered = _recover(vertices, faces, facets)
+    recovered = _recover(vertices, faces, facets, uniform_radius=size)
     _recovered_cells(recovered)
     mesh = _meshcore.TetMesh3D.from_recovery(
         recovered, boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED

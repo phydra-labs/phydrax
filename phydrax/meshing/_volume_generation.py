@@ -943,6 +943,45 @@ def declared_plc_domain(
     )
 
 
+def _radius_parameters(convention: FillSizeConvention, /) -> tuple[float, float | None]:
+    match convention:
+        case "edge-length":
+            # A regular tetrahedron of edge h has circumradius sqrt(6)/4 h.
+            return float(np.sqrt(6.0) / 4.0), 0.5
+        case "circumradius":
+            return 1.0, None
+        case invalid:
+            raise ValueError(f"Unknown PLC fill size convention {invalid!r}.")
+
+
+def _uniform_plc_radius(
+    complex_: PiecewiseLinearComplex,
+    specification: VolumeMeshingSpec,
+    convention: FillSizeConvention,
+    /,
+) -> float | None:
+    # A field scoped to every boundary facet, without other active controls,
+    # has one hard radius throughout a single fixed-wall solid.
+    controls = tuple(specification.size_controls)
+    if complex_.boundary != "fixed" or len(controls) != 1:
+        return None
+    control = controls[0]
+    if (
+        not isinstance(control, UniformSizeControl)
+        or control.strength is not SizeControlStrength.HARD
+        or not np.array_equal(
+            np.sort(np.asarray(control.scope.entity_ids, dtype=np.int64)),
+            np.sort(np.asarray(complex_.facet_entity_ids, dtype=np.int64)),
+        )
+    ):
+        return None
+    factor, cap = _radius_parameters(convention)
+    radius = factor * control.target_size
+    if cap is not None and control.maximum_size is not None:
+        radius = min(radius, cap * control.maximum_size)
+    return radius if radius > 0.0 else None
+
+
 def _size_field(
     complex_: PiecewiseLinearComplex,
     specification: VolumeMeshingSpec,
@@ -1060,17 +1099,7 @@ def _size_field(
             winner = winner_by_sample[triangle_rows[0]]
             source_supports[vertex].append((facet, float(value), winner))
 
-    match size_convention:
-        case "edge-length":
-            # A regular tetrahedron of edge h has circumradius sqrt(6)/4 h; the
-            # maximum size caps the radius at half of it.
-            radius_factor, radius_cap = np.sqrt(6.0) / 4.0, 0.5
-        case "circumradius":
-            # The donor's implicit route: refine(sizes=target_size) bounds the
-            # circumradius by h itself, and the maximum is an acceptance bound.
-            radius_factor, radius_cap = 1.0, None
-        case invalid:
-            raise ValueError(f"Unknown PLC fill size convention {invalid!r}.")
+    radius_factor, radius_cap = _radius_parameters(size_convention)
     radii = np.zeros((recovery.points.shape[0],), dtype=np.float64)
     control_facet_rows = tuple(
         frozenset(
@@ -2169,6 +2198,15 @@ def generate_plc_volume(
         seeds, seed_regions = _region_seed_points(
             complex_, specification, affine=global_affine, affine_source=affine_source
         )
+        uniform_radius = (
+            _uniform_plc_radius(complex_, specification, convention)
+            if global_affine is None
+            and root_points is None
+            and protected_facets is None
+            and not active_segment_rows
+            and len(seeds) == 0
+            else None
+        )
         try:
             recovery = recover_plc_3d(
                 complex_.vertices,
@@ -2187,6 +2225,7 @@ def generate_plc_volume(
                 protected_facets=protected_facets,
                 facet_plane_tolerances=complex_.facet_plane_tolerances,
                 search_budget=schedule.plc_search_budget,
+                uniform_radius=uniform_radius,
             )
         except PlcSourceFailure as error:
             raise _plc_source_failure(error) from error
@@ -2246,13 +2285,20 @@ def generate_plc_volume(
     face_sources = face_rows
     segments = np.asarray(recovery.segments, dtype=np.int64)
     segment_sources = carrier_source_rows
-    sizes = _size_field(
-        complex_,
-        specification,
-        recovery,
-        tables,
-        affine=global_affine,
-        size_convention=convention,
+    preseeded_radius = (
+        0.0 if recovery.native is None else recovery.native.preseeded_radius
+    )
+    sizes = (
+        np.full(recovery.points.shape[0], preseeded_radius, dtype=np.float64)
+        if preseeded_radius > 0.0
+        else _size_field(
+            complex_,
+            specification,
+            recovery,
+            tables,
+            affine=global_affine,
+            size_convention=convention,
+        )
     )
     # A native recovery is adopted with the cell adjacency it proved; a kept
     # carrier (assembled from arrays) is constructed and validated from them.

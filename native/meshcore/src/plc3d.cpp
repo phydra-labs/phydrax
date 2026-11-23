@@ -34,6 +34,7 @@
 #include "tet_mesh.hpp"
 #include "improve3d.hpp"
 #include "deterministic_float.hpp"
+#include "volume_lattice.hpp"
 
 namespace phx::mc {
 namespace {
@@ -1863,7 +1864,13 @@ class PlcRecoveryBuilder {
     if (!initialize_points()) return status_;
     std::vector<ConformingFace> conforming;
     std::optional<Conformity> conformity;
-    if (source_triangulation_ready_ && corner_count_ != 0) {
+    const int32_t seeded = try_preseeded_triangulation(conforming);
+    if (seeded != PHX_MC_OK) return seeded;
+    if (preseeded_count_ != 0) {
+      conformity = Conformity::kConforms;
+    } else if (!prepare_corner_scaffold()) {
+      return status_;
+    } else if (source_triangulation_ready_ && corner_count_ != 0) {
       const int32_t corners = corner_count_;
       corner_count_ = 0;
       conformity = conforming_faces(conforming);
@@ -1874,8 +1881,10 @@ class PlcRecoveryBuilder {
         if (conformity == Conformity::kRefused) conformity.reset();
       }
     }
-    status_ = build_triangulation();
-    if (status_ != PHX_MC_OK) return status_;
+    if (preseeded_count_ == 0) {
+      status_ = build_triangulation();
+      if (status_ != PHX_MC_OK) return status_;
+    }
     if (!conformity) conformity = conforming_faces(conforming);
     const bool conforms = conformity == Conformity::kConforms;
     contacts_settled_ = true;
@@ -2046,6 +2055,8 @@ class PlcRecoveryBuilder {
   }
 
  private:
+  struct ConformingFace;
+
   int32_t fail(int32_t status, int32_t reason, int32_t first_kind, int64_t first,
                int32_t second_kind = kPlcNoEntity, int64_t second = -1) {
     failure_ = {reason, first_kind, first, second_kind, second};
@@ -2225,6 +2236,117 @@ class PlcRecoveryBuilder {
         PHX_MC_OK;
     if (!source_triangulation_ready_) triangulation_.reset();
     return source_triangulation_ready_;
+  }
+
+  // Make the work slots and their oriented corner order independent of the
+  // DT3 region allocator. Physical point IDs still name source rows, followed
+  // by the canonical lattice order, not the insertion permutation.
+  void normalize_preseeded_cells(std::span<const int32_t> vertices) {
+    TetrahedralComplex& complex = triangulation_->complex();
+    auto& tets = complex.tets;
+    std::vector<int32_t> keys;
+    keys.reserve(5 * tets.size());
+    constexpr int kLead[4][4]{{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+    for (std::size_t slot = 0; slot < tets.size(); ++slot) {
+      Tetrahedron& tet = tets[slot];
+      if (tet.v[0] == kDeadVertex) continue;
+      for (int32_t& v : tet.v) {
+        if (v >= 0) v = vertices[static_cast<std::size_t>(v)];
+      }
+      const auto first = std::min_element(tet.v, tet.v + 4) - tet.v;
+      const int* lead = kLead[first];
+      const int32_t ordered[]{tet.v[lead[1]], tet.v[lead[2]], tet.v[lead[3]]};
+      const auto second = std::min_element(ordered, ordered + 3) - ordered;
+      const int permutation[]{lead[0], lead[1 + second], lead[1 + (second + 1) % 3],
+                              lead[1 + (second + 2) % 3]};
+      const Tetrahedron original = tet;
+      for (int j = 0; j < 4; ++j) {
+        tet.v[j] = original.v[permutation[j]];
+        tet.n[j] = original.n[permutation[j]];
+        keys.push_back(tet.v[j] + 1);
+      }
+      keys.push_back(static_cast<int32_t>(slot));
+    }
+    const auto count = keys.size() / 5;
+    std::vector<int32_t> scratch(keys.size());
+    std::vector<std::size_t> digits;
+    int bits = 1;
+    while ((std::uint64_t{1} << bits) <= vertices.size()) ++bits;
+    radix_sort_rows<5>(keys.data(), scratch.data(), count, 0, 4, bits, digits);
+    std::vector<int32_t> old_to_new(tets.size(), -1);
+    for (std::size_t row = 0; row < count; ++row) {
+      old_to_new[keys[5 * row + 4]] = static_cast<int32_t>(row);
+    }
+    std::vector<Tetrahedron> canonical;
+    canonical.reserve(count);
+    int32_t start = -1;
+    for (std::size_t row = 0; row < count; ++row) {
+      Tetrahedron tet = tets[keys[5 * row + 4]];
+      for (int32_t& neighbor : tet.n) neighbor = old_to_new[neighbor];
+      if (start < 0 && !is_ghost(tet)) start = static_cast<int32_t>(row);
+      canonical.push_back(tet);
+    }
+    tets.swap(canonical);
+    complex.free_slots.clear();
+    triangulation_->set_hint(start);
+  }
+
+  // The additional sites are proposals, not authored source points. Accept
+  // this triangulation only if every fixed wall face is already recovered.
+  int32_t try_preseeded_triangulation(std::vector<ConformingFace>& conforming) {
+    if (!(input_.uniform_radius > 0.0) || input_.policy != BoundaryPolicy::kFixed ||
+        input_.affine_metric != nullptr || input_.protected_facets != nullptr ||
+        input_.segment_count != 0 || input_.seed_count != 0 || !planar_polygons_.empty()) {
+      return PHX_MC_OK;
+    }
+    const int32_t first = input_.facet_regions[0], second = input_.facet_regions[1];
+    if (!((first == -1 && second >= 0) || (second == -1 && first >= 0))) return PHX_MC_OK;
+    for (int64_t facet = 1; facet < input_.facet_count; ++facet) {
+      if (input_.facet_regions[2 * facet] != first ||
+          input_.facet_regions[2 * facet + 1] != second) return PHX_MC_OK;
+    }
+    std::vector<char> wall_vertices(static_cast<std::size_t>(source_point_count_), 0);
+    for (const int32_t vertex : candidate_.input_triangles) {
+      wall_vertices[static_cast<std::size_t>(vertex)] = 1;
+    }
+    if (std::ranges::find(wall_vertices, 0) != wall_vertices.end()) return PHX_MC_OK;
+    std::vector<double> sites;
+    if (!prepare_owned_volume_lattice(candidate_.points, candidate_.input_triangles,
+                                      input_.uniform_radius, sites) || sites.empty()) {
+      return PHX_MC_OK;
+    }
+    const auto count = candidate_.points.size() / 3 + sites.size() / 3;
+    if (count < 16384 || count > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_OK;
+    work_points_ = candidate_.points;
+    work_points_.insert(work_points_.end(), sites.begin(), sites.end());
+    std::vector<int32_t> active(count);
+    std::iota(active.begin(), active.end(), 0);
+    const auto order = brio_hilbert_order(work_points_.data(), 3, active);
+    std::vector<double> ordered_points(3 * count);
+    for (std::size_t row = 0; row < count; ++row) {
+      std::copy_n(work_points_.data() + 3 * static_cast<std::size_t>(order[row]),
+                  3, ordered_points.data() + 3 * row);
+    }
+    alive_.assign(count, 1);
+    triangulation_ =
+        std::make_unique<Triangulation3D>(ordered_points.data(), nullptr, count);
+    triangulation_->set_identities(order.data());
+    const auto status = triangulation_->build(active, alive_, input_.parallelism);
+    triangulation_->set_identities(nullptr);
+    if (status != PHX_MC_OK) {
+      triangulation_.reset();
+      return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
+    }
+    normalize_preseeded_cells(order);
+    triangulation_->rebind(work_points_.data(), count);
+    if (conforming_faces(conforming) != Conformity::kConforms) {
+      triangulation_.reset();
+      return PHX_MC_OK;
+    }
+    preseeded_count_ = sites.size() / 3;
+    volume_count_ = preseeded_count_;
+    triangulation_->complex().enable_labels();
+    return PHX_MC_OK;
   }
 
   // Nondegenerate hull triangles of the source triangulation by vertex (CSR
@@ -2885,38 +3007,6 @@ class PlcRecoveryBuilder {
       status_ = fail(point_status, kPlcNonrepresentable, kPlcPoint, -1);
       return false;
     }
-    corner_count_ = convex_boundary() ? 0 : kPlcCornerCount;
-    if (input_count > kMaxMeshPoints - corner_count_) {
-      status_ = fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, input_count);
-      return false;
-    }
-    if (corner_count_ != 0) {
-      double lower[3], upper[3];
-      for (int axis = 0; axis < 3; ++axis) {
-        lower[axis] = upper[axis] = work_points_[static_cast<std::size_t>(axis)];
-        for (int32_t vertex = 1; vertex < source_point_count_; ++vertex) {
-          const double value = work_points_[3 * static_cast<std::size_t>(vertex) + axis];
-          lower[axis] = std::min(lower[axis], value);
-          upper[axis] = std::max(upper[axis], value);
-        }
-      }
-      double reach = 0.0;
-      for (int axis = 0; axis < 3; ++axis) reach = std::max(reach, upper[axis] - lower[axis]);
-      reach = 4.0 * power_of_two_ceil(std::max(reach, 0x1p-60));
-      for (int32_t corner = 0; corner < corner_count_; ++corner) {
-        for (int axis = 0; axis < 3; ++axis) {
-          const double center = lower[axis] + 0.5 * (upper[axis] - lower[axis]);
-          corner_points_.push_back((corner >> axis) & 1 ? center + reach : center - reach);
-        }
-      }
-    }
-    if (corner_count_ != 0) {
-      const int32_t corner_status = validate_points(corner_points_.data(), corner_count_, 3, nullptr);
-      if (corner_status != PHX_MC_OK) {
-        status_ = fail(corner_status, kPlcNonrepresentable, kPlcPoint, -1);
-        return false;
-      }
-    }
     // The preparer lists the segments first, as given, then the rows its
     // edge index (source_edges_) runs through.
     const std::size_t edge_count = candidate_.plc_edges.size() / 2;
@@ -2966,6 +3056,38 @@ class PlcRecoveryBuilder {
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
     return true;
+  }
+
+  bool prepare_corner_scaffold() {
+    corner_count_ = convex_boundary() ? 0 : kPlcCornerCount;
+    if (source_point_count_ > kMaxMeshPoints - corner_count_) {
+      status_ = fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint,
+                     source_point_count_);
+      return false;
+    }
+    if (corner_count_ == 0) return true;
+    double lower[3], upper[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      lower[axis] = upper[axis] = work_points_[static_cast<std::size_t>(axis)];
+      for (int32_t vertex = 1; vertex < source_point_count_; ++vertex) {
+        const double value = work_points_[3 * static_cast<std::size_t>(vertex) + axis];
+        lower[axis] = std::min(lower[axis], value);
+        upper[axis] = std::max(upper[axis], value);
+      }
+    }
+    double reach = 0.0;
+    for (int axis = 0; axis < 3; ++axis) reach = std::max(reach, upper[axis] - lower[axis]);
+    reach = 4.0 * power_of_two_ceil(std::max(reach, 0x1p-60));
+    for (int32_t corner = 0; corner < corner_count_; ++corner) {
+      for (int axis = 0; axis < 3; ++axis) {
+        const double center = lower[axis] + 0.5 * (upper[axis] - lower[axis]);
+        corner_points_.push_back((corner >> axis) & 1 ? center + reach : center - reach);
+      }
+    }
+    const auto status = validate_points(corner_points_.data(), corner_count_, 3, nullptr);
+    if (status == PHX_MC_OK) return true;
+    status_ = fail(status, kPlcNonrepresentable, kPlcPoint, -1);
+    return false;
   }
 
   // Indexes the source points (carrier grid and exact carriers) and the
@@ -8523,9 +8645,13 @@ class PlcRecoveryBuilder {
     }
     // Recovery found every source face and edge in the Delaunay
     // triangulation of the source points (and the corners) as built.
-    candidate_.delaunay = !local_edits_ && volume_count_ == 0 && exact_points_.empty() &&
+    candidate_.delaunay = !local_edits_ && volume_count_ == preseeded_count_ &&
+                          exact_points_.empty() &&
                           candidate_points == static_cast<std::size_t>(source_point_count_) &&
                           input_.affine_metric == nullptr;
+    if (candidate_.delaunay && preseeded_count_ != 0 && !published_volume.empty()) {
+      candidate_.preseeded_radius = input_.uniform_radius;
+    }
     const auto publish_face = [&](const PlcSourceFace& source) {
       for (int32_t vertex : source.oriented) {
         candidate_.faces.push_back(point_output_[static_cast<std::size_t>(vertex)]);
@@ -8664,6 +8790,7 @@ class PlcRecoveryBuilder {
   // the row of each.
   std::unordered_map<uint64_t, std::size_t> chain_intervals_;
   std::size_t volume_count_ = 0;
+  std::size_t preseeded_count_ = 0;
   std::vector<int32_t> volume_output_;
   // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
@@ -8695,7 +8822,9 @@ int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavi
 
 int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
   try {
-    if (input.search_node_budget < 0 || input.search_byte_budget < 0) {
+    if (input.search_node_budget < 0 || input.search_byte_budget < 0 ||
+        !(input.uniform_radius >= 0.0) || !std::isfinite(input.uniform_radius) ||
+        input.parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (input.affine_metric != nullptr) {
