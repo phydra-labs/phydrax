@@ -2590,11 +2590,12 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
     const CarrierSimplex& hull = chart->simplices.front();
     if (hull.size != 2 && hull.size != 3) return TetEditStatus::kStaleGeneration;
     std::array<double, 9> corners{};
-    for (int corner = 0; corner < hull.size; ++corner) {
-      std::copy_n(input_.source_points.data() +
-                      3 * static_cast<std::size_t>(hull.rows[static_cast<std::size_t>(corner)]),
-                  3, corners.data() + 3 * corner);
-    }
+    const auto source_corner = [&](std::size_t index) {
+      return input_.source_points.data() + 3 * static_cast<std::size_t>(hull.rows[index]);
+    };
+    std::copy_n(source_corner(0), 3, corners.data());
+    std::copy_n(source_corner(1), 3, corners.data() + 3);
+    if (hull.size == 3) std::copy_n(source_corner(2), 3, corners.data() + 6);
     basis_count = hull_frame(hull.size, corners.data(), basis.data(), projector.data());
     std::copy_n(corners.data(), 3, origin.data());
   }
