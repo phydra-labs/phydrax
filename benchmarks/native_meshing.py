@@ -630,7 +630,7 @@ def _volume_unmet(result: object, /) -> int:
 # Netgen's optimized linear mesh under Curve(p), on the LIN machine.
 # Counts are reported, not enforced.
 _GMSH_QUADRIC_TETS = {0.2293: 1_054, 0.1061: 8_493, 0.04925: 75_913, 0.02286: 717_939}
-_NETGEN_QUADRIC_TETS = {0.1061: 6_095, 0.04925: 67_533}
+_NETGEN_QUADRIC_TETS = {0.22859: 544, 0.1061: 6_095, 0.04925: 67_533}
 
 
 class _CadCurveTarget(NamedTuple):
@@ -643,8 +643,10 @@ class _CadCurveTarget(NamedTuple):
 # Use the stricter recorded value from Netgen Curve(p) and Gmsh setOrder
 # without optimization; keep their original construction clock.
 _CAD_CURVE_TARGETS = {
+    ("quadric", 2, 22859): _CadCurveTarget(0.222, 0.722, 3.26e-4),
     ("quadric", 2, 10610): _CadCurveTarget(0.277, 0.814, 4.14e-5),
     ("quadric", 2, 4925): _CadCurveTarget(0.212, 0.891, 4.55e-6),
+    ("quadric", 3, 22859): _CadCurveTarget(0.222, 0.694, 1.34e-4),
     ("quadric", 3, 10610): _CadCurveTarget(0.275, 0.813, 6.45e-6),
     ("quadric", 3, 4925): _CadCurveTarget(0.211, 0.893, 8.02e-7),
     ("sphere", 2, 27572): _CadCurveTarget(0.241, 0.782, 1.17e-4),

@@ -417,8 +417,8 @@ Jacobian, determinant ratio, and analytic boundary residual on the same
 sampling lattice as the Netgen/Gmsh comparison. The sampled surface residual
 does not replace the separate bidirectional CAD fidelity or embedding proof.
 
-The first complete macOS run beat all ten curving clocks and certified every
-cell's determinant, but no row matched all reference quality fields. The
+The macOS results across all 12 rows beat every curving clock and certified
+every cell's determinant, but no row matched all reference quality fields. The
 quadric rows met the boundary residual thresholds and missed the minimum
 scaled Jacobian; the sphere rows also missed the boundary residual threshold.
 Keep F5 open until the combined gates pass.

@@ -120,10 +120,12 @@
       "1163771": {"tool": "mmg3d", "seconds": 9.787, "minimum_dihedral_degrees": 19.8, "allowed_ratio": 1.0}
     },
     "cad-quadric-p2": {
+      "22859": {"tool": "netgen 6.2.2608 Curve(2), F5 native CAD ledger", "seconds": 0.00347, "allowed_ratio": 1.0},
       "10610": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0125, "allowed_ratio": 1.0},
       "4925": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0751, "allowed_ratio": 1.0}
     },
     "cad-quadric-p3": {
+      "22859": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.00823, "allowed_ratio": 1.0},
       "10610": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.0341, "allowed_ratio": 1.0},
       "4925": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.171, "allowed_ratio": 1.0}
     },
