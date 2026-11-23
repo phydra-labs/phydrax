@@ -139,7 +139,7 @@ struct Run {
 };
 
 // Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
-Run adapt_cube(int n, double c, bool witnessed = false) {
+Run adapt_cube(int n, double c, bool witnessed = false, double lower = kLower) {
   Cube cube = kuhn_cube(n);
   const std::int32_t moved = n + 2;  // (0, 1/n, 1/n)
   if (witnessed) cube.points[3 * moved + 1] *= 0.625;
@@ -225,7 +225,7 @@ Run adapt_cube(int n, double c, bool witnessed = false) {
   input.next_vertex_id = count;
   input.next_target_vertex = count;
   input.next_target_cell = input.next_cell_id;
-  input.lower = kLower;
+  input.lower = lower;
   input.topology_operations = !witnessed;
   run.status = metric::adapt_metric(mesh, input, run.output);
   PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
@@ -298,6 +298,15 @@ void check_coarsening() {
   check_result(run, 4.0);
   PHX_CHECK(run.output.counters.collapses > 0);
   PHX_CHECK(boundary_vertices(run.after) < boundary_vertices(run.before));
+}
+
+void check_completion_tolerance_does_not_skip_eligible_collapses() {
+  // Axis edges are sqrt(1.9)/2 ≈ 0.689: above the requested final lower
+  // bound, but below the fixed collapse trigger. Even body diagonals are
+  // below the upper bound, so a request-only precheck would return early.
+  const Run run = adapt_cube(2, 1.9, false, 0.67);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.counters.collapses > 0);
 }
 
 void check_witnessed_boundary_relocation() {
@@ -439,6 +448,7 @@ int main() {
   check_combine_stencils();
   check_refinement();
   check_coarsening();
+  check_completion_tolerance_does_not_skip_eligible_collapses();
   check_witnessed_boundary_relocation();
   metric_worksets_ignore_physical_vertex_order();
   return phx::mc::test::finish("test_metric_adapt3d");

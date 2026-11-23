@@ -182,7 +182,7 @@ class Adapter {
   }
 
   // Measurement.
-  bool complete() const;
+  bool complete(double lower) const;
 
   // Splits.
   std::int64_t split_sweep();
@@ -589,12 +589,9 @@ void Adapter::bind() {
       witness_faces_ = std::move(snapshot.source_faces);
     }
   }
-  for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
-    if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
-  }
 }
 
-bool Adapter::complete() const {
+bool Adapter::complete(double lower) const {
   const auto& tets = mesh_.complex().tets;
   for (std::size_t slot = 0; slot < tets.size(); ++slot) {
     const Tetrahedron& cell = tets[slot];
@@ -604,7 +601,7 @@ bool Adapter::complete() const {
         const std::int32_t a = cell.v[first];
         const std::int32_t b = cell.v[second];
         const double value = edge_length(a, b);
-        if (!(value >= input_.lower && value <= kUpperLength) && !protected_edge(a, b)) {
+        if (!(value >= lower && value <= kUpperLength) && !protected_edge(a, b)) {
           return false;
         }
       }
@@ -2896,6 +2893,18 @@ void Adapter::write(AdaptOutput& output) const {
 TetEditStatus Adapter::run(AdaptOutput& output) {
   bind();
   output = AdaptOutput{};
+  // No split or collapse is eligible in this interval. The caller's
+  // completion lower bound can be looser than the actual collapse trigger.
+  const double initial_lower =
+      input_.topology_operations ? std::max(input_.lower, kLowerLength) : input_.lower;
+  if (complete(initial_lower)) {
+    write(output);
+    output.passes = 1;
+    return TetEditStatus::kApplied;
+  }
+  for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
+    if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
+  }
   AdaptStatus status = AdaptStatus::kComplete;
   std::int64_t passes = 0;
   for (;;) {
@@ -2911,7 +2920,7 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     }
     if (split != 0) continue;
     // Splits are exhausted at the changed vertices: the band may hold.
-    const bool done = complete();
+    const bool done = complete(input_.lower);
     if (done) {
       status = AdaptStatus::kComplete;
       break;

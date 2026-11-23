@@ -2964,6 +2964,8 @@ Edge worksets use persistent endpoint IDs for measurement and tie-breaking.
 Proposed edits and final band evidence measure in the same endpoint order,
 including when only one endpoint moves or a split introduces a new one.
 Persistent split parents, not storage slots, order fresh cell and facet IDs.
+After binding the input, a mesh already within both the requested band and
+the enabled topology triggers completes without building edit worksets.
 The native adapter may skip an exhausted deep relocation search only while
 its stage, ordered incident cells, carrier revisions, and source chart remain
 unchanged. Reuse is bounded per adaptation call and never skips a candidate
