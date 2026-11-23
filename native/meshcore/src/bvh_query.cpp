@@ -445,7 +445,9 @@ int32_t query_chunks(const double* points, int64_t count, int32_t parallelism,
 
 }  // namespace
 
-bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
+namespace {
+
+bool tree_indices_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
   if (tree == nullptr || tree->node_count < 1 || tree->leaf_count < 0 || tree->leaf_width < 1 ||
       tree->item_count < 0 || tree->node_min == nullptr || tree->node_max == nullptr ||
       tree->left == nullptr || tree->right == nullptr || tree->leaf == nullptr ||
@@ -464,29 +466,65 @@ bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
       return false;
     }
   }
-  // A rooted tree has exactly one incoming edge per reachable non-root node.
-  // Mark on discovery: this rejects cycles and shared children without recursion.
-  std::vector<uint8_t> seen(static_cast<std::size_t>(tree->node_count), 0);
-  std::vector<int64_t> pending{0};
-  seen[0] = 1;
-  while (!pending.empty()) {
-    const int64_t node = pending.back();
-    pending.pop_back();
-    if (tree->leaf[node] >= 0) {
-      if (tree->left[node] != -1 || tree->right[node] != -1) return false;
-      continue;
-    }
-    for (const int64_t child : {tree->left[node], tree->right[node]}) {
-      if (seen[static_cast<std::size_t>(child)]) return false;
-      seen[static_cast<std::size_t>(child)] = 1;
-      pending.push_back(child);
-    }
-  }
   const int64_t entries = tree->leaf_count * tree->leaf_width;
   for (int64_t entry = 0; entry < entries; ++entry) {
     if (tree->leaf_items[entry] >= tree->item_count) return false;
   }
   return true;
+}
+
+// Mark each reachable node once. The exit marker records the first packed
+// index after a subtree; it never addresses the borrowed node bank.
+template <bool Pack>
+bool walk_tree(const phx_mc_bvh_tree_view& tree, double tolerance, LocateTree& packed) {
+  std::vector<uint8_t> seen(static_cast<std::size_t>(tree.node_count), 0);
+  std::vector<int64_t> pending{0};
+  while (!pending.empty()) {
+    const int64_t node = pending.back();
+    pending.pop_back();
+    if constexpr (Pack) {
+      if (node < 0) {
+        packed.nodes[static_cast<std::size_t>(~node)].escape = packed.size;
+        continue;
+      }
+    }
+    auto& reached = seen[static_cast<std::size_t>(node)];
+    if (reached != 0) return false;
+    reached = 1;
+    const int64_t leaf = tree.leaf[node];
+    if (leaf >= 0 && (tree.left[node] != -1 || tree.right[node] != -1)) return false;
+    if constexpr (Pack) {
+      LocateNode& record = packed.nodes[packed.size];
+      for (int axis = 0; axis < 3; ++axis) {
+        record.lower[axis] = tree.node_min[3 * node + axis] - tolerance;
+        record.upper[axis] = tree.node_max[3 * node + axis] + tolerance;
+      }
+      record.leaf = leaf;
+      if (leaf < 0) pending.push_back(~static_cast<int64_t>(packed.size));
+      record.escape = ++packed.size;
+    }
+    if (leaf < 0) {
+      pending.push_back(tree.right[node]);
+      pending.push_back(tree.left[node]);
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
+  if (!tree_indices_valid(tree, dimension)) return false;
+  LocateTree unused;
+  return walk_tree<false>(*tree, 0.0, unused);
+}
+
+LocateTree prepare_locate_tree(const phx_mc_bvh_tree_view* tree, double tolerance) {
+  if (!tree_indices_valid(tree, 3)) return {};
+  LocateTree packed{
+      std::make_unique_for_overwrite<LocateNode[]>(static_cast<std::size_t>(tree->node_count))};
+  if (!walk_tree<true>(*tree, tolerance, packed)) return {};
+  return packed;
 }
 
 int32_t triangle_nearest(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup, int64_t count,
@@ -653,48 +691,64 @@ struct Accepted {
   double reference[3];
 };
 
-// One record per node with everything the containment descent reads.
-struct BoxNode {
-  double lower[3];
-  double upper[3];
-  int64_t left;
-  int64_t right;
-  int64_t leaf;
-};
 
-std::unique_ptr<BoxNode[]> box_nodes(const phx_mc_bvh_tree_view& tree) {
-  auto nodes = std::make_unique_for_overwrite<BoxNode[]>(static_cast<std::size_t>(tree.node_count));
-  for (int64_t node = 0; node < tree.node_count; ++node) {
-    BoxNode& record = nodes[static_cast<std::size_t>(node)];
-    std::copy(tree.node_min + 3 * node, tree.node_min + 3 * node + 3, record.lower);
-    std::copy(tree.node_max + 3 * node, tree.node_max + 3 * node + 3, record.upper);
-    record.left = tree.left[node];
-    record.right = tree.right[node];
-    record.leaf = tree.leaf[node];
+using LocateRange = std::pair<std::size_t, std::size_t>;
+constexpr std::size_t kLocatePacket = 8;
+
+LocateRange shared_range(const LocateTree& tree, const double* points,
+                         std::span<const int64_t> queries) {
+  double lower[]{kInfinity, kInfinity, kInfinity};
+  double upper[]{-kInfinity, -kInfinity, -kInfinity};
+  for (const int64_t query : queries) {
+    const double* p = points + 3 * query;
+    if (!(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]))) continue;
+    for (int axis = 0; axis < 3; ++axis) {
+      lower[axis] = std::min(lower[axis], p[axis]);
+      upper[axis] = std::max(upper[axis], p[axis]);
+    }
   }
-  return nodes;
+  if (lower[0] > upper[0]) return {0, 0};
+  const auto overlaps = [&](const LocateNode& node) {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!(upper[axis] >= node.lower[axis] && lower[axis] <= node.upper[axis])) return false;
+    }
+    return true;
+  };
+  std::size_t first = 0, end = tree.size;
+  while (first < end) {
+    const LocateNode& node = tree.nodes[first];
+    if (!overlaps(node)) return {0, 0};
+    // Elide this node's check only when it contains every finite query.
+    if (node.leaf >= 0 || !box_contains(lower, node.lower, node.upper, 0.0) ||
+        !box_contains(upper, node.lower, node.upper, 0.0)) break;
+    const std::size_t left = first + 1;
+    const std::size_t right = tree.nodes[left].escape;
+    const bool hits_left = overlaps(tree.nodes[left]), hits_right = overlaps(tree.nodes[right]);
+    if (hits_left && hits_right) return {left, end};
+    if (!hits_left && !hits_right) return {0, 0};
+    if (hits_left) end = right;
+    first = hits_left ? left : right;
+  }
+  return {first, end};
 }
 
 // Locates one finite point; returns its status.
-int32_t locate_one(const phx_mc_bvh_tree_view& tree, const BoxNode* nodes,
+int32_t locate_one(const phx_mc_bvh_tree_view& tree, const LocateTree& packed,
                    const double* vertices, const int32_t* cells, const uint8_t* cell_mask,
-                   double tolerance, const double* point, std::vector<int64_t>& stack,
+                   double tolerance, const double* point, LocateRange range,
                    std::vector<Accepted>& accepted) {
   accepted.clear();
   bool candidate_seen = false;
   bool valid_seen = false;
-  stack.clear();
-  stack.push_back(0);
-  while (!stack.empty()) {
-    const BoxNode& node = nodes[static_cast<std::size_t>(stack.back())];
-    stack.pop_back();
-    if (!box_contains(point, node.lower, node.upper, tolerance)) continue;
-    const int64_t leaf = node.leaf;
-    if (leaf < 0) {
-      stack.push_back(node.right);
-      stack.push_back(node.left);
+  for (std::size_t next = range.first; next < range.second;) {
+    const LocateNode& node = packed.nodes[next];
+    if (!box_contains(point, node.lower, node.upper, 0.0)) {
+      next = node.escape;
       continue;
     }
+    ++next;
+    const int64_t leaf = node.leaf;
+    if (leaf < 0) continue;
     // Screen every slot's box first without branching on earlier results, so
     // the item box loads of a leaf overlap; then resolve the hits.
     const int64_t* items = tree.leaf_items + leaf * tree.leaf_width;
@@ -775,17 +829,15 @@ void cell_evidence(const double* vertices, const int32_t* cell, const double* re
 
 }  // namespace
 
-int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* vertices,
-                           const int32_t* cells, const uint8_t* cell_mask, double tolerance,
+int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const LocateTree& nodes,
+                           const double* vertices, const int32_t* cells,
+                           const uint8_t* cell_mask, double tolerance,
                            int64_t count, const double* points, int32_t capacity,
                            const LocateOutput& output, int32_t parallelism) {
-  const auto nodes = box_nodes(tree);
   const std::size_t width = static_cast<std::size_t>(capacity);
   return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
-    std::vector<int64_t> stack;
-    stack.reserve(128);
     std::vector<Accepted> accepted;
-    for (const int64_t query : queries) {
+    const auto locate = [&](int64_t query, LocateRange range) {
       const double* point = points + 3 * query;
       const std::size_t row = static_cast<std::size_t>(query) * width;
       int32_t* candidates = output.candidates + row;
@@ -796,7 +848,7 @@ int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* verti
       const bool finite =
           std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]);
       const int32_t status = finite
-          ? locate_one(tree, nodes.get(), vertices, cells, cell_mask, tolerance, point, stack, accepted)
+          ? locate_one(tree, nodes, vertices, cells, cell_mask, tolerance, point, range, accepted)
           : PHX_MC_LOCATE_NONFINITE;
       output.status[query] = status;
       if (status != PHX_MC_LOCATE_LOCATED) {
@@ -805,7 +857,7 @@ int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* verti
         std::fill(reference, reference + 3, 0.0);
         output.residual[query] = kInfinity;
         output.condition[query] = kInfinity;
-        continue;
+        return;
       }
       std::sort(accepted.begin(), accepted.end(),
                 [](const Accepted& a, const Accepted& b) { return a.cell < b.cell; });
@@ -820,6 +872,12 @@ int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* verti
       std::copy(lowest.reference, lowest.reference + 3, reference);
       cell_evidence(vertices, cells + 4 * static_cast<int64_t>(lowest.cell), lowest.reference, point,
                     output.residual[query], output.condition[query]);
+    };
+    for (std::size_t first = 0; first < queries.size(); first += kLocatePacket) {
+      const auto packet = queries.subspan(first, std::min(kLocatePacket, queries.size() - first));
+      const auto range = packet.size() == 1 ? LocateRange{0, nodes.size}
+                                            : shared_range(nodes, points, packet);
+      for (int64_t query : packet) locate(query, range);
     }
   });
 }

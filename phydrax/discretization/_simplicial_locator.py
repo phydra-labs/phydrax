@@ -25,6 +25,7 @@ from .._bvh import (
 from .._bvh_native import native_point_queries, tetrahedron_locate
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._fixed_order import cross3, dot3, norm3, ordered_sum, product, root
+from .._jax_config import x64_enabled
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import Bool, checked, ConvertibleToArray, Dim, Float, Int32, Integer
@@ -259,7 +260,14 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         *,
         cell_mask: ConvertibleToArray | None = None,
     ) -> CellLocationResult:
-        values = jnp.asarray(points, dtype=self.coordinates.dtype)
+        values = (
+            points
+            if isinstance(points, np.ndarray)
+            and points.dtype == np.float64
+            and self.coordinates.dtype == jnp.float64
+            and x64_enabled()
+            else jnp.asarray(points, dtype=self.coordinates.dtype)
+        )
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
             raise ValueError("Locator points have incompatible ambient dimension.")
         if cell_mask is not None:
@@ -270,6 +278,8 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 )
         if self._native_affine_tetrahedra(values, cell_mask):
             return self._locate_affine_tetrahedra(values, cell_mask)
+        if isinstance(values, np.ndarray):
+            values = jnp.asarray(values, dtype=self.coordinates.dtype)
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
         while True:
@@ -340,7 +350,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         )
 
     def _native_affine_tetrahedra(
-        self, values: Array, cell_mask: ConvertibleToArray | None, /
+        self, values: Array | np.ndarray, cell_mask: ConvertibleToArray | None, /
     ) -> bool:
         """Whether `locate` runs natively: concrete float64 affine tetrahedra."""
         return (
@@ -474,7 +484,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         )
 
     def _locate_affine_tetrahedra(
-        self, values: Array, cell_mask: ConvertibleToArray | None, /
+        self, values: Array | np.ndarray, cell_mask: ConvertibleToArray | None, /
     ) -> CellLocationResult:
         """Native affine location over the same tree: `_resolve_affine_tetrahedra`.
 
@@ -490,19 +500,13 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         )
         inside = located.status == int(CellLocationStatus.LOCATED)
         reference = located.reference
-        barycentric = np.where(
-            inside[:, None],
-            np.concatenate(
-                (
-                    (1.0 - ((reference[:, 0] + reference[:, 1]) + reference[:, 2]))[
-                        :, None
-                    ],
-                    reference,
-                ),
-                axis=1,
-            ),
-            0.0,
+        barycentric = np.empty((values.shape[0], 4), dtype=np.float64)
+        barycentric[:, 0] = np.where(
+            inside, 1.0 - ((reference[:, 0] + reference[:, 1]) + reference[:, 2]), 0.0
         )
+        # Native refusal already zeroes the reference coordinates.
+        barycentric[:, 1:] = reference
+        inside_array = jnp.asarray(inside)
         point_count = values.shape[0]
         return CellLocationResult(
             jnp.asarray(located.cells, dtype=jnp.int32),
@@ -513,11 +517,11 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 np.where(inside, 0, self.policy.maximum_iterations), dtype=jnp.int32
             ),
             jnp.asarray(located.condition, dtype=values.dtype),
-            jnp.asarray(inside),
+            inside_array,
             jnp.zeros((point_count,), dtype=jnp.bool_),
             jnp.asarray(located.containing, dtype=jnp.int32),
             jnp.asarray(located.status, dtype=jnp.int32),
-            jnp.asarray(inside),
+            inside_array,
             jnp.asarray(located.candidates, dtype=jnp.int32),
             jnp.asarray(located.candidate_reference, dtype=values.dtype),
             jnp.ones((point_count,), dtype=jnp.bool_),

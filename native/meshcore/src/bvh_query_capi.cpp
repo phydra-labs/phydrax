@@ -2,8 +2,10 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 // C entries of the BVH point queries: argument validation and dispatch.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "bvh_query.hpp"
 #include "capi_guard.hpp"
@@ -15,25 +17,41 @@ namespace {
 // Every index of `rows` x `width` entries lies in [0, bound).
 bool indices_valid(const int32_t* indices, int64_t rows, int64_t width, int64_t bound) noexcept {
   const int64_t entries = rows * width;
-  for (int64_t entry = 0; entry < entries; ++entry) {
-    if (indices[entry] < 0 || indices[entry] >= bound) return false;
+  // As unsigned values, negative indices lie above the highest possible
+  // nonnegative int32 index. Check one unsigned maximum per bounded block.
+  const auto limit = static_cast<uint32_t>(std::min<int64_t>(
+      bound, static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1));
+  constexpr int64_t kBlock = 1024;
+  for (int64_t first = 0; first < entries;) {
+    const int64_t last = first + std::min(kBlock, entries - first);
+    uint32_t largest = 0;
+    for (; first < last; ++first) {
+      largest = std::max(largest, static_cast<uint32_t>(indices[first]));
+    }
+    if (largest >= limit) return false;
   }
   return true;
 }
 
-// The view, its triangle or tetrahedron items, and the query points.
+bool query_points_valid(int64_t vertex_count, int64_t count, const double* points) {
+  return vertex_count >= 0 && count >= 0 &&
+         phx::mc::addressable(vertex_count, 3, sizeof(double)) &&
+         phx::mc::addressable(count, 3, sizeof(double)) && (count == 0 || points != nullptr);
+}
+
+bool simplex_indices_valid(int64_t item_count, int64_t vertex_count, const double* vertices,
+                           const int32_t* simplices, int64_t corners) {
+  if (item_count == 0) return true;
+  return vertices != nullptr && simplices != nullptr &&
+         phx::mc::addressable(item_count, corners, sizeof(int32_t)) &&
+         indices_valid(simplices, item_count, corners, vertex_count);
+}
+
 bool simplex_queries_valid(const phx_mc_bvh_tree_view* tree, int64_t vertex_count,
                            const double* vertices, const int32_t* simplices, int64_t corners,
                            int64_t count, const double* points) {
-  if (vertex_count < 0 || count < 0 || !phx::mc::addressable(vertex_count, 3, sizeof(double)) ||
-      !phx::mc::addressable(count, 3, sizeof(double)) || (count > 0 && points == nullptr) ||
-      !phx::mc::bvh::tree_valid(tree, 3)) {
-    return false;
-  }
-  if (tree->item_count == 0) return true;
-  return vertices != nullptr && simplices != nullptr &&
-         phx::mc::addressable(tree->item_count, corners, sizeof(int32_t)) &&
-         indices_valid(simplices, tree->item_count, corners, vertex_count);
+  return query_points_valid(vertex_count, count, points) && phx::mc::bvh::tree_valid(tree, 3) &&
+         simplex_indices_valid(tree->item_count, vertex_count, vertices, simplices, corners);
 }
 
 }  // namespace
@@ -137,15 +155,19 @@ int32_t phx_mc_bvh_query_locate_tetrahedra(
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (capacity < 1 || !std::isfinite(tolerance) || tolerance < 0.0 ||
-        !simplex_queries_valid(tree, vertex_count, vertices, cells, 4, count, points) ||
+        !query_points_valid(vertex_count, count, points) ||
         !phx::mc::addressable(count, int64_t{capacity} * 3, sizeof(double)) ||
         (count > 0 && (cells_out == nullptr || reference == nullptr || residual == nullptr ||
                        condition == nullptr || status == nullptr || containing == nullptr ||
                        candidates == nullptr || candidate_reference == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    const auto nodes = phx::mc::bvh::prepare_locate_tree(tree, tolerance);
+    if (!nodes.nodes || !simplex_indices_valid(tree->item_count, vertex_count, vertices, cells, 4)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     return phx::mc::bvh::tetrahedron_locate(
-        *tree, vertices, cells, cell_mask, tolerance, count, points, capacity,
+        *tree, nodes, vertices, cells, cell_mask, tolerance, count, points, capacity,
         {cells_out, reference, residual, condition, status, containing, candidates,
          candidate_reference},
         parallelism);

@@ -685,6 +685,35 @@ void test_tetrahedron_locate() {
             PHX_MC_INVALID_ARGUMENT);
 }
 
+void test_tetrahedron_locate_refuses_malformed_input_without_writes() {
+  const std::vector<double> vertices{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1};
+  const std::vector<int32_t> cells{0, 1, 2, 3, 1, 2, 3, 4};
+  const double query[]{0.2, 0.2, 0.2};
+  Tree tree = build_tree(vertices, cells, 4, 1);
+  const auto valid = tree.view();
+  int32_t found = 42, status = 42, containing = 42, candidate = 42;
+  double reference[3]{}, residual = 42.0, condition = 42.0, candidate_reference[3]{};
+  const auto check_invalid = [&](const phx_mc_bvh_tree_view& view,
+                                 const std::vector<int32_t>& rows) {
+    PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
+                  &view, 5, vertices.data(), rows.data(), nullptr, 0.0, 1, query, 1, &found,
+                  reference, &residual, &condition, &status, &containing, &candidate,
+                  candidate_reference, 1) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(found == 42 && status == 42 && containing == 42 && candidate == 42);
+  };
+  auto bad_cells = cells;
+  for (int32_t invalid : {-1, 5}) {
+    bad_cells.back() = invalid;
+    check_invalid(valid, bad_cells);
+  }
+  const int64_t left = tree.left[0];
+  tree.left[0] = 0;  // the root refers to itself
+  check_invalid(valid, cells);
+  tree.left[0] = left;
+  tree.right[0] = left;  // two edges reach the same leaf
+  check_invalid(valid, cells);
+}
+
 }  // namespace
 
 int main() {
@@ -693,5 +722,6 @@ int main() {
   test_signed_distance_sign();
   test_winding_routes();
   test_tetrahedron_locate();
+  test_tetrahedron_locate_refuses_malformed_input_without_writes();
   return phx::mc::test::finish("test_bvh_query");
 }

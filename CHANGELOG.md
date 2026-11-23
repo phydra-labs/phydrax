@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Native affine tetrahedron location packs the validated search tree in
+  preorder and shares common tree descent across nearby queries. Location
+  status, tie ordering, reference coordinates, and numerical evidence retain
+  the same rules.
 - Large native 3D point sets prepare Hilbert keys and copy coordinates into
   insertion order on the existing workers. Box quantization, stable key
   ordering, duplicate resolution, and all exported triangulation banks are
