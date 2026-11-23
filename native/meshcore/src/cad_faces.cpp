@@ -352,17 +352,31 @@ int32_t build_boundary_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
-void grade_boundary(const FaceMetric& context, int32_t index, const double* point, double& h) {
-  const BoundaryNode& node = context.boundary_tree[index];
+double boundary_grade_bound(const BoundaryNode& node, const double* point) {
   double box_distance2 = 0.0;
   for (int k = 0; k < 3; ++k) {
     const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
     box_distance2 += delta * delta;
   }
-  if (node.spacing + kBoundaryGrading * std::sqrt(box_distance2) >= h) return;
+  return node.spacing + kBoundaryGrading * std::sqrt(box_distance2);
+}
+
+void grade_boundary(const FaceMetric& context, int32_t index, const double* point,
+                    double bound, double& h) {
+  if (bound >= h) return;
+  const BoundaryNode& node = context.boundary_tree[index];
   if (node.left >= 0) {
-    grade_boundary(context, node.left, point, h);
-    grade_boundary(context, node.right, point, h);
+    const double left = boundary_grade_bound(context.boundary_tree[node.left], point);
+    const double right = boundary_grade_bound(context.boundary_tree[node.right], point);
+    // A visited sample only lowers h. Visit the child with the tighter
+    // lower bound first so its result can prune the other child.
+    if (left <= right) {
+      grade_boundary(context, node.left, point, left, h);
+      grade_boundary(context, node.right, point, right, h);
+    } else {
+      grade_boundary(context, node.right, point, right, h);
+      grade_boundary(context, node.left, point, left, h);
+    }
     return;
   }
   for (int32_t i = node.begin; i < node.end; ++i) {
@@ -407,8 +421,14 @@ int32_t build_chord_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
+struct ChordSearch {
+  double distance;
+  const BoundaryChord* nearest = nullptr;
+};
+
+template <std::size_t N>
 void chord_distance(const FaceMetric& context, int32_t index, const double* point,
-                    double& best, const BoundaryChord*& nearest);
+                    std::array<ChordSearch, N>& searches, unsigned active);
 
 // Isotropic base size at a face point: the request h, graded from the
 // boundary samples and floored on the nearest fixed chord. Grading from the
@@ -424,38 +444,50 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // A proximity control scoping the face lowers the request to its size at the
 // point first (cad_proximity.hpp); grading and the chord floor then apply to
 // that local request.
-double base_size(const FaceMetric& context, const double* jet) {
+std::pair<double, double> graded_size(const FaceMetric& context, const double* jet) {
   double h = context.size;
   if (context.proximity) h = std::min(h, context.proximity->size(context.face, jet));
   const double ungraded = h;
-  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
-  // A chord farther than (L_max - h) / g cannot raise h, so the search for
-  // the nearest chord stops there (none found: no floor).
-  if (!context.chord_tree.empty() && context.chord_tree[0].spacing > h) {
-    double distance = (context.chord_tree[0].spacing - h) / kBoundaryGrading;
-    const BoundaryChord* nearest = nullptr;
-    chord_distance(context, 0, jet, distance, nearest);
-    if (nearest)
-      h = std::max(h, std::min(ungraded, nearest->length - kBoundaryGrading * distance));
-  }
-  return h;
+  if (!context.boundary_tree.empty())
+    grade_boundary(context, 0, jet, boundary_grade_bound(context.boundary_tree[0], jet), h);
+  return {h, ungraded};
 }
 
-// Lowers `best` to the distance from point to the nearest boundary chord
-// when nearer and sets `nearest` to that chord (the longest among equally
-// near ones).
+double chord_floor(double h, double ungraded, const ChordSearch& search) {
+  return search.nearest
+      ? std::max(h, std::min(ungraded,
+                            search.nearest->length - kBoundaryGrading * search.distance))
+      : h;
+}
+
+double base_size(const FaceMetric& context, const double* jet) {
+  const auto [h, ungraded] = graded_size(context, jet);
+  if (context.chord_tree.empty() || !(context.chord_tree[0].spacing > h)) return h;
+  // A chord farther than (L_max - h) / g cannot raise h.
+  std::array<ChordSearch, 1> search{{{(context.chord_tree[0].spacing - h) / kBoundaryGrading}}};
+  chord_distance(context, 0, jet, search, 1U);
+  return chord_floor(h, ungraded, search[0]);
+}
+
+// Each search uses its own cutoff and longest-at-equal-distance tie rule.
+// The queries share arithmetic, not pruning decisions or traversal order.
+template <std::size_t N>
 void chord_distance(const FaceMetric& context, int32_t index, const double* point,
-                    double& best, const BoundaryChord*& nearest) {
+                    std::array<ChordSearch, N>& searches, unsigned active) {
   const BoundaryNode& node = context.chord_tree[index];
   double box_distance2 = 0.0;
   for (int k = 0; k < 3; ++k) {
     const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
     box_distance2 += delta * delta;
   }
-  if (box_distance2 > best * best) return;
+  for (std::size_t lane = 0; lane < N; ++lane) {
+    const double best = searches[lane].distance;
+    if (box_distance2 > best * best) active &= ~(1U << lane);
+  }
+  if (active == 0U) return;
   if (node.left >= 0) {
-    chord_distance(context, node.left, point, best, nearest);
-    chord_distance(context, node.right, point, best, nearest);
+    chord_distance(context, node.left, point, searches, active);
+    chord_distance(context, node.right, point, searches, active);
     return;
   }
   for (int32_t i = node.begin; i < node.end; ++i) {
@@ -474,9 +506,13 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
       distance2 += e * e;
     }
     const double distance = std::sqrt(distance2);
-    if (distance < best || (distance == best && nearest && chord.length > nearest->length))
-      nearest = &chord;
-    best = std::min(best, distance);
+    for (std::size_t lane = 0; lane < N; ++lane) {
+      if ((active & (1U << lane)) == 0U) continue;
+      auto& [best, nearest] = searches[lane];
+      if (distance < best || (distance == best && nearest && chord.length > nearest->length))
+        nearest = &chord;
+      best = std::min(best, distance);
+    }
   }
 }
 
@@ -489,22 +525,42 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // theta's s_f: a stepped size left triangles across the step whose split
 // points were all too close (measured: a proximity refusal on the quadric
 // at h = 0.04925). The search stops at the smallest layer's reach.
-double local_theta(const FaceMetric& context, const double* jet,
-                   const cad::SurfaceDifferential& differential) {
-  const double kappa = std::max(std::abs(differential.curvatures[0]),
-                                std::abs(differential.curvatures[1]));
-  if (context.chord_tree.empty() || !(kappa > 0.0)) return context.theta;
-  const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
-  const double smallest = std::sqrt(1.0 - kLensShare) * outer;
-  double distance = smallest + (outer - smallest) / kBoundaryGrading;
-  const BoundaryChord* nearest = nullptr;
-  chord_distance(context, 0, jet, distance, nearest);
+double local_theta(const FaceMetric& context, double kappa, double outer,
+                   const ChordSearch& search) {
+  const BoundaryChord* nearest = search.nearest;
   if (!nearest || !(nearest->lens > 0.0)) return context.theta;
   const double layer = context.theta -
       std::min(nearest->lens / context.tolerance, kLensShare * context.theta);
   const double inner = std::sqrt(4.0 * layer * context.tolerance / kappa);
-  const double size = inner + kBoundaryGrading * std::max(0.0, distance - inner);
+  const double size = inner + kBoundaryGrading * std::max(0.0, search.distance - inner);
   return size >= outer ? context.theta : context.theta * (size * size) / (outer * outer);
+}
+
+std::pair<double, double> metric_sizes(const FaceMetric& context, const double* jet,
+                                      const cad::SurfaceDifferential& differential) {
+  const auto [h, ungraded] = graded_size(context, jet);
+  if (context.chord_tree.empty()) return {h, context.theta};
+  const double length = context.chord_tree[0].spacing;
+  const double kappa = std::max(std::abs(differential.curvatures[0]),
+                                std::abs(differential.curvatures[1]));
+  const bool needs_floor = length > h;
+  if (!(kappa > 0.0)) {
+    if (!needs_floor) return {h, context.theta};
+    std::array<ChordSearch, 1> search{{{(length - h) / kBoundaryGrading}}};
+    chord_distance(context, 0, jet, search, 1U);
+    return {chord_floor(h, ungraded, search[0]), context.theta};
+  }
+  const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
+  const double smallest = std::sqrt(1.0 - kLensShare) * outer;
+  const double reach = smallest + (outer - smallest) / kBoundaryGrading;
+  if (!needs_floor) {
+    std::array<ChordSearch, 1> search{{{reach}}};
+    chord_distance(context, 0, jet, search, 1U);
+    return {h, local_theta(context, kappa, outer, search[0])};
+  }
+  std::array<ChordSearch, 2> searches{{{(length - h) / kBoundaryGrading}, {reach}}};
+  chord_distance(context, 0, jet, searches, 3U);
+  return {chord_floor(h, ungraded, searches[0]), local_theta(context, kappa, outer, searches[1])};
 }
 
 CadMetric2D face_metric(const double chart[2], void* opaque) {
@@ -521,9 +577,8 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
   // tensor (cad::fidelity_metric), at the boundary layer's share near a
   // curve.
   double m[3];
-  const double h = base_size(context, jet);
-  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
-                       context.tolerance, m, nullptr);
+  const auto [h, theta] = metric_sizes(context, jet, differential);
+  cad::fidelity_metric(differential, h, theta, context.tolerance, m, nullptr);
   return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
           m[2] / (context.scale_v * context.scale_v)};
 }
@@ -538,9 +593,8 @@ bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9])
   cad::SurfaceDifferential differential;
   if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
   double m[3], lambda[2];
-  const double h = base_size(context, jet);
-  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
-                       context.tolerance, m, lambda);
+  const auto [h, theta] = metric_sizes(context, jet, differential);
+  cad::fidelity_metric(differential, h, theta, context.tolerance, m, lambda);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
   const double base = 1.0 / (h * h);

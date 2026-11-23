@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Native CAD face sizing shares the nearest-chord traversal between its
+  size floor and fidelity budget. Boundary grading visits the lower-bound
+  child first; size and fidelity criteria are unchanged.
 - P2 and P3 curving place surface-owned nodes on spherical charts by
   blending unit directions before applying the chart's physical frame.
   Curve-owned placement and the affine mesh are unchanged. Newly constructed
