@@ -431,6 +431,16 @@ were 12.92–13.39°; its size setting is a characteristic length, not the same
 circumradius bound. Output counts differ; this is a same-input construction
 comparison, not equal-cell throughput or a proof-time comparison.
 
+All 24 original comparisons for the two spheres, the two restricted tori,
+and the two grid tori passed at 1, 2, 4, and 8 workers. Every native case
+kept its fixed wall, met all requested quality targets, and reproduced its
+full output banks across worker counts. The smaller restricted torus
+still uses sequential point insertion, with parallel feature-size queries;
+its 8-worker construction took 0.115 s versus 0.121 s from HXT. The smaller
+grid torus still takes the ordinary fixed-wall route. With the new size
+dispatch, its measured 8-worker time rose from 0.243 s to 0.292 s, still
+below HXT's 0.630 s.
+
 ### Qualified sequential routes in the thread matrix
 
 - F13 overset remains sequential. On the same ordered binary input, it beats
