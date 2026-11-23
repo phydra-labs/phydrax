@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Quadratic CAD curving groups edge incidences with the native stable key
+  sort and prepares the repair workset only when initial validity requires
+  it. Edge numbering, coordinates, and validity decisions are unchanged.
 - Native affine tetrahedron location packs the validated search tree in
   preorder and shares common tree descent across nearby queries. Location
   status, tie ordering, reference coordinates, and numerical evidence retain

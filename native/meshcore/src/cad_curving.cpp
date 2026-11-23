@@ -2,6 +2,7 @@
 #include "cad_curving.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -9,6 +10,7 @@
 
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
+#include "spatial_sort.hpp"
 
 namespace phx::mc {
 namespace {
@@ -70,8 +72,7 @@ class Curving {
   int32_t run() {
     int32_t status = validate();
     if (status != PHX_MC_OK) return status;
-    status = enumerate_edges();
-    if (status != PHX_MC_OK) return status;
+    enumerate_edges();
     status = place_nodes();
     if (status != PHX_MC_OK) return status;
     return repair();
@@ -124,27 +125,45 @@ class Curving {
     return it != keys_.end() && *it == key ? static_cast<int64_t>(it - keys_.begin()) : -1;
   }
 
-  int32_t enumerate_edges() {
+  void enumerate_edges() {
     const int64_t cells = input_.tetrahedron_count;
-    std::vector<std::pair<uint64_t, int64_t>> slots;
+    // Pack only the point ID bits in the key; equal edges keep their
+    // original order by cell and local edge.
+    const auto last_point = static_cast<uint64_t>(std::max(int64_t{1}, input_.point_count - 1));
+    const auto bits = std::bit_width(last_point);
+    const uint64_t mask = (uint64_t{1} << bits) - 1;
+    std::vector<SpatialKey> slots, scratch;
     slots.reserve(static_cast<std::size_t>(6 * cells));
     for (int64_t t = 0; t < cells; ++t) {
       const int32_t* cell = input_.tetrahedra + 4 * t;
-      for (int e = 0; e < 6; ++e)
-        slots.emplace_back(edge_key(cell[kEdgeCorners[e][0]], cell[kEdgeCorners[e][1]]), 6 * t + e);
+      for (int e = 0; e < 6; ++e) {
+        const int32_t a = cell[kEdgeCorners[e][0]], b = cell[kEdgeCorners[e][1]];
+        const auto key = (static_cast<uint64_t>(std::min(a, b)) << bits) |
+                         static_cast<uint64_t>(std::max(a, b));
+        const auto slot = static_cast<uint64_t>(6 * t + e);
+        slots.push_back({key, std::bit_cast<int32_t>(static_cast<uint32_t>(slot)),
+                         static_cast<uint32_t>(slot >> 32)});
+      }
     }
-    std::sort(slots.begin(), slots.end());
+    radix_sort_keys(slots, scratch, true, false);
     result_.cell_edges.assign(static_cast<std::size_t>(cells), {});
     keys_.clear();
-    for (const auto& [key, slot] : slots) {
+    for (const SpatialKey& entry : slots) {
+      const auto a = static_cast<int32_t>(entry.key >> bits);
+      const auto b = static_cast<int32_t>(entry.key & mask);
+      const uint64_t key = edge_key(a, b);
       if (keys_.empty() || keys_.back() != key) {
         keys_.push_back(key);
-        result_.edges.push_back({static_cast<int32_t>(key >> 32),
-                                 static_cast<int32_t>(key & 0xffffffffu)});
+        result_.edges.push_back({a, b});
       }
+      const uint64_t slot = (static_cast<uint64_t>(entry.round) << 32) |
+                            static_cast<uint32_t>(entry.index);
       result_.cell_edges[static_cast<std::size_t>(slot / 6)][slot % 6] =
           static_cast<int64_t>(keys_.size()) - 1;
     }
+  }
+
+  void prepare_incidence() {
     // Edge-to-cell incidence (CSR) in ascending cell order.
     const std::size_t edges = keys_.size();
     cell_offsets_.assign(edges + 1, 0);
@@ -153,10 +172,10 @@ class Curving {
     for (std::size_t e = 0; e < edges; ++e) cell_offsets_[e + 1] += cell_offsets_[e];
     edge_cells_.resize(static_cast<std::size_t>(cell_offsets_[edges]));
     std::vector<int64_t> cursor(cell_offsets_.begin(), cell_offsets_.end() - 1);
-    for (int64_t t = 0; t < cells; ++t)
+    for (std::size_t t = 0; t < result_.cell_edges.size(); ++t)
       for (int64_t e : result_.cell_edges[static_cast<std::size_t>(t)])
-        edge_cells_[static_cast<std::size_t>(cursor[static_cast<std::size_t>(e)]++)] = t;
-    return PHX_MC_OK;
+        edge_cells_[static_cast<std::size_t>(cursor[static_cast<std::size_t>(e)]++)] =
+            static_cast<int64_t>(t);
   }
 
   // Free p-curve axis of each pole use, keyed by (face, corner).
@@ -350,6 +369,7 @@ class Curving {
       if (decision != PHX_MC_QUADRATIC_VALIDITY_VALID) failing.push_back(t);
     }
     if (!failing.empty()) {
+      prepare_incidence();
       status = harmonic_pass(failing);
       if (status != PHX_MC_OK) return status;
       for (int64_t t : failing) result_.stats.harmonic_repaired_cells += valid(t) ? 1 : 0;
