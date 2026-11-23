@@ -70,9 +70,9 @@ def _kernel_cube(layers: tuple[float, ...]) -> meshcore.HexDominant:
     )
 
 
-def _plc_cube() -> NativePlcSource:
+def _plc_cube(offset: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> NativePlcSource:
     complex_ = PiecewiseLinearComplex(
-        _cube_vertices(),
+        _cube_vertices() + np.asarray(offset, dtype=np.float64),
         tuple(np.asarray(quad, dtype=np.int64) for quad in _QUADS),
         np.arange(6, dtype=np.int64),
         np.tile(np.asarray((-1, 0), dtype=np.int64), (6, 1)),
@@ -195,6 +195,67 @@ def test_route_proves_the_cube_with_an_exact_wall() -> None:
     # Every cell is a valid star of its exact fan faces about its vertex
     # average: one strict orientation over the whole mesh.
     assert _fan_orientations(connectivity, points) in ({1}, {-1})
+
+
+def test_translated_cube_reports_core_sizes_from_enclosed_volumes() -> None:
+    origin = (8.0, -4.0, 16.0)
+    source = _plc_cube(origin)
+    spec = _specification(source)
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions())
+        .plan(source, spec, coordinate_contract=SpatialCoordinateContract.si())
+        .execute(prove=True)
+    )
+    connectivity = result.mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    points = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    exact = [tuple(Fraction(value) for value in row) for row in points.tolist()]
+    reference = (Fraction(origin[0]), Fraction(origin[1]), Fraction(origin[2]))
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64).tolist()
+    vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64).tolist()
+    face_flux = [
+        sum(
+            (
+                determinant3(*triangle, reference)
+                for triangle in polytope_face_triangles(
+                    tuple(exact[vertex] for vertex in vertices[start:stop])
+                )
+            ),
+            Fraction(0),
+        )
+        for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
+    ]
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64).tolist()
+    faces = np.asarray(connectivity.cell_face_values, dtype=np.int64).tolist()
+    signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64).tolist()
+    volumes = [
+        abs(
+            sum(
+                (signs[slot] * face_flux[faces[slot]] for slot in range(start, stop)),
+                Fraction(0),
+            )
+        )
+        / 6
+        for start, stop in zip(cell_offsets[:-1], cell_offsets[1:], strict=True)
+    ]
+    assert sum(volumes) == 1
+    roles = next(
+        attribute
+        for attribute in result.attributes
+        if attribute.name == "octree_cell_role"
+    )
+    core_sizes = np.cbrt(
+        np.asarray(volumes, dtype=np.float64)[np.asarray(roles.values) == 0]
+    )
+    assert core_sizes.size > 0 and np.all(core_sizes > 0)
+    achieved = dict(result.compliance.achieved)
+    control = spec.size_controls[0].control_id
+    assert achieved[f"size:{control}:p50_cell_size"] == pytest.approx(
+        np.quantile(core_sizes, 0.5)
+    )
+    assert achieved[f"size:{control}:p95_cell_size"] == pytest.approx(
+        np.quantile(core_sizes, 0.95)
+    )
 
 
 def test_route_proof_is_identical_for_every_native_parallelism(

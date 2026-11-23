@@ -476,28 +476,53 @@ def _organization(
     )
 
 
-def _cell_volumes(native: meshcore.HexDominant, /) -> np.ndarray:
-    """Cell volumes by the divergence theorem over the face loops."""
+def _fan_sizes(native: meshcore.HexDominant, /) -> tuple[np.ndarray, np.ndarray]:
+    """Cell volumes and wall areas from the published oriented face loops."""
     offsets = np.asarray(native.face_offsets, dtype=np.int64)
-    values = np.asarray(native.face_vertices, dtype=np.int64)
+    values = np.asarray(native.face_vertices)
     points = np.asarray(native.points, dtype=np.float64)
     sizes = np.diff(offsets)
     rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
     following = np.arange(1, values.size + 1, dtype=np.int64)
     following[offsets[1:] - 1] = offsets[:-1]
-    first, second = points[values], points[values[following]]
-    flux = np.bincount(
-        rows,
-        np.einsum("ij,ij->i", first, np.cross(first, second)) / 6.0,
-        minlength=sizes.size,
+    origins = points[values[offsets[:-1]]]
+    corner_origins = origins[rows]
+    first = points[values] - corner_origins
+    second = points[values[following]] - corner_origins
+    twice_normals = np.cross(first, second)
+    twice_area = np.stack(
+        [
+            np.bincount(rows, twice_normals[:, axis], minlength=sizes.size)
+            for axis in range(3)
+        ],
+        axis=1,
     )
+    centers = np.stack(
+        [np.bincount(rows, first[:, axis], minlength=sizes.size) for axis in range(3)],
+        axis=1,
+    )
+    centers /= sizes[:, None]
     owner = np.asarray(native.face_owner, dtype=np.int64)
     neighbor = np.asarray(native.face_neighbor, dtype=np.int64)
     cells = np.asarray(native.cell_kinds).size
+    cell_offsets = np.asarray(native.cell_vertex_offsets)
+    cell_origins = points[np.asarray(native.cell_vertices)[cell_offsets[:-1]]]
     inner = neighbor >= 0
-    return np.bincount(owner, flux, minlength=cells) - np.bincount(
-        neighbor[inner], flux[inner], minlength=cells
+    # For a face fan, all triangles share the vertex-average center. Their
+    # determinants about a cell vertex factor into its displacement to
+    # that center and the sum of oriented triangle cross products.
+    owner_flux = np.sum(((origins - cell_origins[owner]) + centers) * twice_area, axis=1)
+    neighbor_flux = np.sum(
+        ((origins[inner] - cell_origins[neighbor[inner]]) + centers[inner])
+        * twice_area[inner],
+        axis=1,
     )
+    volumes = (
+        np.bincount(owner, owner_flux, minlength=cells)
+        - np.bincount(neighbor[inner], neighbor_flux, minlength=cells)
+    ) / 6.0
+    wall_areas = 0.5 * np.linalg.norm(twice_area[~inner], axis=1)
+    return volumes, wall_areas
 
 
 def _compliance(
@@ -508,22 +533,10 @@ def _compliance(
     native = published.native
     roles = np.asarray(native.cell_roles, dtype=np.int64)
     volume_control, boundary_control = _size_controls(specification)
-    core_sizes = np.cbrt(_cell_volumes(native)[roles == _CORE])
-    offsets = np.asarray(native.face_offsets, dtype=np.int64)
-    values = np.asarray(native.face_vertices, dtype=np.int64)
+    volumes, wall_areas = _fan_sizes(native)
+    core_sizes = np.cbrt(volumes[roles == _CORE])
+    wall_sizes = np.sqrt(wall_areas)
     points = np.asarray(native.points, dtype=np.float64)
-    # Wall face sizes: the square root of the area of each boundary loop.
-    sizes = np.diff(offsets)
-    rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
-    following = np.arange(1, values.size + 1, dtype=np.int64)
-    following[offsets[1:] - 1] = offsets[:-1]
-    twice = np.cross(points[values], points[values[following]])
-    area = np.stack(
-        [np.bincount(rows, twice[:, axis], minlength=sizes.size) for axis in range(3)],
-        axis=1,
-    )
-    wall = np.asarray(native.face_neighbor) < 0
-    wall_sizes = np.sqrt(0.5 * np.linalg.norm(area[wall], axis=1))
     policy = specification.size_compliance
     requested: list[tuple[str, float]] = []
     achieved: list[tuple[str, float]] = []
