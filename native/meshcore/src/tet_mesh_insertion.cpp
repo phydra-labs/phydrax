@@ -3234,8 +3234,14 @@ bool TetMesh::link_interior_cone(std::uint32_t local_count) {
       auto& entry = cone_edges_[probe];
       if (entry.key == key) {
         if (entry.cell < 0 || static_cast<std::size_t>(entry.cell) == row) return false;
+        auto& owner = cone_faces_[entry.cell];
+        const int* owner_facet = kOrientedFacet[owner.apex];
+        if (owner.vertices[owner_facet[(entry.face + 1) % 3]] != b ||
+            owner.vertices[owner_facet[(entry.face + 2) % 3]] != a) {
+          return false;
+        }
         cone.locals[j] = static_cast<std::uint32_t>(entry.cell);
-        cone_faces_[entry.cell].locals[entry.face] = static_cast<std::uint32_t>(row);
+        owner.locals[entry.face] = static_cast<std::uint32_t>(row);
         entry.cell = -1;
         --unmatched;
       } else {

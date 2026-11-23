@@ -35,6 +35,9 @@ namespace phx::mc {
 namespace detail {
 class LocalIncidence;
 }
+namespace test {
+struct TetMeshInteriorInsertion;
+}
 struct TetQualityRequest;
 // A sorted pair of vertex IDs (an edge), hashed for the segment lookups of
 // refinement and improvement (find, insert, erase; never iterated).
@@ -770,6 +773,7 @@ class TetMesh {
       std::span<const std::uint64_t>, std::int64_t&, std::int64_t&,
       std::int64_t&, std::int64_t&, bool&);
   friend class detail::LocalIncidence;
+  friend struct test::TetMeshInteriorInsertion;
   // Internal quality passes do not consume ancestry; public snapshot always
   // retains the complete ordered lineage.
   TetEditStatus snapshot_internal(TetMeshSnapshot& output,

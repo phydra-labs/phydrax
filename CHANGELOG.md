@@ -95,12 +95,12 @@
 - Tetrahedral refinement screens the live complex after lattice seeding
   instead of maintaining a queue of cells that may be removed by later
   seeds. The first refinement round keeps its Hilbert and cell-ID order.
-- Native interior tetrahedral insertion resolves the cone's adjacency and
-  slot capacity before mutating the mesh or publishing fresh IDs.
+- Native interior tetrahedral insertion checks reciprocal cone edge directions
+  and slot capacity before mutating the mesh or publishing fresh IDs.
 - Planar legalization retains unchanged neighbor links, preserving
   connectivity, canonical ordering, and constraint ancestry.
 - Native CAD failures before volume recovery report the surface stage and
-  its curve and face findings instead of a recovery status that was never run.
+  retain every curve interval and face finding with per-entity counts.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6

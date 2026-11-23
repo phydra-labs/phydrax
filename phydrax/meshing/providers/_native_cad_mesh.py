@@ -48,7 +48,7 @@ from ...discretization._topology import sorted_unique_rows
 from ...discretization.fem._reference import lagrange_element
 from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import MeshingFailure, MeshingFailureCategory
+from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingFailureEvidence
 from .._native_cad_certificate import NativeCadSurfaceWitness
 from .._native_cad_records import _native_cad_regional_surface, native_cad_records
 from .._native_cad_shell import source_shell
@@ -777,6 +777,51 @@ def _organization(
     )
 
 
+def _cad_surface_failure(solid: CadSolidResult, deviation: float, /) -> MeshingFailure:
+    curves = solid.surface.curve_failures
+    faces = solid.surface.face_failures
+    if faces.size:
+        row = faces[0]
+        first = (
+            f"; first face {int(row['face'])}, reason {int(row['reason'])}, "
+            f"triangle {int(row['triangle'])}, refusal {int(row['refusal_kind'])}"
+        )
+    elif curves.size:
+        first = f"; first unresolved interval on curve {int(curves[0]['curve'])}"
+    else:
+        first = ""
+    achieved = {
+        "unresolved_curve_intervals": float(curves.size),
+        "face_findings": float(faces.size),
+    }
+    findings: list[str] = []
+    for kind, bank in (("curve", curves), ("face", faces)):
+        fields = bank.dtype.names
+        if fields is None:
+            raise RuntimeError("Native CAD failure banks require named fields.")
+        for row in bank:
+            count_key = f"{kind}_{int(row[kind])}_findings"
+            achieved[count_key] = achieved.get(count_key, 0.0) + 1.0
+            findings.append(
+                f"{kind}_finding:"
+                + ":".join(f"{name}={row[name].tolist()!r}" for name in fields)
+            )
+    return MeshingFailure(
+        MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+        "Native CAD surface construction did not reach volume recovery "
+        f"(status {solid.status.name}, {curves.size} unresolved curve "
+        f"intervals and {faces.size} face findings{first}).",
+        provider_code="native_cad_surface_unresolved",
+        stage="surface_meshing",
+        evidence=MeshingFailureEvidence(
+            requested_quantities={"maximum_deviation": deviation},
+            achieved_quantities=achieved,
+            checkpoint="cad_surface_construction",
+            logical_findings=findings,
+        ),
+    )
+
+
 def execute_cad_solid(
     prepared: _PreparedDirectBRepCadVolume, /
 ) -> NativeMeshConstruction:
@@ -803,26 +848,7 @@ def execute_cad_solid(
     stats = volume.stats[0]
     if volume.tetrahedra.shape[0] == 0:
         if int(stats["recovery_attempts"]) == 0:
-            curves = solid.surface.curve_failures
-            faces = solid.surface.face_failures
-            if faces.size:
-                row = faces[0]
-                first = (
-                    f"; first face {int(row['face'])}, reason {int(row['reason'])}, "
-                    f"triangle {int(row['triangle'])}, refusal {int(row['refusal_kind'])}"
-                )
-            elif curves.size:
-                first = f"; first unresolved interval on curve {int(curves[0]['curve'])}"
-            else:
-                first = ""
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Native CAD surface construction did not reach volume recovery "
-                f"(status {solid.status.name}, {curves.size} unresolved curve "
-                f"intervals and {faces.size} face findings{first}).",
-                provider_code="native_cad_surface_unresolved",
-                stage="surface_meshing",
-            )
+            raise _cad_surface_failure(solid, deviation)
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             "Native CAD volume recovery refused the surface (status "

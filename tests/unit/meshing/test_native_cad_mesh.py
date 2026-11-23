@@ -1082,18 +1082,22 @@ def test_revolved_surfaces_pass_native_verifiers(name: str, size: float) -> None
 
 
 def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None:
+    from phydrax.meshing.providers._native_cad_mesh import _cad_surface_failure
+
     model = cad_geometry_bundle(domain).model
     # A 1e-5 tolerance on curve 0 alone samples it far finer than the curves
     # meeting it at its corners; the fixed short/long chord corners leave
     # refusal records on the faces through it.
     curve_tolerances = np.full((model.curve_nodes.size,), np.inf, dtype=np.float64)
     curve_tolerances[0] = 1e-5
-    result = cad_mesh(
+    solid = cad_mesh_solid(
         model,
         np.full((model.surface_nodes.size,), 0.12, dtype=np.float64),
         np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
         curve_tolerances,
+        min_dihedral_degrees=0.0,
     )
+    result = solid.surface
     assert result.status is MeshcoreStatus.UNRESOLVED
     failures = result.face_failures
     assert failures.size == np.sum(result.face_stats["unresolved_triangles"])
@@ -1119,6 +1123,19 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
             np.sort(failure["segment_parameters"]),
             result.curve_parameters[start : start + 2],
         )
+
+    error = _cad_surface_failure(solid, 0.4)
+    counts = dict(error.evidence.achieved_quantities)
+    assert counts["face_findings"] == failures.size
+    assert counts["unresolved_curve_intervals"] == 0
+    for face in np.unique(failures["face"]):
+        assert counts[f"face_{int(face)}_findings"] == np.count_nonzero(
+            failures["face"] == face
+        )
+    for finding, row in zip(error.evidence.logical_findings, failures, strict=True):
+        assert finding.startswith(f"face_finding:face={int(row['face'])}:")
+        assert f":triangle={int(row['triangle'])}:" in finding
+        assert f":triangle_uv={row['triangle_uv'].tolist()!r}:" in finding
 
 
 def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(

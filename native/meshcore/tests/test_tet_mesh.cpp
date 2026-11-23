@@ -21,6 +21,17 @@
 #include "refine3d.hpp"
 #include "tet_mesh_handle.hpp"
 
+namespace phx::mc::test {
+struct TetMeshInteriorInsertion {
+  static TetEditStatus insert(TetMesh& mesh, const double* point,
+                              std::span<const std::int32_t> cells,
+                              std::span<const BoundaryFacet> boundary,
+                              std::vector<std::int32_t>& created) {
+    return mesh.insert_interior_vertex(point, 0.0, cells, boundary, {}, created);
+  }
+};
+}  // namespace phx::mc::test
+
 namespace {
 struct TetGeometrySnapshot {
   std::vector<double> points;
@@ -4925,6 +4936,89 @@ void recovery_handoff_matches_array_build() {
   check_handoff(small_angle_wedge());
 }
 
+void interior_cone_refuses_same_direction_edges_atomically() {
+  using namespace phx::mc;
+  // A square bipyramid with an integer ring (512 equator vertices plus
+  // both apices) exercises sparse cone linking without nearly flat cells.
+  constexpr int32_t side = 128;
+  constexpr int32_t ring = 4 * side;
+  constexpr int32_t upper = ring, lower = ring + 1;
+  std::vector<double> points;
+  constexpr double half = side / 2.0;
+  points.reserve(3 * (ring + 2));
+  for (int32_t i = 0; i < side; ++i) points.insert(points.end(), {-half + i, -half, 0.0});
+  for (int32_t i = 0; i < side; ++i) points.insert(points.end(), {half, -half + i, 0.0});
+  for (int32_t i = 0; i < side; ++i) points.insert(points.end(), {half - i, half, 0.0});
+  for (int32_t i = 0; i < side; ++i) points.insert(points.end(), {-half, half - i, 0.0});
+  points.insert(points.end(), {0.0, 0.0, half, 0.0, 0.0, -half});
+  std::vector<int32_t> tetrahedra;
+  tetrahedra.reserve(4 * ring);
+  std::vector<int32_t> faces, face_sources;
+  faces.reserve(6 * ring);
+  face_sources.reserve(2 * ring);
+  const auto point = [&](int32_t v) { return points.data() + 3 * v; };
+  for (int32_t i = 0; i < ring; ++i) {
+    const int32_t next = (i + 1) % ring;
+    const bool positive = orient3d(point(upper), point(lower), point(i), point(next)) > 0;
+    const int32_t tet[4]{upper, lower, positive ? i : next, positive ? next : i};
+    tetrahedra.insert(tetrahedra.end(), tet, tet + 4);
+    for (int apex = 0; apex < 2; ++apex) {
+      int32_t face[3];
+      oriented_facet(tet, apex, face);
+      faces.insert(faces.end(), face, face + 3);
+      face_sources.push_back(2 * i + apex);
+    }
+  }
+  const std::vector<int32_t> regions(ring, 0);
+  TetMesh mesh, control;
+  const auto setup = [&](TetMesh& state) {
+    return state.build(points, tetrahedra, regions, faces, face_sources, {}, {});
+  };
+  const auto first = setup(mesh);
+  const auto second = setup(control);
+  PHX_CHECK(first == PHX_MC_OK && second == PHX_MC_OK);
+  if (first != PHX_MC_OK || second != PHX_MC_OK) return;
+  std::vector<int32_t> cells;
+  std::vector<BoundaryFacet> boundary;
+  for (std::size_t slot = 0; slot < mesh.complex().tets.size(); ++slot) {
+    const auto row = static_cast<int32_t>(slot);
+    const auto& tet = mesh.tet(row);
+    if (!mesh.complex().live(row) || is_ghost(tet)) continue;
+    cells.push_back(row);
+    for (int face = 0; face < 4; ++face) {
+      const int32_t outside = tet.n[face];
+      if (!is_ghost(mesh.tet(outside))) continue;
+      boundary.push_back({row, face, outside, neighbor_slot(mesh.tet(outside), row)});
+    }
+  }
+  PHX_CHECK(boundary.size() == 2 * ring);
+  if (boundary.size() != 2 * ring) return;
+  // Supply one genuine reciprocal facet from the opposite side. The
+  // undirected ring still pairs, but its three edge orientations do not.
+  const auto original = boundary.front();
+  boundary.front() = {original.outside, original.back, original.tet, original.slot};
+  constexpr double center[3]{0.0, 0.0, 0.0};
+  std::vector<int32_t> created;
+  const auto generation = mesh.generation();
+  const auto refused = test::TetMeshInteriorInsertion::insert(mesh, center, cells, boundary, created);
+  PHX_CHECK(refused == TetEditStatus::kStaleGeneration);
+  if (refused != TetEditStatus::kStaleGeneration) return;
+  PHX_CHECK(created.empty());
+  PHX_CHECK(mesh.generation() == generation);
+  check_same_state(mesh, control, "sparse cone refusal");
+
+  // The next valid insertion must allocate exactly the same stable IDs
+  // as one with no previous refusal.
+  boundary.front() = original;
+  std::vector<int32_t> control_created;
+  PHX_CHECK(test::TetMeshInteriorInsertion::insert(mesh, center, cells, boundary, created) ==
+            TetEditStatus::kApplied);
+  PHX_CHECK(test::TetMeshInteriorInsertion::insert(control, center, cells, boundary, control_created) ==
+            TetEditStatus::kApplied);
+  PHX_CHECK(mesh.complex().audit());
+  check_same_state(mesh, control, "sparse cone retry");
+}
+
 }  // namespace
 
 int main() {
@@ -4953,5 +5047,6 @@ int main() {
   periodic_closure_accepts_edit_touching_one_orbit_copy();
   flat_build_matches_reference_sets();
   recovery_handoff_matches_array_build();
+  interior_cone_refuses_same_direction_edges_atomically();
   return phx::mc::test::finish("test_tet_mesh");
 }
