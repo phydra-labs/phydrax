@@ -111,11 +111,24 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                         const CadVolumeControls& controls, CadVolumeMesh& result,
                         const CadForcedRefusal* forced = nullptr);
 
+// Retained chart-local results for one native surface call and its retries.
+// The caller keeps geometry and face controls fixed across the passes.
+struct CadFaceRetryWindow {
+  static constexpr std::size_t capacity = 8;
+  struct Entry {
+    CadFaceMesh mesh;
+    std::size_t retained_bytes = 0;
+  };
+  std::array<Entry, capacity> faces;
+  std::size_t retained_bytes = 0;
+};
+
 // graded_pole_rings and proximity (null: none): solid route (cad_mesh_face).
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& result, bool graded_pole_rings = false,
                          const cad::ProximityField* proximity = nullptr,
-                         int32_t parallelism = 1);
+                         int32_t parallelism = 1, CadFaceRetryWindow* retry = nullptr,
+                         const CadCurveDiscretization* previous_curves = nullptr);
 
 }  // namespace phx::mc

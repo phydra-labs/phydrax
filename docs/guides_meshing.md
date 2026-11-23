@@ -1138,6 +1138,10 @@ then at most one retry on their source curves. Every incident chart uses the
 same added samples. The minimum spacing and sag checks still apply. A
 successful first pass is not rebuilt; on refusal, initial and final face
 findings are reported separately.
+
+For small solids, retries reuse chart meshes whose incident curve sample
+banks are bitwise unchanged, subject to a bounded temporary cache. Assembly
+still uses the final shared bank and assigns global indices in source order.
 Native work counters describe the emitted curve and face banks. Discarded
 curve proposals contribute to the solid's curve-phase time, not to the
 emitted bank's evaluation counts.

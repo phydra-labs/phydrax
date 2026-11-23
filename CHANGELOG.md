@@ -106,6 +106,8 @@
 - Native CAD retries blocked faces with bounded subdivision of shared source
   chords. First-pass findings remain separate from the final result, and
   requested sizing and fidelity limits are unchanged.
+- Bounded CAD retries reuse chart meshes with unchanged incident curve samples
+  and preserve source-order assembly against the refined shared curve bank.
 - Hex-dominant size compliance measures volumes and wall areas from the
   published face fans, including warped walls and cells without an ordered
   corner list. Compliance and result identities reflect the corrected

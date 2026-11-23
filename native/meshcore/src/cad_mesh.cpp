@@ -5,6 +5,7 @@
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numbers>
 #include <utility>
@@ -125,12 +126,42 @@ void morton_reorder(CadSurfaceMesh& mesh) {
   reorder(mesh.facet_regions, order);
 }
 
+std::size_t face_storage(const CadFaceMesh& mesh) {
+  const auto bytes = []<typename T>(const std::vector<T>& values) {
+    return values.capacity() * sizeof(T);
+  };
+  return sizeof(mesh) + bytes(mesh.vertices) + bytes(mesh.triangles) +
+         bytes(mesh.slivers) + bytes(mesh.boundary_edges) + bytes(mesh.pole_sectors) +
+         bytes(mesh.protected_pole_edges) + bytes(mesh.refinement_failures);
+}
+
+std::array<bool, CadFaceRetryWindow::capacity> changed_faces(
+    const phx_mc_cad_model& model, const CadCurveDiscretization& before,
+    const CadCurveDiscretization& after) {
+  std::array<bool, CadFaceRetryWindow::capacity> changed{};
+  for (int64_t loop = 0; loop < model.loop_count; ++loop) {
+    auto& dirty = changed[model.loop_surfaces[loop]];
+    for (int64_t use = model.loop_use_offsets[loop];
+         !dirty && use < model.loop_use_offsets[loop + 1]; ++use) {
+      if (model.use_kinds[use] != 0) continue;
+      const int32_t curve = model.use_entities[use];
+      const int64_t left = before.offsets[curve], right = after.offsets[curve];
+      const int64_t length = after.offsets[curve + 1] - right;
+      dirty = before.offsets[curve + 1] - left != length ||
+              std::memcmp(before.parameters + left, after.parameters + right,
+                          static_cast<std::size_t>(length) * sizeof(double)) != 0;
+    }
+  }
+  return changed;
+}
+
 }  // namespace
 
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& output, bool graded_pole_rings,
-                         const cad::ProximityField* proximity, int32_t parallelism) {
+                         const cad::ProximityField* proximity, int32_t parallelism,
+                         CadFaceRetryWindow* retry, const CadCurveDiscretization* previous_curves) {
   const auto& model = geometry.model();
   if (parallelism < 1 || (model.surface_count && (!sizes || !tolerances)) ||
       !(theta > 0.0) || !std::isfinite(theta))
@@ -139,6 +170,8 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
       model.curve_count > std::numeric_limits<int32_t>::max() ||
       model.corner_count > std::numeric_limits<int32_t>::max()) return PHX_MC_INDEX_RANGE_ERROR;
   const int32_t valid = validate_cad_curve_discretization(model, curves);
+  if (retry && model.surface_count > static_cast<int64_t>(CadFaceRetryWindow::capacity))
+    return PHX_MC_INVALID_ARGUMENT;
   if (valid != PHX_MC_OK) return valid;
   for (int64_t face = 0; face < model.surface_count; ++face)
     if (!(sizes[face] > 0.0) || !(tolerances[face] > 0.0) ||
@@ -284,10 +317,20 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     return PHX_MC_OK;
   };
 
+  // A face reads only its incident curves, by curve-local sample index.
+  // Always assemble against the new global bank, even for a reused chart.
+  const auto changed = retry && previous_curves
+      ? changed_faces(model, *previous_curves, curves)
+      : std::array<bool, CadFaceRetryWindow::capacity>{};
+  const auto reusable = [&](std::size_t face) {
+    return retry && previous_curves && retry->faces[face].retained_bytes != 0 && !changed[face];
+  };
+  constexpr std::size_t kRetainedByteLimit = 8 * 1024 * 1024;
+
   int32_t overall = PHX_MC_OK;
   // Curves are fixed before any face is prepared. Bound the unassembled
   // work, and consume its statuses and records in the original face order.
-  constexpr std::size_t kFaceWindow = 8;
+  constexpr std::size_t kFaceWindow = CadFaceRetryWindow::capacity;
   const std::size_t window = parallelism == 1 ? 1 : kFaceWindow;
   const auto face_count = static_cast<std::size_t>(model.surface_count);
   for (std::size_t first = 0; first < face_count; first += window) {
@@ -296,6 +339,10 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     std::array<int32_t, kFaceWindow> outcomes;
     const auto prepare = [&](std::size_t lane) {
       const auto face = static_cast<int32_t>(first + lane);
+      if (reusable(static_cast<std::size_t>(face))) {
+        outcomes[lane] = PHX_MC_OK;
+        return;
+      }
       outcomes[lane] = guarded([&]() -> int32_t {
         const GradualNearestScope mode;
         if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -317,7 +364,9 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     mesh.face_ns += elapsed_ns(face_start);
     for (std::size_t lane = 0; lane < count; ++lane) {
       const int32_t outcome = outcomes[lane];
-      const auto& local = staged[lane];
+      const auto face = first + lane;
+      const bool reused = reusable(face);
+      const auto& local = reused ? retry->faces[face].mesh : staged[lane];
       if (outcome != PHX_MC_OK && outcome != PHX_MC_UNRESOLVED) return outcome;
       if (local.failure.reason != 0) {
         output = CadSurfaceMesh{};
@@ -326,8 +375,20 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
         return PHX_MC_UNRESOLVED;
       }
       if (outcome == PHX_MC_UNRESOLVED) overall = outcome;
-      const int32_t appended = append_face(static_cast<int32_t>(first + lane), local);
+      const int32_t appended = append_face(static_cast<int32_t>(face), local);
       if (appended != PHX_MC_OK) return appended;
+      if (retry && !reused) {
+        auto& entry = retry->faces[face];
+        retry->retained_bytes -= entry.retained_bytes;
+        entry = {};
+        if (outcome == PHX_MC_OK) {
+          const auto bytes = face_storage(local);
+          if (bytes <= kRetainedByteLimit - retry->retained_bytes) {
+            entry = {std::move(staged[lane]), bytes};
+            retry->retained_bytes += bytes;
+          }
+        }
+      }
       staged[lane] = CadFaceMesh{};
     }
   }

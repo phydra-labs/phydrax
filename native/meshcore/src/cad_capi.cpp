@@ -64,11 +64,16 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
   if (curve_status != PHX_MC_OK && curve_status != PHX_MC_UNRESOLVED) return curve_status;
   if (candidate.curves.offsets.size() != static_cast<std::size_t>(model.curve_count) + 1)
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
-  const auto build_faces = [&](const phx::mc::cad::CurveDiscretization& curves) {
+  phx::mc::CadFaceRetryWindow window;
+  auto* retry = refine_shared_curves &&
+      model.surface_count <= static_cast<int64_t>(phx::mc::CadFaceRetryWindow::capacity)
+      ? &window : nullptr;
+  const auto build_faces = [&](const phx::mc::cad::CurveDiscretization& curves,
+                               const phx::mc::CadCurveDiscretization* previous = nullptr) {
     return phx::mc::cad_mesh_surface(
         geometry, curves.view(), face_sizes, controls.face_tolerances,
         controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity,
-        parallelism);
+        parallelism, retry, previous);
   };
   int32_t surface_status = build_faces(candidate.curves);
   stats.face_ns = candidate.mesh.face_ns;
@@ -119,7 +124,8 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     }
     candidate.mesh = phx::mc::CadSurfaceMesh{};
     const auto face_start = Clock::now();
-    surface_status = build_faces(refined);
+    const auto previous = (candidate.refinement_retries == 0 ? initial : candidate.curves).view();
+    surface_status = build_faces(refined, &previous);
     if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED)
       return surface_status;
     ++candidate.refinement_retries;
