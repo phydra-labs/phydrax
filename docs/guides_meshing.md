@@ -2996,6 +2996,8 @@ schedule until native periodic local commits exist.
 Host preparation gathers fixed-width edge and facet keys in whole tables, then
 sorts the global vertex IDs within each row without changing entity order.
 Variable-width polyhedral faces retain trailing padding outside their active IDs.
+Tetrahedral preparation retains the constrained source facets and their group
+IDs; it does not keep a second lookup table for all face IDs and classes.
 
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.

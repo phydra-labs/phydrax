@@ -446,8 +446,6 @@ class _NativeState:
     protected_edge_ids: set[tuple[int, int]]
     source_edge_ids: dict[tuple[int, int], int]
     edge_classes: dict[tuple[int, int], int]
-    face_classes: dict[tuple[int, int, int], int]
-    source_face_ids: dict[tuple[int, int, int], int]
     source_face_group_rows: dict[int, int]
     source_segment_group_rows: dict[int, int]
     # Source vertex IDs carrying each facet group row and segment group row.
@@ -1876,14 +1874,6 @@ def _prepare_native_state(
     protected_edge_ids = {
         _edge_key(edge_keys[row].tolist()) for row in np.flatnonzero(protected).tolist()
     }
-    face_id_by_key = {
-        _face_key(row): int(identifier)
-        for row, identifier in zip(face_keys.tolist(), face_ids.tolist(), strict=True)
-    }
-    face_class_by_key = {
-        _face_key(row): int(value)
-        for row, value in zip(face_keys.tolist(), facet_codes.tolist(), strict=True)
-    }
 
     constrained_faces = _constrained_source_facets(
         mesh, source_cells, source_cell_ids, regions, face_ids, face_keys, facet_codes
@@ -2157,8 +2147,6 @@ def _prepare_native_state(
         protected_edge_ids=protected_edge_ids,
         source_edge_ids=edge_id_by_key,
         edge_classes=edge_class_by_key,
-        face_classes=face_class_by_key,
-        source_face_ids=face_id_by_key,
         source_face_group_rows=source_face_group_rows,
         source_segment_group_rows=source_segment_group_rows,
         source_face_vertices=source_face_vertices,
