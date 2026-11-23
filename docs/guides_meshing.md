@@ -2993,6 +2993,10 @@ exact dyadic source stencils, source-cell lineage, and `TetraMetricEvidence`
 measured on the final mesh. A periodic lift is adapted by the host phase
 schedule until native periodic local commits exist.
 
+Host preparation gathers fixed-width edge and facet keys in whole tables, then
+sorts the global vertex IDs within each row without changing entity order.
+Variable-width polyhedral faces retain trailing padding outside their active IDs.
+
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.
 The default `None` is the unit band `[1/sqrt(2), sqrt(2)]`. A smaller value in

@@ -264,8 +264,10 @@ def source_family_blocks(
     )
 
 
-def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
-    """Return each intermediate entity's ordered vertex row."""
+def _face_rows(
+    connectivity: object, dimension: int
+) -> np.ndarray | tuple[np.ndarray, ...]:
+    """Return fixed-width connectivity in bulk and packed faces as slices."""
     match connectivity, dimension:
         case SimplicialConnectivity(), _ if 0 < dimension < connectivity.dimension:
             rows = np.asarray(connectivity.entities[dimension], dtype=np.int64)
@@ -291,7 +293,7 @@ def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
             rows = np.asarray(connectivity.faces, dtype=np.int64)
         case _:
             raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
-    return tuple(rows)
+    return rows
 
 
 def _padded_keys(
@@ -916,6 +918,12 @@ def entity_keys(mesh: CellMesh, dimension: int, /) -> np.ndarray:
         return np.asarray(mesh.entity_set(target).entity_ids, dtype=np.int64)[:, None]
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     rows = _face_rows(mesh.connectivity, target)
+    if isinstance(rows, np.ndarray):
+        if rows.shape[0] == 0:
+            return np.empty((0, target + 1), dtype=np.int64)
+        keys = vertex_ids[rows]
+        keys.sort(axis=1)
+        return keys
     width = max((np.asarray(row).size for row in rows), default=target + 1)
     return _padded_keys(rows, vertex_ids, width)
 
