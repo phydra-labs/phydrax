@@ -960,7 +960,8 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   if (created != PHX_MC_OK) return created;
   TetMesh& state = tet_mesh_state(*handle);
   const int32_t refined = refine_mesh(state, controls.radius_edge_bound, targets,
-                                      stats.refine_inserted, stats.refine_unmet);
+                                      stats.refine_inserted, stats.refine_unmet,
+                                      controls.parallelism);
   if (refined != PHX_MC_OK && refined != PHX_MC_UNRESOLVED) return refined;
   const TetQualityRequest quality{controls.radius_edge_bound, controls.minimum_dihedral_degrees,
                                   controls.minimum_relative_determinant};

@@ -64,6 +64,7 @@ struct CadVolumeControls {
   double minimum_relative_determinant = 0.0;
   int32_t geometry_order = 1;
   const cad::ProximityField* proximity = nullptr;
+  std::uint32_t parallelism = 1;
 };
 
 // The fixed-boundary tetrahedralization of the assembled surface. Points

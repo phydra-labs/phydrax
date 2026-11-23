@@ -282,6 +282,7 @@ extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
           volume->radius_edge_bound, volume->min_dihedral_degrees,
           volume->min_relative_determinant, volume->geometry_order};
       if (!field.empty()) volume_controls.proximity = &field;
+      volume_controls.parallelism = static_cast<std::uint32_t>(parallelism);
       const phx_mc_cad_volume_stats timings = candidate->volume.stats;
       const int32_t solid = phx::mc::cad_mesh_volume(geometry, candidate->curves, candidate->mesh,
                                                      controls->face_sizes, volume_controls,
