@@ -416,6 +416,14 @@ report the actual minimum and the number of triangles below the requested target
   0.517 s for tets. All native connectivity IDs are invariant under worker
   requests; certified donors pass the independent check. These are assembly
   clocks, not cold process or proof times.
+- F14 conforming Voronoi remains sequential. On the shared source geometry
+  and archived size controls, all 32 native rows met their timing and quality
+  limits against VoroCrust with 1, 2, 4, and 8 requested threads; 31 of 32
+  paired comparisons pass. The fastest small Steinmetz 4-thread reference
+  had one independent convexity finding. Native mesh and evidence IDs are
+  invariant across worker requests. Output counts differ, and the large
+  sphere retains the archived 5,000-cell reference target; these times
+  compare candidate construction, not equal-cell throughput or proof.
 - Periodic Delaunay and fixed-boundary recovery remain sequential in the
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
