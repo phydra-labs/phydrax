@@ -3141,6 +3141,60 @@ def test_stalled_adaptation_reports_typed_unmet_edges() -> None:
     assert all(edge.vertex_ids in target_edges for edge in evidence.unmet_edges)
 
 
+def test_stalled_metric_adaptation_has_no_moves_on_unchanged_continuation() -> None:
+    from phydrax.meshing._tetra_metric import (
+        _adapted_evidence,
+        _LOWER,
+        _metric_adapt_inputs,
+    )
+
+    # A late relocation used to reopen ordinary moves on this anisotropic cube.
+    tensor = np.diag(np.asarray((3.0, 9.0, 12.0), dtype=np.float64))
+    state = _state(_source(), tensor)
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        source_id, revision, map_id, frame_id = state.source_identity
+        banks.update(
+            lower=_LOWER,
+            topology_operations=True,
+            relocation=True,
+            source_id=source_id,
+            source_revision=revision,
+            source_map_id=map_id,
+            frame_id=frame_id,
+        )
+        first = native.metric_adapt(int(state.snapshot.generation), **banks)
+        terminal = native.arrays()
+        evidence = _adapted_evidence(state, first, terminal, _LOWER)
+        assert evidence.status is TetraMetricStatus.STALLED
+        assert evidence.out_of_range_edges > 0
+
+        banks.update(
+            vertex_ids=first.vertex_ids,
+            vertex_target_ids=first.vertex_target_ids,
+            stencil_offsets=first.stencil_offsets,
+            stencil_rows=first.stencil_rows,
+            stencil_weights=first.stencil_weights,
+            cell_ids=first.cell_ids,
+            cell_blocks=first.cell_blocks,
+            cell_target_ids=first.cell_target_ids,
+            ancestry_offsets=first.ancestry_offsets,
+            ancestry_ids=first.ancestry_ids,
+            ancestry_kinds=first.ancestry_kinds,
+            next_ids=(2**40,) * 4,
+        )
+        second = native.metric_adapt(int(terminal.generation), **banks)
+        continued = native.arrays()
+        repeated = _adapted_evidence(state, second, continued, _LOWER)
+        assert repeated.status is TetraMetricStatus.STALLED
+        assert repeated.out_of_range_edges == evidence.out_of_range_edges
+        assert continued.generation == terminal.generation
+        np.testing.assert_array_equal(continued.points, terminal.points)
+        np.testing.assert_array_equal(continued.tetrahedra, terminal.tetrahedra)
+        np.testing.assert_array_equal(continued.vertex_ids, terminal.vertex_ids)
+        np.testing.assert_array_equal(continued.cell_ids, terminal.cell_ids)
+
+
 @pytest.mark.parametrize("layout", ("C", "F", "strided"))
 @pytest.mark.parametrize("explicit_removed", (False, True))
 def test_multi_pair_collapse_edit_commits_through_the_native_wrapper(
