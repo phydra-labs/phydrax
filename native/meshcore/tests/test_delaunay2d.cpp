@@ -392,6 +392,28 @@ void test_regular_random() {
   }
 }
 
+void test_caller_owned_cells_refuse_insufficient_capacity_atomically() {
+  const double points[]{0, 0, 2, 0, 0, 2, 0.5, 0.5, 0, 0};
+  std::array<int32_t, 9> cells;
+  std::array<int32_t, 5> vertex_map;
+  cells.fill(-1);
+  vertex_map.fill(-1);
+  int64_t count = -1;
+  PHX_CHECK(phx_mc_delaunay_2d_into(5, points, 2, cells.data(), vertex_map.data(), &count) ==
+            PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(count == -1);
+  PHX_CHECK(std::all_of(cells.begin(), cells.end(), [](int32_t value) { return value == -1; }));
+  PHX_CHECK(std::all_of(vertex_map.begin(), vertex_map.end(),
+                        [](int32_t value) { return value == -1; }));
+  PHX_CHECK(phx_mc_delaunay_2d_into(5, points, 3, cells.data(), vertex_map.data(), &count) ==
+            PHX_MC_OK);
+  PHX_CHECK(count == 3);
+  const std::array<int32_t, 9> expected_cells{0, 1, 3, 0, 3, 2, 1, 2, 3};
+  const std::array<int32_t, 5> expected_vertex_map{0, 1, 2, 3, 0};
+  PHX_CHECK(cells == expected_cells);
+  PHX_CHECK(vertex_map == expected_vertex_map);
+}
+
 void test_performance() {
   const std::vector<double> points = random_points(100000, 1234);
   const auto start = std::chrono::steady_clock::now();
@@ -415,6 +437,7 @@ int main() {
   test_cocircular();
   test_degenerate_and_arguments();
   test_duplicates();
+  test_caller_owned_cells_refuse_insufficient_capacity_atomically();
   test_determinism();
   test_regular_zero_weights_is_delaunay();
   test_regular_redundant();

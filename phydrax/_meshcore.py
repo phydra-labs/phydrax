@@ -1840,6 +1840,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_tet_mesh_free": (None, (_P,)),
     "phx_mc_delaunay_2d": (_I32, (_I64, _P, _P)),
+    "phx_mc_delaunay_2d_into": (_I32, (_I64, _P, _I64, _P, _P, _P)),
     "phx_mc_regular_2d": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P, _I32)),
     "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P, _I32)),
@@ -2301,6 +2302,8 @@ def meshcore_exact_domain() -> tuple[int, int]:
 
 def _real_array(value: object, name: str, /) -> np.ndarray:
     array = np.asarray(value)
+    if array.dtype == np.dtype(np.float64):
+        return np.ascontiguousarray(array)
     if np.issubdtype(array.dtype, np.bool_) or not (
         np.issubdtype(array.dtype, np.floating) or np.issubdtype(array.dtype, np.integer)
     ):
@@ -4035,6 +4038,25 @@ def _triangulate(
     library = load_meshcore()
     point_array = _points(points, "points", width)
     count = point_array.shape[0]
+    if name == "phx_mc_delaunay_2d" and count <= 4096:
+        # A planar triangulation has at most 2n - 5 finite triangles.
+        # Bound the speculative buffer to 96 KiB; larger calls allocate
+        # only after native construction knows the exact count.
+        capacity = max(0, 2 * count - 5)
+        cells = np.empty((capacity, 3), dtype=np.int32)
+        vertex_map = np.empty((count,), dtype=np.int32)
+        written = ctypes.c_int64()
+        status = library["phx_mc_delaunay_2d_into"](
+            count,
+            point_array.ctypes.data,
+            capacity,
+            cells.ctypes.data,
+            vertex_map.ctypes.data,
+            ctypes.addressof(written),
+        )
+        if status != MeshcoreStatus.OK:
+            _raise_for_call(status, "delaunay_2d")
+        return cells[: written.value], vertex_map
     handle = ctypes.c_void_p()
     if weights is None:
         status = library[name](

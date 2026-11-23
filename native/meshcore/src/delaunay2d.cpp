@@ -17,8 +17,9 @@
 
 namespace phx::mc {
 
-int32_t triangulate_2d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, bool canonical, phx_mc_mesh** mesh) {
+static int32_t triangulate_2d_impl(int64_t point_count, const double* points,
+                                   const double* weights, bool weighted, bool canonical,
+                                   bool retain_points, phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -68,16 +69,17 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   if (status != PHX_MC_OK) {
     return status;
   }
-  std::vector<char> input_alive(static_cast<std::size_t>(point_count), 0);
-  for (std::size_t k = 0; k < count; ++k) {
-    input_alive[static_cast<std::size_t>(order[k])] = triangulation.vertex_triangle[k] >= 0;
-  }
-  for (int32_t& target : result->vertex_map) {
-    if (target >= 0 && input_alive[static_cast<std::size_t>(target)] == 0) {
-      target = -1;
+  // In the unweighted triangulation no distinct representative is hidden.
+  if (weighted) {
+    std::vector<char> input_alive(static_cast<std::size_t>(point_count), 0);
+    for (std::size_t k = 0; k < count; ++k) {
+      input_alive[static_cast<std::size_t>(order[k])] = triangulation.vertex_triangle[k] >= 0;
+    }
+    for (int32_t& target : result->vertex_map) {
+      if (target >= 0 && input_alive[static_cast<std::size_t>(target)] == 0) target = -1;
     }
   }
-  result->points.assign(points, points + 2 * point_count);
+  if (retain_points) result->points.assign(points, points + 2 * point_count);
   triangulation.finite_cells(result->cells);  // input indices (identities)
   if (canonical) {
     const int32_t canonicalized = canonicalize_cells(*result, 1);
@@ -85,6 +87,11 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   }
   *mesh = result.release();
   return PHX_MC_OK;
+}
+
+int32_t triangulate_2d(int64_t point_count, const double* points, const double* weights,
+                       bool weighted, bool canonical, phx_mc_mesh** mesh) {
+  return triangulate_2d_impl(point_count, points, weights, weighted, canonical, true, mesh);
 }
 
 }  // namespace phx::mc
@@ -96,6 +103,30 @@ int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points, phx_mc_mes
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::triangulate_2d(point_count, points, nullptr, false, true, mesh);
+  });
+}
+
+int32_t phx_mc_delaunay_2d_into(
+    int64_t point_count, const double* points, int64_t cell_capacity, int32_t* cells,
+    int32_t* vertex_map, int64_t* cell_count) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (!phx::mc::addressable(cell_capacity, 3, sizeof(int32_t)) || cell_count == nullptr ||
+        (cell_capacity != 0 && cells == nullptr) || (point_count > 0 && vertex_map == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    phx_mc_mesh* raw = nullptr;
+    const auto status =
+        phx::mc::triangulate_2d_impl(point_count, points, nullptr, false, true, false, &raw);
+    if (status != PHX_MC_OK) return status;
+    const std::unique_ptr<phx_mc_mesh> result(raw);
+    const auto count = result->cell_count();
+    if (count > cell_capacity) return PHX_MC_CAPACITY_EXCEEDED;
+    std::copy(result->cells.begin(), result->cells.end(), cells);
+    std::copy(result->vertex_map.begin(), result->vertex_map.end(), vertex_map);
+    *cell_count = count;
+    return PHX_MC_OK;
   });
 }
 

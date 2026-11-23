@@ -225,6 +225,13 @@ typedef struct phx_mc_mesh phx_mc_mesh;
 
 PHX_MC_API int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points,
                                       phx_mc_mesh** mesh);
+/* Canonical planar cells and vertex_map directly into disjoint caller
+ * buffers, without returning a mesh handle. cell_capacity is in triangles
+ * (3 indices each); vertex_map has point_count entries. Writes neither
+ * buffer nor cell_count on failure. */
+PHX_MC_API int32_t phx_mc_delaunay_2d_into(
+    int64_t point_count, const double* points, int64_t cell_capacity,
+    int32_t* cells, int32_t* vertex_map, int64_t* cell_count);
 PHX_MC_API int32_t phx_mc_regular_2d(int64_t point_count, const double* points,
                                      const double* weights, phx_mc_mesh** mesh);
 /* The 3D triangulations insert in rounds of conflict-free cavities on

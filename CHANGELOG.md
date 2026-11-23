@@ -99,6 +99,8 @@
   and slot capacity before mutating the mesh or publishing fresh IDs.
 - Planar legalization retains unchanged neighbor links, preserving
   connectivity, canonical ordering, and constraint ancestry.
+- Small native planar Delaunay calls export canonical cells and duplicate
+  mappings in one native call, using a bounded caller-owned buffer.
 - Native CAD failures before volume recovery report the surface stage and
   retain every curve interval and face finding with per-entity counts.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
