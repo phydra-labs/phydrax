@@ -417,13 +417,17 @@ report the actual minimum and the number of triangles below the requested target
   requests; certified donors pass the independent check. These are assembly
   clocks, not cold process or proof times.
 - F14 conforming Voronoi remains sequential. On the shared source geometry
-  and archived size controls, all 32 native rows met their timing and quality
-  limits against VoroCrust with 1, 2, 4, and 8 requested threads; 31 of 32
-  paired comparisons pass. The fastest small Steinmetz 4-thread reference
-  had one independent convexity finding. Native mesh and evidence IDs are
-  invariant across worker requests. Output counts differ, and the large
-  sphere retains the archived 5,000-cell reference target; these times
-  compare candidate construction, not equal-cell throughput or proof.
+  and archived size controls, all 32 native rows met the timing and archived
+  quality ceilings. Of the 32 comparisons against VoroCrust at 1/2/4/8
+  threads, 31 pass using the archived quality ceilings and 29 pass when
+  scored against the fastest retained reference meshes using the same
+  ledger metrics. On the small cube, Phydrax's maximum is 27 faces per cell
+  versus 25 at one reference thread and 26 at four. The fastest small
+  Steinmetz 4-thread reference had a sampled convexity finding. Native mesh
+  and evidence IDs are invariant across worker requests. Output counts
+  differ, and the large sphere retains the archived 5,000-cell reference
+  target. These times compare candidate construction, not equal-cell
+  throughput or proof.
 - Periodic Delaunay and fixed-boundary recovery remain sequential in the
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
