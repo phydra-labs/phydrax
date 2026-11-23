@@ -474,6 +474,13 @@ whole finite-element locator setup. The comparison above times queries only.
 
 ### Qualified sequential routes in the thread matrix
 
+- F7 implicit and input-mesh remeshing remain sequential: each edit reads
+  the surface topology produced by earlier edits. The measured MMGS and
+  CGAL isotropic-remeshing drivers are also serial. The original 13 serial
+  construction comparisons passed with separate two-direction certification.
+  On the integrated locator revision, all 13 cases returned byte-identical
+  native result banks and zero unmet constraints at worker requests of
+  1, 2, 4, and 8. This is worker invariance, not a parallel speedup claim.
 - F13 overset remains sequential. On the same ordered binary input, it beats
   TIOGA at 1, 2, 4, and 8 MPI ranks for all three hex and all three tet sizes
   (three interleaved calls per row). At the largest sizes and eight ranks, the
