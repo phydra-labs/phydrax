@@ -485,7 +485,8 @@ def _fan_sizes(native: meshcore.HexDominant, /) -> tuple[np.ndarray, np.ndarray]
     rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
     following = np.arange(1, values.size + 1, dtype=np.int64)
     following[offsets[1:] - 1] = offsets[:-1]
-    origins = points[values[offsets[:-1]]]
+    face_vertices = values[offsets[:-1]]
+    origins = points[face_vertices]
     corner_origins = origins[rows]
     first = points[values] - corner_origins
     second = points[values[following]] - corner_origins
@@ -505,21 +506,27 @@ def _fan_sizes(native: meshcore.HexDominant, /) -> tuple[np.ndarray, np.ndarray]
     owner = np.asarray(native.face_owner, dtype=np.int64)
     neighbor = np.asarray(native.face_neighbor, dtype=np.int64)
     cells = np.asarray(native.cell_kinds).size
-    cell_offsets = np.asarray(native.cell_vertex_offsets)
-    cell_origins = points[np.asarray(native.cell_vertices)[cell_offsets[:-1]]]
+    # Polyhedra have face loops but can omit the cell-vertex list.
     inner = neighbor >= 0
+    cell_vertices = np.full(cells, points.shape[0], dtype=np.int64)
+    np.minimum.at(cell_vertices, owner, face_vertices)
+    inner_neighbors = neighbor[inner]
+    np.minimum.at(cell_vertices, inner_neighbors, face_vertices[inner])
+    if np.any(cell_vertices == points.shape[0]):
+        raise RuntimeError("A native octree cell has no incident face.")
+    cell_origins = points[cell_vertices]
     # For a face fan, all triangles share the vertex-average center. Their
     # determinants about a cell vertex factor into its displacement to
     # that center and the sum of oriented triangle cross products.
     owner_flux = np.sum(((origins - cell_origins[owner]) + centers) * twice_area, axis=1)
     neighbor_flux = np.sum(
-        ((origins[inner] - cell_origins[neighbor[inner]]) + centers[inner])
+        ((origins[inner] - cell_origins[inner_neighbors]) + centers[inner])
         * twice_area[inner],
         axis=1,
     )
     volumes = (
         np.bincount(owner, owner_flux, minlength=cells)
-        - np.bincount(neighbor[inner], neighbor_flux, minlength=cells)
+        - np.bincount(inner_neighbors, neighbor_flux, minlength=cells)
     ) / 6.0
     wall_areas = 0.5 * np.linalg.norm(twice_area[~inner], axis=1)
     return volumes, wall_areas

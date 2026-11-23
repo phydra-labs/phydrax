@@ -107,8 +107,9 @@
   chords. First-pass findings remain separate from the final result, and
   requested sizing and fidelity limits are unchanged.
 - Hex-dominant size compliance uses volumes enclosed by the published face
-  fans. Compliance and result identities reflect the corrected measurements;
-  mesh geometry and topology are unchanged.
+  fans, including cells without an ordered corner list. Compliance and result
+  identities reflect the corrected measurements; mesh geometry and topology
+  are unchanged.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6

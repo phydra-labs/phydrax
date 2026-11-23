@@ -278,6 +278,28 @@ def test_route_proof_is_identical_for_every_native_parallelism(
     assert len(set(reports)) == 1
 
 
+def test_face_fan_volume_includes_trailing_face_only_polyhedron() -> None:
+    from phydrax.meshing.providers._native_octree_hex import _fan_sizes
+
+    mesh = _kernel_cube(())
+    assert mesh.status is meshcore.MeshcoreStatus.OK
+    # The native face-only polyhedron representation omits the optional
+    # ordered corners, but its outward faces still enclose the same volume.
+    offsets = mesh.cell_vertex_offsets.copy()
+    kinds = mesh.cell_kinds.copy()
+    kinds[-1] = 1
+    offsets[-1] = offsets[-2]
+    face_only = mesh._replace(
+        cell_kinds=kinds,
+        cell_vertex_offsets=offsets,
+        cell_vertices=mesh.cell_vertices[: offsets[-1]],
+    )
+
+    volumes, _ = _fan_sizes(face_only)
+    assert volumes[-1] > 0.0
+    assert np.sum(volumes) == pytest.approx(1.0, abs=1e-13)
+
+
 def test_kernel_layers_lie_at_their_thicknesses_from_every_adjacent_wall() -> None:
     mesh = _kernel_cube(_LAYERS)
 
