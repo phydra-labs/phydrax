@@ -1263,11 +1263,12 @@ are removed by flips and relocation to at least 15° minimum dihedral angle. No
 point is inserted closer to a vertex than a separation bound, so the
 refinement terminates by a packing argument; a refinement the bound refuses is
 an `UNRESOLVED` construction failure, never a silently coarser mesh.
-Construction is floating point with exact predicates. The result is accepted
-only after the certified facet deviation (failing facets re-seed the
-refinement), the profile topology and the volume certificates; its boundary
-coverage is the tubular-projection degree proof. Adaptive implicit volume
-discovery is distinct and must be selected explicitly as
+Construction uses floating point with exact predicates. The candidate retains
+the profile topology, feasibility checks, and facet-deviation checks that
+steer refinement (failing facets re-seed it). Local map validity, global
+embedding, two-directed source fidelity, and tubular-projection coverage are
+checked by `candidate.prove()` or `plan.execute(prove=True)`.
+Adaptive implicit volume discovery is distinct and must be selected explicitly as
 `implicit_adaptive_tetrahedral`; it is not a fallback for restricted Delaunay
 failure. A direct `BRepModel` volume request
 builds and accepts its parametric boundary mesh internally before CAD

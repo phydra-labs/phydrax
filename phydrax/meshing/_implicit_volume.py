@@ -28,13 +28,8 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec
-from ..discretization._cell_geometry_validity import (
-    cell_geometry_id,
-    CellValidityPolicy,
-    ComputedCellValidity,
-)
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh, TetrahedralConnectivity
-from ..geometry._global_embedding import ValidatedGlobalEmbedding
 from ..geometry._interval_enclosure import prepare_interval_function
 from ..geometry._interval_native import NativeIntervalProgram
 from ..geometry._rational import (
@@ -796,8 +791,8 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
     def construct(self, /) -> RestrictedImplicitConstruction:
         """The constructed arrays before publication.
 
-        `execute` publishes them as a `CellMesh` and runs the source-fidelity,
-        coverage, compliance and embedding certificates on it.
+        `execute` publishes a compliance-checked candidate. The acceptance
+        stage certifies its map validity, embedding, fidelity, and coverage.
         """
         return self._constructed(np.empty((0, 3), dtype=np.float64))
 
@@ -938,19 +933,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
                 "specification_compliance",
             )
         cell_regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int32)
-        # The exact global embedding is computed once here and passed to
-        # acceptance, which checks its inputs before the coverage proof uses it.
-        computed_validity = ComputedCellValidity(
-            geometry, mesh, CellValidityPolicy(), None
-        )
-        validity = computed_validity.certificate
-        validated_embedding = (
-            ValidatedGlobalEmbedding(
-                mesh, geometry, validity, validated_validity=computed_validity
-            )
-            if validity.all_certified
-            else None
-        )
         organization = _organization(
             profile,
             self.coordinate_contract,
@@ -977,7 +959,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             compliance,
             certification,
             geometry=geometry,
-            validated_global_embedding=validated_embedding,
             organization=organization,
         )
 

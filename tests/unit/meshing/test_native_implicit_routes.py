@@ -23,7 +23,11 @@ import phydrax.meshing.providers._native_implicit as implicit_provider
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
 from phydrax.discretization._cell_geometry import CellGeometrySpec
-from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    CellValidityPolicy,
+    ComputedCellValidity,
+)
 from phydrax.discretization._cell_mesh import (
     CellMesh,
     SimplicialConnectivity,
@@ -45,6 +49,7 @@ from phydrax.geometry._certificate import (
     ZeroSetAccuracy,
 )
 from phydrax.geometry._contracts import CompiledGeometry, GeometryKernel, GeometryKind
+from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
 from phydrax.geometry._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
@@ -95,7 +100,7 @@ from phydrax.meshing._implicit_volume import (
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
-from phydrax.meshing.providers._native import NativeMeshingProvider
+from phydrax.meshing.providers._native import CellMeshingCandidate, NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
     _carrier_face_bounds,
     _carrier_forward_bound,
@@ -1114,6 +1119,15 @@ def test_native_implicit_volume_route_builds_region_mesh(
         assert distance_witness.source_id == source.source_id
         assert distance_witness.source_revision == source.source_revision
         assert distance_witness.reverse_tolerance <= source.tube_radius
+        computed = ComputedCellValidity(
+            construction.geometry, construction.mesh, CellValidityPolicy(), None
+        )
+        validated_embedding = ValidatedGlobalEmbedding(
+            construction.mesh,
+            construction.geometry,
+            computed.certificate,
+            validated_validity=computed,
+        )
         proof = validate_tubular_projection_boundary_witness(
             construction.mesh,
             construction.geometry,
@@ -1121,14 +1135,12 @@ def test_native_implicit_volume_route_builds_region_mesh(
             construction.certification.cell_regions,
             distance_witness,
             coverage_witness,
-            embedding=construction.validated_global_embedding,
+            embedding=validated_embedding,
         )
         assert proof.region_ids == source.region_ids
         assert proof.target_facet_count > 0
         assert proof.source_facet_count == proof.covered_source_facet_count == 0
         assert coverage_witness.distance_witness_id == distance_witness.witness_id
-        validated_embedding = construction.validated_global_embedding
-        assert validated_embedding is not None
         embedding = validated_embedding.certificate
         forged_embedding = eqx.tree_at(
             lambda value: value.validity.determinant_lower,
@@ -1995,30 +2007,19 @@ def test_restricted_torus_projection_degree_accepts_complete_volume() -> None:
         size_controls=(),
         maximum_deviation=0.8,
     )
-    construction = prepare_native_implicit(
-        profile,
-        specification,
+    plan = NativeMeshingProvider(
         NativeMeshingOptions(
-            "implicit_restricted_delaunay",
-            volume_schedule=NativeVolumeSchedule(),
-        ),
-        contract,
-    ).execute()
-    distance_witness = construction.certification.fidelity_witness
-    coverage_witness = construction.certification.source_coverage_witness
-    assert isinstance(distance_witness, SourceBoundaryDistanceWitness)
-    assert isinstance(coverage_witness, TubularProjectionBoundaryWitness)
-    regions = construction.certification.cell_regions
-    assert regions is not None
-    proof = validate_tubular_projection_boundary_witness(
-        construction.mesh,
-        construction.geometry,
-        profile,
-        regions,
-        distance_witness,
-        coverage_witness,
-        embedding=construction.validated_global_embedding,
-    )
+            "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
+        )
+    ).plan(profile, specification)
+    candidate = plan.execute()
+    assert isinstance(candidate, CellMeshingCandidate)
+    result = candidate.prove()
+    assert result.mesh is candidate.mesh
+    assert result.certification is not None
+    proof = result.certification.coverage
+    assert proof is not None
+    assert proof.status == "certified"
     assert proof.region_ids == ("interior",)
     assert proof.target_facet_count > 0
 

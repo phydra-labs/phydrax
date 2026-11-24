@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Restricted-Delaunay implicit volume candidates defer local map validity
+  and global embedding to acceptance instead of proving them during
+  construction. Facet refinement and source checks that steer it remain.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;
