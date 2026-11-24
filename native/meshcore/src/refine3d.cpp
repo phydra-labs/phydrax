@@ -920,6 +920,28 @@ std::int32_t local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
              ? PHX_MC_OK : PHX_MC_INVALID_INPUT;
 }
 
+// Read immutable refinement inputs in bounded chunks and combine their
+// output banks in input order. The serial route writes directly to output.
+template <class Bank, class Read, class Combine>
+std::int32_t prepare_in_order(std::size_t count, std::size_t grain, std::uint32_t workers,
+                              Bank& output, const Read& read, const Combine& combine) {
+  if (workers == 1 || count < 2 * grain) {
+    read(0, count, output);
+    return PHX_MC_OK;
+  }
+  const std::size_t chunk = std::max(grain, (count + workers - 1) / workers);
+  std::vector<Bank> banks((count + chunk - 1) / chunk);
+  const std::int32_t status = parallel_for(
+      count, {chunk, workers}, [&](std::size_t begin, std::size_t end, ChunkContext& context) {
+        const GradualNearestScope mode;
+        if (!mode.established()) return std::int32_t{PHX_MC_INTERNAL_ERROR};
+        read(begin, end, banks[context.chunk_index]);
+        return std::int32_t{PHX_MC_OK};
+      });
+  if (status == PHX_MC_OK) combine(output, banks);
+  return status;
+}
+
 // Bits per axis of the proposal order: a 4096^3 grid over the domain's box
 // orders a round's proposals as finely as their cavities need (points in one
 // grid cell keep their measurement order), at a little over half the work of
@@ -2831,9 +2853,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     bool has_target;
     double target;
   };
-  std::vector<Proposal> proposals;
+  struct InitialProposals {
+    std::vector<Proposal> proposals;
+    std::vector<std::array<std::uint32_t, 3>> grids;
+  } initial;
+  auto& proposals = initial.proposals;
+  auto& proposal_grids = initial.grids;
   std::vector<Proposal> sorted_scratch;
-  std::vector<std::array<std::uint32_t, 3>> proposal_grids;
   // Every proposed cell ID: a live cell that misses a criterion when the
   // rounds end was proposed (each created cell is evaluated in the round
   // after its creation), so the unmet records measure only these.
@@ -3171,7 +3197,6 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       if (center != nullptr) std::copy_n(shape.circumcenter.begin(), 3, center);
     }
-    proposed_ids.push_back(proposal.cell_id);
     return true;
   };
   // Interior lattice seeding. Circumcenter refinement to a circumradius
@@ -3323,8 +3348,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // of the facet's plane of half width 1/2; each facet lists the sites of
     // the rows of that box clipped to that slab, both grown by a margin far
     // above the rounding of lattice coordinates, that are within the band.
-    std::vector<std::uint64_t> band_sites;
-    for (const TetSnapshotFacet& facet : mesh.facets_) {
+    const auto collect_facet_sites = [&](const TetSnapshotFacet& facet,
+                                         std::vector<std::uint64_t>& keys) {
       const std::int32_t t[3]{mesh.vertex_slot(facet.vertices[0]), mesh.vertex_slot(facet.vertices[1]),
                               mesh.vertex_slot(facet.vertices[2])};
       const auto& u0 = lattice[static_cast<std::size_t>(t[0])];
@@ -3386,12 +3411,25 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
               double p[3];
               site_point(shift, i, j, k, p);
               if (geometry::point_triangle_distance(p, p0, p1, p2) < band) {
-                band_sites.push_back(pack(shift, k, j, i));
+                keys.push_back(pack(shift, k, j, i));
               }
             }
           }
       }
-    }
+    };
+    std::vector<std::uint64_t> band_sites;
+    const std::int32_t band_status = prepare_in_order(
+        mesh.facets_.size(), 4096, parallelism, band_sites,
+        [&](std::size_t begin, std::size_t end, auto& keys) {
+          for (std::size_t i = begin; i < end; ++i) collect_facet_sites(mesh.facets_[i], keys);
+        },
+        [](auto& keys, const auto& banks) {
+          std::size_t size = 0;
+          for (const auto& bank : banks) size += bank.size();
+          keys.reserve(size);
+          for (const auto& bank : banks) keys.insert(keys.end(), bank.begin(), bank.end());
+        });
+    if (band_status != PHX_MC_OK) return band_status;
     std::sort(band_sites.begin(), band_sites.end());
     band_sites.erase(std::unique(band_sites.begin(), band_sites.end()), band_sites.end());
     // Whether a packed site is clear of the band.
@@ -3992,15 +4030,32 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       // Initial cells and every cone from lattice seeding were due for
       // screening, so visit the live finite complex once after seeding.
       // The sort by Hilbert key and persistent cell ID below owns the order.
-      for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
-        const auto slot = static_cast<std::int32_t>(row);
-        if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
-        Proposal proposal{0, mesh.cell_id(slot), slot, false, 0.0};
-        double center[3];
-        if (!violates(slot, proposal, center)) continue;
-        proposal_grids.push_back(frame.grid(center));
-        proposals.push_back(proposal);
-      }
+      const auto status = prepare_in_order(
+          mesh.complex_.tets.size(), 16384, mesh.metric_active() ? 1U : parallelism, initial,
+          [&](std::size_t begin, std::size_t end, InitialProposals& bank) {
+            for (std::size_t row = begin; row < end; ++row) {
+              const auto slot = static_cast<std::int32_t>(row);
+              if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
+              Proposal proposal{0, mesh.cell_id(slot), slot, false, 0.0};
+              double center[3];
+              if (!violates(slot, proposal, center)) continue;
+              bank.grids.push_back(frame.grid(center));
+              bank.proposals.push_back(proposal);
+            }
+          },
+          [](InitialProposals& output, const std::vector<InitialProposals>& banks) {
+            std::size_t size = 0;
+            for (const auto& bank : banks) size += bank.proposals.size();
+            output.proposals.reserve(size);
+            output.grids.reserve(size);
+            for (const auto& bank : banks) {
+              output.proposals.insert(output.proposals.end(), bank.proposals.begin(),
+                                      bank.proposals.end());
+              output.grids.insert(output.grids.end(), bank.grids.begin(), bank.grids.end());
+            }
+          });
+      if (status != PHX_MC_OK) return status;
+      for (const Proposal& proposal : proposals) proposed_ids.push_back(proposal.cell_id);
     } else {
       for (const std::int32_t slot : pending) {
         proposals.push_back({0, mesh.cell_id(slot), slot, false, 0.0});
@@ -4030,6 +4085,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                        !violates(proposal.slot, proposal, nullptr))) {
         continue;
       }
+      if (pass > 0) proposed_ids.push_back(proposal.cell_id);
       if (const std::int32_t error = refine_cell(proposal); error != PHX_MC_OK) return error;
     }
   }

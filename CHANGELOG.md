@@ -41,6 +41,9 @@
 - Native metric carrier searches round fixed projection coordinates once
   and reject inexact undeclared-chart candidates at the first inexact
   coordinate. Carrier resolution order, exactness, and stencils are unchanged.
+- Native refinement prepares fixed-wall lattice exclusions and the initial
+  Euclidean proposal bank in ordered worker chunks. Proposal order,
+  insertion decisions, and output banks are unchanged.
 - Native CAD face sizing shares the nearest-chord traversal between its
   size floor and fidelity budget. Boundary grading visits the lower-bound
   child first; size and fidelity criteria are unchanged.
