@@ -493,6 +493,10 @@ public-route clocks, not the construction comparison or a general bound.
 
 ### Original graded coarsening
 
+Accessor request F is already integrated: adaptation reads native
+`LocalIncidence` boundary-facet and boundary-segment records instead of
+copying those banks. That cutover is independent of the construction clock.
+
 The isolated wall-ring candidate `cbf6be8d7b` passes the scientific
 requirements on the authenticated original 10,452-cell source: 1,843
 output tetrahedra, zero out-of-band edges or inversions, mean quality
@@ -651,7 +655,7 @@ queries only.
   output banks are invariant under worker requests. This does not qualify
   fixed-boundary volume refinement against threaded HXT.
 
-### Rank-matched sphere hex-dominant comparison
+### Rank-matched hex-dominant comparisons
 
 On `62e8398582`, the original F8 sphere without layers uses an identical
 triangulated wall and the same nominal h = 0.05464 on both tools.
@@ -668,20 +672,67 @@ three interleaved pairs. The minima are:
 All reference meshes pass `checkMesh`. The best eligible arm at each rank
 also has zero independently measured nonpositive decomposition tets.
 Phydrax clears the registered quality limits and improves hex fraction,
-sampled wall distance, maximum and mean nonorthogonality, and skewness
-against those reference outputs. Native result IDs are identical at 1, 2,
-3, 4, and 8 requests. The native clock stays flat; the data demonstrate
-invariance and live comparisons, not parallel native speedup.
+sampled wall distance, maximum nonorthogonality, both angle averages,
+and skewness. At eight ranks, the registered angle average (arccos of
+mean cosine) is 4.94° native versus 9.79° reference. Native result IDs
+are identical at 1, 2, 3, 4, and 8 requests. The native clock stays flat;
+the data demonstrate invariance and live comparisons, not parallel
+native speedup.
 
 The clocks include candidate construction on Phydrax and the meshing
 subprocess on OpenFOAM (including MPI startup for parallel ranks).
 Background meshing, partitioning, reconstruction, quality checks, and
 proof are separate. Output counts differ (89,219 versus 74,305). This
-qualifies only the sphere without layers against `snappyHexMesh`, not
-matched-team cfMesh or any layer-thickness comparison.
+qualifies the sphere without layers against `snappyHexMesh`, not the
+original matched-team cfMesh comparison.
 
-The two-rank layer probes do not qualify as direct comparisons.
-`snappyHexMesh` uses relative layer thicknesses in the archived cases,
-whereas Phydrax requests an absolute thickness schedule. Its quadric
-with two requested layers also returned eight cells with nonpositive
-decomposition tets despite passing `checkMesh`.
+The original no-layer quadric (h = 0.04597) also has three interleaved
+pairs per actual rank, identical native output IDs, and valid retained
+reference outputs. Phydrax clears all registered quality limits but
+misses the alternate live skewness comparison at all four ranks
+(0.73890 native versus 0.72618 reference). At eight ranks it also misses
+the clock (4.350 seconds versus 4.072 seconds); ranks one, two, and four
+are faster. The angle average improves (4.94° versus 8.10°) at every
+rank. This does not qualify a combined speed and quality win on quadric.
+
+The absolute-thickness pilot requests the native first layer thickness and
+growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
+requested sphere layer cells and passes both validity checks. On the
+quadric it adds 24,008 of 24,800, and the independent check finds eight
+nonpositive decomposition cells despite `checkMesh` passing. Quadric with
+layers remains ineligible. Matching the requested schedule does not
+establish equal thickness in every output column.
+
+In the original sphere comparison with two layers (h = 0.06035),
+`snappyHexMesh` placed every requested layer cell in all 12 runs.
+Phydrax took 5.023 / 5.053 / 5.142 / 5.062 seconds at 1 / 2 / 4 / 8
+workers against 9.798 / 8.281 / 6.105 / 5.066 seconds at actual matching
+MPI ranks. The eight-rank clocks are effectively tied. Both meshes pass
+the decomposition checks; their counts differ (98,038 versus 81,647).
+Phydrax passes the registered quality limits, but maximum skewness is
+0.53156 versus the live reference's 0.49744 at every rank. No combined
+speed and quality win is credited. Native output IDs again agree at
+1, 2, 3, 4, and 8 requests.
+
+### Matched graded no-op adaptation
+
+On `62e8398582`, both tools start from the original Box-12/25/55 input
+banks. Phydrax returns the original mesh without edits or band violations,
+with identical evidence IDs at 1, 2, 4, and 8 requests. Omega_h 9.34.13
+reproduces the archived mesh and metric output bytes in its OpenMP build.
+Untimed OMPT checks on Box-55
+observe the requested team in all 179 regions at each count.
+
+Phydrax wins all three one-worker comparisons, but loses all nine at 2,
+4, and 8. At eight requests, three interleaved pairs give these minima:
+
+| Original input | Phydrax (ms) | OpenMP Omega_h (ms) |
+|:---|---:|---:|
+| Box-12 | 10.98 | 2.93 |
+| Box-25 | 82.83 | 16.08 |
+| Box-55 | 850.69 | 144.78 |
+
+The prepared clock includes metric gradation and the no-op adaptation
+check, not mesh or metric input preparation, I/O, or final proof. The
+Phydrax clock does not scale with its worker cap here; invariant outputs
+are not a parallel throughput win.
