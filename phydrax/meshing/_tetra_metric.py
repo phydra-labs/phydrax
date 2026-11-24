@@ -1833,6 +1833,31 @@ def _minimum_tetra_metric_quality(
     return float(np.min(minima))
 
 
+def _noop_metric_length_extrema(
+    points: np.ndarray, metric: np.ndarray, edges: np.ndarray, workers: int, /
+) -> tuple[float, float]:
+    """Measure the original ordered edges without retaining the length bank."""
+    count = edges.shape[0]
+    block = 65_536
+    points = np.ascontiguousarray(points)
+    metric = np.ascontiguousarray(metric)
+
+    def extrema(rows: np.ndarray, /) -> tuple[float, float]:
+        values = metric_lengths(points, metric, rows)
+        return float(np.min(values)), float(np.max(values))
+
+    if count <= block:
+        return extrema(edges)
+    bounds = np.empty(((count + block - 1) // block, 2), dtype=np.float64)
+
+    def measure(begin: int, end: int, chunk: int, /) -> None:
+        bounds[chunk] = extrema(edges[begin:end])
+
+    status = parallel_for(count, measure, chunk_size=block, parallelism=workers)
+    _raise_for_call(status, "tetrahedral metric length extrema")
+    return float(np.min(bounds[:, 0])), float(np.max(bounds[:, 1]))
+
+
 def strict_plain_tetra_metric_noop(
     source: CellMeshingResult, metric_values: np.ndarray, /
 ) -> TetraMetricEvidence | None:
@@ -1870,9 +1895,9 @@ def strict_plain_tetra_metric_noop(
         if np.any(reverse):
             edges = edges.copy()
             edges[reverse] = edges[reverse, ::-1]
-    lengths = metric_lengths(points, metric, edges)
-    minimum_length = float(np.min(lengths))
-    maximum_length = float(np.max(lengths))
+    minimum_length, maximum_length = _noop_metric_length_extrema(
+        points, metric, edges, workers
+    )
     if not _LOWER <= minimum_length <= maximum_length <= _UPPER:
         return None
     minimum_quality = _minimum_tetra_metric_quality(points, metric, cells, workers)
@@ -1892,7 +1917,7 @@ def strict_plain_tetra_metric_noop(
         rejected_protected=0,
         rejected_uncertain=0,
         rejected_invalid=0,
-        measured_edges=lengths.size,
+        measured_edges=edges.shape[0],
         out_of_range_edges=0,
         minimum_metric_length=minimum_length,
         maximum_metric_length=maximum_length,

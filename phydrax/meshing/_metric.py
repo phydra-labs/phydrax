@@ -30,8 +30,10 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from .._exact_kernels import exact_kernel_parallelism
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._jax_config import default_device_selection
+from .._meshcore import _raise_for_call, meshcore_available, parallel_for
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
@@ -1314,8 +1316,8 @@ def _scalar_gradation_edge_lengths(
     """Euclidean lengths in coordinate order with bounded host gathers."""
     count = edges.shape[0]
     lengths = np.empty((count,), dtype=np.float64)
-    for begin in range(0, count, _SCALAR_GRADATION_EDGE_BLOCK):
-        end = min(begin + _SCALAR_GRADATION_EDGE_BLOCK, count)
+
+    def measure(begin: int, end: int, /) -> None:
         first, second = edges[begin:end].T
         squared = points[second, 0] - points[first, 0]
         np.square(squared, out=squared)
@@ -1324,6 +1326,24 @@ def _scalar_gradation_edge_lengths(
             np.square(delta, out=delta)
             squared += delta
         np.sqrt(squared, out=lengths[begin:end])
+
+    block = _SCALAR_GRADATION_EDGE_BLOCK
+    if count > block:
+        workers = exact_kernel_parallelism()
+        if workers > 1 and np.geterrcall() is None and meshcore_available():
+            numerical_policy = np.geterr()
+
+            def measure_chunk(begin: int, end: int, _chunk: int, /) -> None:
+                with np.errstate(**numerical_policy):
+                    measure(begin, end)
+
+            status = parallel_for(
+                count, measure_chunk, chunk_size=block, parallelism=workers
+            )
+            _raise_for_call(status, "scalar gradation edge lengths")
+            return lengths
+    for begin in range(0, count, block):
+        measure(begin, min(begin + block, count))
     return lengths
 
 

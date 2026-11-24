@@ -50,6 +50,9 @@
 - Scalar metric gradation gathers edge coordinates in bounded worksets and
   reconstructs exact isotropic diagonal tensors directly. Tetrahedral no-op
   admission checks exact orientation in bounded worker chunks.
+- Scalar gradation can measure ordered edge lengths with native workers.
+  Tetrahedral no-op admission retains exact metric-length extrema without
+  storing the complete metric edge-length bank.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once
