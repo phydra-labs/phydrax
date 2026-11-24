@@ -2700,6 +2700,45 @@ void stencil_relocations_verify_the_candidate() {
             consistent_complex(local) && incidence_current(local, incidence));
 }
 
+void prepared_relocation_rebinds_to_new_source() {
+  LocalIncidence incidence;
+  for (double offset : {0.0, 16.0}) {
+    Box box = witness_free_box({4, 4, 4}, true);
+    for (auto* points : {&box.points, &box.source_points}) {
+      for (std::size_t row = 0; row < points->size(); row += 3) (*points)[row] += offset;
+    }
+    for (std::int32_t group : box.face_groups) {
+      const Piece& piece = box.pieces.at(group);
+      const auto axis = static_cast<std::size_t>(piece.axis);
+      std::array<double, 9> plane{offset};
+      plane[axis] = piece.value + (axis == 0 ? offset : 0.0);
+      plane[3 + (axis + 1) % 3] = 1.0;
+      plane[6 + (axis + 2) % 3] = 1.0;
+      box.face_planes.insert(box.face_planes.end(), plane.begin(), plane.end());
+      box.face_plane_tolerances.push_back(0.0);
+    }
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    if (!build(mesh, box, {})) return;
+    PHX_CHECK(incidence.initialize(mesh));
+    constexpr std::int32_t slot = 6;
+    const auto generation = mesh.generation();
+    const auto star = incidence.vertex_star(slot);
+    const std::array<std::int32_t, 3> rows{0, 8, 2};
+    const std::array<double, 3> extrapolated{-0.375, 1.125, 0.25};
+    const TetEditVertex outside{mesh.vertex_id(slot), {offset + 2.25, 1.0, 0.0}};
+    const SourceStencil unsupported{rows, extrapolated};
+    PHX_CHECK(incidence.relocate(mesh, std::span(&outside, 1), star, &unsupported) ==
+              TetEditStatus::kInvalidGeometry);
+    PHX_CHECK(mesh.generation() == generation && mesh.point(slot)[0] == offset + 1.0);
+    const std::array<double, 3> weights{0.125, 0.625, 0.25};
+    const TetEditVertex inside{mesh.vertex_id(slot), {offset + 1.25, 1.0, 0.0}};
+    const SourceStencil supported{rows, weights};
+    PHX_CHECK(incidence.relocate(mesh, std::span(&inside, 1), star, &supported) ==
+              TetEditStatus::kApplied);
+    PHX_CHECK(mesh.generation() == generation + 1 && mesh.point(slot)[0] == inside.carrier[0]);
+  }
+}
+
 void stencil_relocations_respect_incident_segments() {
   for (bool split_faces : {false, true}) {
     Box box = witness_free_box({4, 4, 4}, split_faces);
@@ -2753,6 +2792,7 @@ int main() {
   rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kOppositeZeroSign);
   boundary_lookups_require_bound_mesh();
   stencil_relocations_verify_the_candidate();
+  prepared_relocation_rebinds_to_new_source();
   stencil_relocations_respect_incident_segments();
   return phx::mc::test::finish("test_local_boundary_edits");
 }
