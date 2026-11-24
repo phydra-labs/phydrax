@@ -676,6 +676,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Planar native meshing computes the same Hilbert insertion keys with
+  grouped coordinate-bit transitions. Quantization, tie ordering, and
+  triangulation outputs are unchanged.
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
   Where supported, `candidate.prove()` certifies that mesh later. Certified
   octree hex-dominant meshes and owner-local execution require

@@ -983,7 +983,7 @@ void assign_hilbert_keys(std::vector<Item>& items,
     for (std::size_t at = begin; at < end; ++at) {
       const std::uint32_t transposed[3]{lanes[0][at - begin], lanes[1][at - begin],
                                         lanes[2][at - begin]};
-      items[at].key = interleave_transpose(transposed, 3);
+      items[at].key = interleave_transpose(transposed);
     }
   }
 }

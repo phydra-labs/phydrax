@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -27,14 +28,7 @@ inline std::uint64_t splitmix64(std::uint64_t value) {
   return value ^ (value >> 31);
 }
 
-// Bit b of v moved to bit 2b (v below 2^32) or 3b (v below 2^21).
-inline std::uint64_t spread_bits_2(std::uint64_t v) {
-  v = (v | (v << 16)) & 0x0000FFFF0000FFFFULL;
-  v = (v | (v << 8)) & 0x00FF00FF00FF00FFULL;
-  v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0FULL;
-  v = (v | (v << 2)) & 0x3333333333333333ULL;
-  return (v | (v << 1)) & 0x5555555555555555ULL;
-}
+// Bit b of v moved to bit 3b (v below 2^21).
 inline std::uint64_t spread_bits_3(std::uint64_t v) {
   v &= 0x1FFFFFULL;
   v = (v | (v << 32)) & 0x001F00000000FFFFULL;
@@ -83,11 +77,50 @@ void hilbert_transpose(std::uint32_t (&x)[Dimension][Lanes]) {
   }
 }
 
-// Hilbert index from the transpose, most significant bit first (axis 0
-// carries the highest bit of every group).
-inline std::uint64_t interleave_transpose(const std::uint32_t* x, int dimension) {
-  if (dimension == 2) return (spread_bits_2(x[0]) << 1) | spread_bits_2(x[1]);
+// Three-dimensional Hilbert index from the transpose, axis 0 first.
+inline std::uint64_t interleave_transpose(const std::uint32_t* x) {
   return (spread_bits_3(x[0]) << 2) | (spread_bits_3(x[1]) << 1) | spread_bits_3(x[2]);
+}
+
+// In two dimensions, the lower-coordinate frame only swaps axes and
+// complements both axes. Four successive transitions fit one lookup.
+inline constexpr auto kPlanarHilbertDigits = [] {
+  std::array<std::uint16_t, 1024> table{};
+  for (unsigned orientation = 0; orientation < 4; ++orientation) {
+    for (unsigned x = 0; x < 16; ++x) {
+      for (unsigned y = 0; y < 16; ++y) {
+        unsigned state = orientation;
+        unsigned digits = 0;
+        for (int bit = 3; bit >= 0; --bit) {
+          const bool swapped = (state & 1U) != 0;
+          const unsigned complement = state >> 1U;
+          const unsigned a = (((swapped ? y : x) >> bit) & 1U) ^ complement;
+          const unsigned b = (((swapped ? x : y) >> bit) & 1U) ^ complement;
+          digits = (digits << 2U) | ((3U * a) ^ b);
+          if (b == 0) state ^= 1U | (a << 1U);
+        }
+        table[(orientation << 8U) | (x << 4U) | y] =
+            static_cast<std::uint16_t>((digits << 2U) | state);
+      }
+    }
+  }
+  return table;
+}();
+
+inline std::uint64_t planar_hilbert_key(std::uint32_t x, std::uint32_t y) {
+  std::uint64_t key = 0;
+  unsigned state = 0;
+  for (int bit = 27; bit >= 3; bit -= 4) {
+    const unsigned index = (state << 8U) | (((x >> bit) & 15U) << 4U) |
+                           ((y >> bit) & 15U);
+    const unsigned entry = kPlanarHilbertDigits[index];
+    key = (key << 8U) | (entry >> 2U);
+    state = entry & 3U;
+  }
+  // Pad the last three coordinate bits on the right and discard the added
+  // digit. Higher digits never depend on any lower coordinate bits.
+  const unsigned index = (state << 8U) | ((x & 7U) << 5U) | ((y & 7U) << 1U);
+  return (key << 6U) | (kPlanarHilbertDigits[index] >> 4U);
 }
 
 // One point of a spatial sort: Hilbert key, point index, BRIO round.
@@ -114,11 +147,19 @@ void hilbert_key_block(const double* points, std::span<const int32_t> candidates
       x[axis][at - begin] = static_cast<std::uint32_t>(std::clamp(scaled, 0.0, kCells));
     }
   }
-  hilbert_transpose<Dimension, Bits, Lanes>(x);
-  for (std::size_t at = begin; at < end; ++at) {
-    std::uint32_t transposed[3] = {0, 0, 0};
-    for (int axis = 0; axis < Dimension; ++axis) transposed[axis] = x[axis][at - begin];
-    keys[at] = {interleave_transpose(transposed, Dimension), candidates[at], 0U};
+  if constexpr (Dimension == 2) {
+    static_assert(Bits == 31);
+    for (std::size_t at = begin; at < end; ++at) {
+      keys[at] = {planar_hilbert_key(x[0][at - begin], x[1][at - begin]),
+                  candidates[at], 0U};
+    }
+  } else {
+    hilbert_transpose<Dimension, Bits, Lanes>(x);
+    for (std::size_t at = begin; at < end; ++at) {
+      const std::uint32_t transposed[3] = {x[0][at - begin], x[1][at - begin],
+                                           x[2][at - begin]};
+      keys[at] = {interleave_transpose(transposed), candidates[at], 0U};
+    }
   }
 }
 
