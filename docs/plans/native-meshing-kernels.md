@@ -728,6 +728,15 @@ counts beat both the new and earlier clocks. At eight, Phydrax takes
 4.207 seconds versus 4.070 seconds for `snappyHexMesh`, confirming the
 remaining clock miss. Output IDs match across native worker requests.
 
+On `94f682c6c7`, independent face and cell geometry rows use the native
+worker pool. Each row keeps its arithmetic order, and repair commits and
+rollback stay serial. The eight-worker smoothing phase drops from 1.810
+to 1.523 seconds in internal pairs. All four live unlayered quadric
+comparisons meet quality and both the live and earlier time limits;
+at eight workers Phydrax takes 3.982 seconds versus 4.043 seconds.
+The certified mesh identity is unchanged. The separate layered sphere
+quality gap remains.
+
 The absolute-thickness pilot requests the native first layer thickness and
 growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
 requested sphere layer cells and passes both validity checks. On the
