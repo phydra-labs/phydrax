@@ -1041,8 +1041,9 @@ binds regions to planar B-Rep faces and patches to exact B-Rep edges through one
 `PlanarEmbedding`. The resulting planar `CellMeshingResult` has ordinary
 top-cell zones and main-mesh edge patches, no synthetic `SurfaceModel` boundary.
 
-For large finite-area planar requests, the constrained Delaunay kernel can
-seed the interior with a bounded triangular lattice. It admits sites against
+For finite-area planar requests with enough estimated interior work relative
+to the authored input, the constrained Delaunay kernel can seed the interior
+with a bounded triangular lattice. It admits sites against
 the coarse constrained domain, away from source edges, before refining with
 the same size and angle criteria. Seeds are generated mesh vertices, not
 authored inputs, and do not acquire source-edge ancestry. This can change

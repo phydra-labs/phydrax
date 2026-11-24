@@ -87,9 +87,10 @@ struct SeedGrid {
 
 std::optional<SeedGrid> seed_grid(const cdt2d_detail::AreaEstimate& estimate, double max_area,
                                  int64_t input_count) {
-  // Limit a second Delaunay build to resolved, many-cell domains with a
-  // bounded background grid and a cheap authored-domain preflight.
-  if (estimate.elements < 262144.0 || input_count > 16384) return std::nullopt;
+  // A simple authored domain amortizes the preflight earlier. A heavily
+  // sampled boundary needs more interior work before a second build pays.
+  const double minimum_work = std::clamp(64.0 * input_count, 8192.0, 262144.0);
+  if (estimate.elements < minimum_work || input_count > 16384) return std::nullopt;
   constexpr double equilateral_height = 0.86602540378443864676;
   const double step = 0.99 * std::sqrt((2.0 / equilateral_height) * max_area);
   const double rise = step * equilateral_height;

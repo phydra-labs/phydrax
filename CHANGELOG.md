@@ -3,8 +3,9 @@
 ## Unreleased
 
 ### Added
-- Large planar CDT refinement can seed an exact source-admitted interior
-  lattice before local refinement. Generated sites can change mesh identity;
+- Planar CDT refinement can seed an exact source-admitted interior lattice
+  when the size target implies enough work to amortize the preflight.
+  Generated sites can change mesh identity;
   authored vertices, hole domains and constraint ancestry are retained.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
