@@ -58,6 +58,12 @@
   terms. Rebuild the native library for the added entry points.
 - Exact isotropic CPU size bounds compile only the consumed spectral
   evidence; the general bound checks and rounding margins are unchanged.
+- Unlayered hex-dominant walls let free patch vertices repair skewed faces
+  next to fixed features under the existing validity and fidelity guards.
+  This can change the mesh and evidence IDs.
+- Hex repair reuses ordered local incidence and committed face geometry.
+  Polyhedral publication checks explicit loop vertex repetition in
+  bounded worksets without changing topology identities or defect order.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once

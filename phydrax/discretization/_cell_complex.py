@@ -29,6 +29,7 @@ from ._topology import (
     OrientedIncidence,
     row_positions,
     rows_increase,
+    sorted_unique_rows,
 )
 
 
@@ -831,17 +832,41 @@ def _cell_vertex_rows(
     """Return per-cell distinct vertex counts and their sorted packed values."""
 
     pairs = np.stack((entry_cells, values), axis=1)
-    ordered = pairs[_row_order(pairs)]
-    distinct = ordered[_row_run_starts(ordered)]
+    distinct = sorted_unique_rows(pairs)
     return (
         np.bincount(distinct[:, 0], minlength=cell_count),
         distinct[:, 1].astype(np.int32),
     )
 
 
+def _loops_repeating_vertices(
+    lengths: np.ndarray,
+    explicit: np.ndarray,
+    offsets: np.ndarray,
+    values: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Check each authored loop without sorting across unrelated faces."""
+    repeated = np.zeros(lengths.shape, dtype=np.bool_)
+    for length in np.unique(lengths[explicit]):
+        if length < 2:
+            continue
+        rows = np.flatnonzero(explicit & (lengths == length))
+        positions = np.arange(length, dtype=np.int64)
+        # Keep coordinate gathers bounded except for one intrinsically long loop.
+        batch = max(1, 262_144 // positions.size)
+        for begin in range(0, rows.size, batch):
+            block = rows[begin : begin + batch]
+            bank = values[offsets[block, None] + positions]
+            bank.sort(axis=1)
+            repeated[block] = np.any(bank[:, 1:] == bank[:, :-1], axis=1)
+    return repeated
+
+
 def _polyhedral_loop_defects(
     lengths: np.ndarray,
     explicit: np.ndarray,
+    offsets: np.ndarray,
     loop_cells: np.ndarray,
     loop_faces: np.ndarray,
     values: np.ndarray,
@@ -855,11 +880,7 @@ def _polyhedral_loop_defects(
     outside = (values < 0) | (values >= vertex_count)
     outside_loops = np.bincount(entry_loops[outside], minlength=count) > 0
     # Validated standard blocks already reference distinct vertices.
-    checked = explicit[entry_loops]
-    pairs = np.stack((entry_loops[checked], values[checked]), axis=1)
-    ordered = pairs[_row_order(pairs)]
-    repeated_vertices = np.all(ordered[1:] == ordered[:-1], axis=1)
-    non_simple = np.bincount(ordered[1:, 0][repeated_vertices], minlength=count) > 0
+    non_simple = _loops_repeating_vertices(lengths, explicit, offsets, values)
     faces = np.stack((loop_cells, loop_faces), axis=1)
     order = _row_order(faces)
     ordered_faces = faces[order]
@@ -1327,6 +1348,7 @@ def _polyhedral_loop_connectivity(
         _polyhedral_loop_defects(
             loop_lengths,
             explicit_loops,
+            loop_offsets,
             loop_cells,
             loop_faces,
             loop_values,

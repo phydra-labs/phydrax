@@ -69,6 +69,7 @@
 #include <cstdlib>
 #include <limits>
 #include <numeric>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -2878,7 +2879,7 @@ void Builder::smooth() {
   // at least floor_cosine = cos(floor a0)) is not evaluated, as callers only
   // compare the result with values of at least floor.
   auto face_badness = [&](int64_t f, const Vec& center, const Vec& area, const Vec& co, const Vec* cn,
-                          double floor_cosine) {
+                          double floor_cosine, double* scaled_skewness = nullptr) {
     const double ls = norm(area);
     if (!(ls > 0.0)) return std::numeric_limits<double>::infinity();
     const Vec cpf = sub(center, co);
@@ -2900,7 +2901,9 @@ void Builder::smooth() {
         fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), center))));
       }
     }
-    return std::max(length / fd / kSkewGoal, angle / kAngleGoal);
+    const double skewness = length / fd / kSkewGoal;
+    if (scaled_skewness != nullptr) *scaled_skewness = skewness;
+    return std::max(skewness, angle / kAngleGoal);
   };
   int64_t repaired = 0;
   // Per vertex (with the layer points it carries), the faces of its cells
@@ -2908,7 +2911,10 @@ void Builder::smooth() {
   // through the moving points and the centroids of their cells; validity is
   // checked only for an improving move.
   std::vector<int32_t> face_slot(faces, -1);
+  std::vector<int32_t> cell_slot(cells, -1);
   std::vector<int32_t> local_cells, local_faces;
+  std::vector<int32_t> local_cell_faces;
+  std::vector<std::size_t> local_cell_offsets;
   std::vector<Vec> local_centroid, local_center, local_area, local_average;
   // Per local face: moves with the movers; fan unfolded (2: not yet known).
   std::vector<uint8_t> local_moving, local_unfolded;
@@ -2917,18 +2923,27 @@ void Builder::smooth() {
   std::vector<int32_t> sample_items;
   for (int round = 0; round < kRepairRounds; ++round) {
     geometry();
-    std::vector<std::pair<double, int32_t>> bad;
+    std::vector<std::tuple<double, int32_t, bool>> bad;
     const double goal_cosine = std::cos(kAngleGoal * (3.14159265358979323846 / 180.0));
     for (const int64_t f : active_faces) {
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
+      double skewness = 0.0;
       const double value =
-          face_badness(f, face_center[f], face_area[f], centroid[o], n >= 0 ? &centroid[n] : nullptr, goal_cosine);
-      if (value > 1.0) bad.emplace_back(-value, static_cast<int32_t>(f));
+          face_badness(f, face_center[f], face_area[f], centroid[o],
+                       n >= 0 ? &centroid[n] : nullptr, goal_cosine, &skewness);
+      if (value > 1.0) bad.emplace_back(-value, static_cast<int32_t>(f), skewness > 1.0);
     }
     if (bad.empty()) break;
     std::sort(bad.begin(), bad.end());
     std::vector<uint8_t> done(points, 0);
-    for (const auto& [value, f] : bad) {
+    for (const auto& [value, f, skewed] : bad) {
+      const auto face_begin = mesh.face_vertices.begin() + mesh.face_offsets[f];
+      const auto face_end = mesh.face_vertices.begin() + mesh.face_offsets[f + 1];
+      const bool feature_wall = in.layer_count == 0 && skewed && mesh.face_neighbor[f] < 0 &&
+                                std::any_of(face_begin, face_end, [&](int32_t vertex) {
+        const int32_t row = column_of[vertex];
+        return row >= 0 && surface_kind[row] != kPatch;
+      });
       for (const int32_t c : {mesh.face_owner[f], mesh.face_neighbor[f]}) {
         if (c < 0) continue;
         for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
@@ -2940,12 +2955,14 @@ void Builder::smooth() {
           // short against the distance of their centroids from the curve.
           const int32_t layer_row = role[v] == 3 ? column_row[v] : -1;
           const bool layer = layer_row >= 0 && curve_column[layer_row];
-          // A patch vertex next to a split curve column slides on its patch
-          // with its layer stack (the wall faces there are the 2D cells the
-          // layer cells inherit), never raising the surface deviation of its
-          // wall faces.
+          // A patch vertex slides with its stack near a split column.
+          // On an unlayered wall it can also repair a skewed face next
+          // to a fixed feature without moving the feature itself.
           const int32_t wall_row = role[v] >= 2 ? column_row[v] : -1;
-          const bool slide = wall_row >= 0 && slide_row[wall_row] && surface_kind[wall_row] == kPatch;
+          const bool slide = wall_row >= 0 && surface_kind[wall_row] == kPatch &&
+                             (slide_row[wall_row] ||
+                              (feature_wall && role[v] == 2 &&
+                               std::find(face_begin, face_end, v) != face_end));
           if ((role[v] != 1 && !layer && !slide) || done[v]) continue;
           done[v] = 1;
           movers.assign(1, v);
@@ -2989,24 +3006,29 @@ void Builder::smooth() {
           };
           const double deviation_bound = slide ? wall_deviation() : 0.0;
           local_cells.clear();
-          ++epoch;
           for (const int32_t u : movers) {
             for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
               const int32_t k = t.vertex_cells[r];
-              if (stamp[k] == epoch) continue;
-              stamp[k] = epoch;
+              if (cell_slot[k] >= 0) continue;
+              cell_slot[k] = static_cast<int32_t>(local_cells.size());
               local_cells.push_back(k);
             }
           }
           local_faces.clear();
+          local_cell_faces.clear();
+          local_cell_offsets.assign(1, 0);
           for (const int32_t k : local_cells) {
             for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
-              const int32_t g = std::abs(t.cell_faces[s2]) - 1;
+              const int32_t signed_face = t.cell_faces[s2];
+              const int32_t g = std::abs(signed_face) - 1;
               if (face_slot[g] < 0) {
                 face_slot[g] = static_cast<int32_t>(local_faces.size());
                 local_faces.push_back(g);
               }
+              const int32_t local = face_slot[g] + 1;
+              local_cell_faces.push_back(signed_face > 0 ? local : -local);
             }
+            local_cell_offsets.push_back(local_cell_faces.size());
           }
           const std::size_t nf = local_faces.size(), nc = local_cells.size();
           local_center.resize(nf);
@@ -3020,13 +3042,15 @@ void Builder::smooth() {
             for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !local_moving[q]; ++e) {
               local_moving[q] = std::find(movers.begin(), movers.end(), mesh.face_vertices[e]) != movers.end();
             }
-            face_geometry(mesh, g, local_center[q], local_area[q], local_average[q]);
+            if (!local_moving[q]) {
+              local_center[q] = face_center[g];
+              local_area[q] = face_area[g];
+              local_average[q] = face_average[g];
+            }
           }
           auto centroid_of = [&](int32_t k) -> const Vec& {
-            for (std::size_t q = 0; q < nc; ++q) {
-              if (local_cells[q] == k) return local_centroid[q];
-            }
-            return centroid[k];
+            const int32_t slot_q = cell_slot[k];
+            return slot_q >= 0 ? local_centroid[slot_q] : centroid[k];
           };
           // The largest badness of the local faces, from the hardest face of
           // the last full evaluation on; it stops once it reaches bound (a
@@ -3038,18 +3062,17 @@ void Builder::smooth() {
               face_geometry(mesh, local_faces[q], local_center[q], local_area[q], local_average[q]);
             }
             for (std::size_t q = 0; q < nc; ++q) {
-              const int32_t k = local_cells[q];
-              const int64_t first = t.cell_face_offsets[k], last = t.cell_face_offsets[k + 1];
+              const std::size_t first = local_cell_offsets[q], last = local_cell_offsets[q + 1];
               Vec estimate{0, 0, 0};
-              for (int64_t s2 = first; s2 < last; ++s2) {
-                estimate = add(estimate, local_center[face_slot[std::abs(t.cell_faces[s2]) - 1]]);
+              for (std::size_t s2 = first; s2 < last; ++s2) {
+                estimate = add(estimate, local_center[std::abs(local_cell_faces[s2]) - 1]);
               }
               estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
               double volume = 0.0;
               Vec moment{0, 0, 0};
-              for (int64_t s2 = first; s2 < last; ++s2) {
-                const int32_t signed_face = t.cell_faces[s2];
-                const int32_t slot_q = face_slot[std::abs(signed_face) - 1];
+              for (std::size_t s2 = first; s2 < last; ++s2) {
+                const int32_t signed_face = local_cell_faces[s2];
+                const int32_t slot_q = std::abs(signed_face) - 1;
                 const double w = (signed_face > 0 ? 1.0 : -1.0) *
                                  dot(local_area[slot_q], sub(local_center[slot_q], estimate)) / 3.0;
                 volume += w;
@@ -3171,8 +3194,21 @@ void Builder::smooth() {
             }
           }
           evaluate(std::numeric_limits<double>::infinity());
-          for (std::size_t q = 0; q < nc; ++q) centroid[local_cells[q]] = local_centroid[q];
-          for (const int32_t g : local_faces) face_slot[g] = -1;
+          for (std::size_t q = 0; q < nc; ++q) {
+            const int32_t k = local_cells[q];
+            centroid[k] = local_centroid[q];
+            cell_slot[k] = -1;
+          }
+          // Publish only the restored or accepted coordinates' face data.
+          for (std::size_t q = 0; q < nf; ++q) {
+            const int32_t g = local_faces[q];
+            if (local_moving[q]) {
+              face_center[g] = local_center[q];
+              face_area[g] = local_area[q];
+              face_average[g] = local_average[q];
+            }
+            face_slot[g] = -1;
+          }
         }
       }
     }
