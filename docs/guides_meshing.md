@@ -3021,6 +3021,12 @@ does not widen this initial check.
 
 Host preparation gathers and sorts fixed-width entity keys by row without
 changing entity order. Variable-width polyhedral faces keep trailing padding.
+One-block cell classes need no cell-ID join, and absent facet memberships
+leave every facet in the same class.
+Vertex metric tensors use a direct copy when source vertex IDs already match
+the metric scope order; differently ordered IDs still require an exact join.
+For scalar physical gradation, satisfying the growth bound on every edge
+skips the relaxation queue; the final measured violation is still reported.
 Tetrahedral preparation retains the constrained source facets and their
 group IDs rather than a second lookup table of every face ID and class.
 Lineage lookup matches a full simplex support by sorted global vertex IDs.

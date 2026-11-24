@@ -7,6 +7,9 @@
   allocating edit state when the native strict unit-band check passes.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
+- Native adaptation skips uniform organization sorting and already aligned
+  metric row joins. Scalar physical gradation skips queue construction when
+  all edge growth bounds already hold, while retaining final evidence.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native CAD face sizing shares the nearest-chord traversal between its

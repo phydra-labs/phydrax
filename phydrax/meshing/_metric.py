@@ -922,20 +922,31 @@ def _grade_scalar_sizes(
     values never relax each other), so the result is independent of numbering.
     Per-edge growth rates are supported for size-control resolution.
     """
+    sizes = np.asarray(sizes, dtype=np.float64)
     count = sizes.shape[0]
-    values = sizes.astype(np.float64).tolist()
     if edges.shape[0] == 0:
-        return np.asarray(values, dtype=np.float64), 0, 0
+        return sizes.copy(), 0, 0
+    physical = kind is MetricGradationKind.PHYSICAL
+    if physical:
+        first_size = sizes[edges[:, 0]]
+        second_size = sizes[edges[:, 1]]
+        step = (growth - 1.0) * lengths
+        # Growth is nonnegative, so only the larger endpoint could be reduced.
+        if np.all(
+            np.minimum(first_size, second_size) + step
+            >= np.maximum(first_size, second_size)
+        ):
+            # The label-setting route would finalize every vertex without updates.
+            return sizes.copy(), count, 0
+    else:
+        step = np.log(growth) * lengths
+    values = sizes.tolist()
     first = np.concatenate((edges[:, 0], edges[:, 1]))
     second = np.concatenate((edges[:, 1], edges[:, 0]))
     order = np.argsort(first, kind="stable")
     offsets = np.searchsorted(first[order], np.arange(count + 1)).tolist()
     targets = second[order].tolist()
-    lengths_ = np.concatenate((lengths, lengths))[order]
-    rates = np.concatenate((growth, growth))[order]
-    physical = kind is MetricGradationKind.PHYSICAL
-    increments = ((rates - 1.0) * lengths_).tolist()
-    log_rates = (np.log(rates) * lengths_).tolist()
+    steps = np.concatenate((step, step))[order].tolist()
     heap = [(value, row) for row, value in enumerate(values)]
     heapq.heapify(heap)
     pops = 0
@@ -949,12 +960,12 @@ def _grade_scalar_sizes(
             neighbor = targets[slot]
             current = values[neighbor]
             if physical:
-                candidate = value + increments[slot]
+                candidate = value + steps[slot]
                 if candidate >= current:
                     continue
             else:
                 # Compare in log space: beta**(l/h) overflows for tiny sizes.
-                exponent = log_rates[slot] / value
+                exponent = steps[slot] / value
                 if math.log(value) + exponent >= math.log(current):
                     continue
                 candidate = value * math.exp(exponent)

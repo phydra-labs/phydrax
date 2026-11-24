@@ -867,6 +867,14 @@ def _cell_classes(mesh: CellMesh, scopes: tuple[MeshingScope, ...], /) -> np.nda
     """One class per distinct (block, cell-organization membership) combination."""
 
     dimension = mesh.topological_dimension
+    membership = _membership(mesh, scopes, dimension)
+    if len(mesh.blocks) == 1:
+        leading = np.zeros((mesh.entity_set(dimension).count, 1), dtype=np.int64)
+        return (
+            leading[:, 0]
+            if membership[0].size == 0
+            else _membership_classes(leading, membership)
+        )
     block_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
@@ -877,9 +885,7 @@ def _cell_classes(mesh: CellMesh, scopes: tuple[MeshingScope, ...], /) -> np.nda
         ]
     )
     cells = key_rows(block_ids[:, None], entity_keys(mesh, dimension))
-    return _membership_classes(
-        block_rows[cells][:, None], _membership(mesh, scopes, dimension)
-    )
+    return _membership_classes(block_rows[cells][:, None], membership)
 
 
 def _edge_classes(
@@ -932,16 +938,18 @@ def _metric_rows(mesh: CellMesh, metric: MeshMetricField, /) -> np.ndarray:
     ):
         raise ValueError("The adaptation metric must be bound to the source vertices.")
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
-    rows = key_rows(
-        identifiers[:, None],
-        np.asarray(mesh.vertex_global_ids, dtype=np.int64)[:, None],
-    )
-    if identifiers.size != rows.size or np.any(rows < 0):
-        raise ValueError("The adaptation metric must cover every source vertex.")
-    values = np.asarray(metric.values, dtype=np.float64)[rows]
-    if values.shape[1:] != (mesh.ambient_dimension, mesh.ambient_dimension):
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    values = np.asarray(metric.values, dtype=np.float64)
+    if np.array_equal(identifiers, vertex_ids) and values.shape[0] == vertex_ids.size:
+        aligned = values.copy()
+    else:
+        rows = key_rows(identifiers[:, None], vertex_ids[:, None])
+        if identifiers.size != rows.size or np.any(rows < 0):
+            raise ValueError("The adaptation metric must cover every source vertex.")
+        aligned = values[rows]
+    if aligned.shape[1:] != (mesh.ambient_dimension, mesh.ambient_dimension):
         raise ValueError("The adaptation metric must match the ambient dimension.")
-    return values
+    return aligned
 
 
 def _resolve_constraints(
@@ -965,10 +973,10 @@ def _resolve_constraints(
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     organization = _organization_scopes(source)
     cell_classes = _cell_classes(mesh, organization)
-    facet_classes = _membership_classes(
-        np.zeros((mesh.entity_set(dimension - 1).count, 1), dtype=np.int64),
-        _membership(mesh, organization, dimension - 1),
-    )
+    facet_classes = np.zeros((mesh.entity_set(dimension - 1).count,), dtype=np.int64)
+    facet_membership = _membership(mesh, organization, dimension - 1)
+    if facet_membership[0].size:
+        facet_classes = _membership_classes(facet_classes[:, None], facet_membership)
     edge_codes = np.zeros((edge_count,), dtype=np.int64)
     transfer = policy.association_transfer
     if computed_layer_root is not None:
