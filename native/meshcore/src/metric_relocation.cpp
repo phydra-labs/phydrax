@@ -103,7 +103,11 @@ bool RelocationSearch::raw_goal(double* goal) {
         reached = reached && goal[axis] == vertex[axis];
       }
       if (!reached) {
-        ++step_;
+        if (pull_ == 0 && mode_.try_first_pull_once) {
+          ++pull_;
+        } else {
+          ++step_;
+        }
         return true;
       }
     }

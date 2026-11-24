@@ -346,6 +346,7 @@ class Adapter {
   std::int64_t relocate_sweep(bool closed_band_shape = false);
   std::int64_t smooth_shape();
   TetEditStatus relocate(std::int32_t vertex, bool& applied, bool closed_band_shape);
+  bool wall_ring_pull(std::int32_t vertex, const LocalIncidence::Star& star, double* pull) const;
   struct RelocationAttempt {
     std::vector<std::uint64_t> cells;
     std::span<const CarrierSimplex> chart;
@@ -2759,6 +2760,34 @@ Adapter::RelocationAttempt& Adapter::bind_relocation_attempt(
   return attempt;
 }
 
+bool Adapter::wall_ring_pull(std::int32_t vertex, const LocalIncidence::Star& star,
+                             double* pull) const {
+  const double* origin = mesh_.point(vertex);
+  std::fill_n(pull, 3, 0.0);
+  std::size_t faces = 0;
+  for (const auto slot : star) {
+    const Tetrahedron& cell = mesh_.tet(slot);
+    for (int face = 0; face < 4; ++face) {
+      if (cell.v[face] == vertex || mesh_.complex().constraint(slot, face) == kNoConstraint ||
+          !is_ghost(mesh_.tet(cell.n[face]))) continue;
+      ++faces;
+      for (int corner = 0; corner < 4; ++corner) {
+        if (corner == face || cell.v[corner] == vertex) continue;
+        const double* p = mesh_.point(cell.v[corner]);
+        for (int axis = 0; axis < 3; ++axis) pull[axis] += p[axis] - origin[axis];
+      }
+    }
+  }
+  if (faces < 3) return false;
+  // Each neighbor of a closed planar fan appears in two exterior triangles.
+  const double weight = 0.5 / static_cast<double>(faces);
+  for (int axis = 0; axis < 3; ++axis) {
+    pull[axis] *= weight;
+    if (!std::isfinite(pull[axis])) return false;
+  }
+  return pull[0] != 0.0 || pull[1] != 0.0 || pull[2] != 0.0;
+}
+
 TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_band_shape) {
   applied = false;
   if (!carriers_ || mesh_.protected_vertex(vertex) || mesh_.protection_radius(vertex) > 0.0) {
@@ -2843,6 +2872,9 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   }
   std::vector<double> pulls(3 * (4 * spokes + 8));
   std::int64_t pull_count = -1;
+  const bool regular_wall = basis_count == 2 && chart->allow_rounded_images;
+  const bool ring = regular_wall && !tangents && !deep && wall_ring_pull(vertex, star, pulls.data());
+  const std::int64_t prefix = ring ? 1 : 0;
   if (tangents) {
     pull_count = boundary_tangent_pulls(points, lengths, measured, metric(vertex), basis_count,
                                         basis.data(), pulls.data());
@@ -2852,8 +2884,11 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
           static_cast<std::int64_t>(spokes), points.data(), metric(vertex), lengths.data(),
           measured.data(), deep, interior, basis_count, interior ? nullptr : basis.data(),
           interior ? nullptr : projector.data(), nullptr,
-          static_cast<std::int64_t>(pulls.size() / 3), pulls.data());
-      if (pull_count >= 0) break;
+          static_cast<std::int64_t>(pulls.size() / 3) - prefix, pulls.data() + 3 * prefix);
+      if (pull_count >= 0) {
+        pull_count += prefix;
+        break;
+      }
       pulls.resize(2 * pulls.size());  // a deep search's tangents need more room
     }
   }
@@ -2864,6 +2899,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   mode.band_only = tangents || deep;
   mode.shape_lower = closed_band_shape ? lower : 0.0;
   mode.report_quality = false;
+  mode.try_first_pull_once = ring;
   RelocationStar relocation_star;
   relocation_star.point_count = static_cast<std::int64_t>(rows.size());
   relocation_star.points = points.data();

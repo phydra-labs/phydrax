@@ -78,6 +78,8 @@ struct RelocationMode {
   // Keep the quality of strict band improvements only for callers that
   // consume it. Equal-band acceptance always checks quality.
   bool report_quality = true;
+  // An optional initial goal is tried at full displacement only.
+  bool try_first_pull_once = false;
 };
 
 // One candidate: its carrier, interpolated tensor, and shape measure when

@@ -3058,6 +3058,10 @@ tangents. With relocation enabled, the native loop reports STALLED only
 after exhausting the enabled searches on one unchanged mesh generation.
 If an edit invalidates an earlier sweep, the loop requeues the live mesh
 before reporting residual edges.
+On an authored Cartesian face with a rounded-image source chart, shallow
+boundary relocation tries the current wall ring's mean first. A candidate
+at that target still needs the same source carrier, transported metric, and
+transaction checks. Seam and deeper searches retain their existing order.
 After the ordinary searches exhaust or an edited mesh first meets the
 requested band, a closed-cavity search improves aggregate metric shape
 without changing vertex coordinates, constrained facets, or protected
