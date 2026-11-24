@@ -50,6 +50,9 @@
 - Shallow Cartesian-wall relocation can begin with a wall-ring proposal.
   Its source witnesses and edit checks are unchanged. Adapted mesh and
   evidence IDs can change where the new proposal is accepted.
+- Native metric edits reuse ordered edge lengths while both endpoint
+  identities and carrier revisions remain unchanged. Trial coordinates
+  and tensor measurements still use the original exact-input path.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned

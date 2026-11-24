@@ -240,8 +240,32 @@ class Adapter {
   bool vertex_metric(const Stencil& stencil, double* tensor) const;
   double edge_length(std::int32_t a, std::int32_t b) const {
     // The graded log-mean is mathematically symmetric, not bit-symmetric.
-    if (mesh_.vertex_id(b) < mesh_.vertex_id(a)) std::swap(a, b);
-    return length(mesh_.point(a), mesh_.point(b), metric(a), metric(b));
+    auto first_id = mesh_.vertex_id(a);
+    auto second_id = mesh_.vertex_id(b);
+    if (second_id < first_id) {
+      std::swap(a, b);
+      std::swap(first_id, second_id);
+    }
+    if (edge_measurements_.empty()) {
+      return length(mesh_.point(a), mesh_.point(b), metric(a), metric(b));
+    }
+    const auto first = static_cast<std::uint32_t>(a);
+    const auto second = static_cast<std::uint32_t>(b);
+    const auto key = (static_cast<std::uint64_t>(first) << 32) | second;
+    std::uint64_t hash = key ^ (key >> 33);
+    hash *= 0xff51afd7ed558ccdULL;
+    hash ^= hash >> 33;
+    auto& entry = edge_measurements_[hash & (edge_measurements_.size() - 1)];
+    const auto first_revision = carrier_revisions_[first];
+    const auto second_revision = carrier_revisions_[second];
+    // Persistent identities distinguish reused slots; only a carrier edit
+    // changes the point or metric of a live endpoint.
+    if (entry.first_id != first_id || entry.second_id != second_id ||
+        entry.first_revision != first_revision || entry.second_revision != second_revision) {
+      entry = {first_id, second_id, first_revision, second_revision,
+               length(mesh_.point(a), mesh_.point(b), metric(a), metric(b))};
+    }
+    return entry.value;
   }
   IdEdge edge_ids(std::int32_t a, std::int32_t b) const {
     return id_edge(mesh_.vertex_id(a), mesh_.vertex_id(b));
@@ -442,6 +466,14 @@ class Adapter {
     bool operator==(const SplitRefusal&) const noexcept = default;
   };
   std::vector<std::uint64_t> carrier_revisions_;
+  struct EdgeMeasurement {
+    std::uint64_t first_id = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t second_id = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t first_revision = 0;
+    std::uint64_t second_revision = 0;
+    double value = 0.0;
+  };
+  mutable std::vector<EdgeMeasurement> edge_measurements_;
   std::unordered_map<std::uint64_t, SplitRefusal> unrepresentable_;
   std::uint64_t next_vertex_id_ = 0;
   std::uint64_t next_cell_id_ = 0;
@@ -3316,6 +3348,9 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     write(output);
     output.passes = 1;
     return TetEditStatus::kApplied;
+  }
+  if (mesh_.vertex_slot_count() >= 512) {
+    edge_measurements_.resize(16'384);
   }
   for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
     if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
