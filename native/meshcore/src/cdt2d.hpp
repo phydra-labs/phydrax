@@ -205,8 +205,8 @@ class ConstrainedMesher {
     // Only capacities change; refinement may still outgrow them. The cap
     // keeps a degenerate estimate from reserving untouched gigabytes.
     const double steiner = std::min(estimate.elements, 1048576.0);
-    const std::size_t vertices =
-        static_cast<std::size_t>(input_count) + static_cast<std::size_t>(steiner);
+    const auto initial = static_cast<std::size_t>(tri_.vertex_count());
+    const std::size_t vertices = initial + static_cast<std::size_t>(steiner);
     const std::size_t slots = 2 * vertices + 16;
     tri_.coordinates.reserve(2 * vertices);
     tri_.vertex_triangle.reserve(vertices);
@@ -215,13 +215,14 @@ class ConstrainedMesher {
     tri_.region.reserve(slots);
     tri_.live.reserve(slots);
     marks_.reserve(slots);
-    chain_ends_.reserve(static_cast<std::size_t>(steiner));
+    chain_ends_.reserve(vertices - static_cast<std::size_t>(input_count));
+    chain_ends_.assign(initial - static_cast<std::size_t>(input_count), {-1, -1});
     constraint_sources_.reserve(vertices);
     constraint_parents_.reserve(2 * vertices);
     constraint_ratios_.reserve(vertices);
-    constraint_sources_.assign(static_cast<std::size_t>(input_count), -1);
-    constraint_parents_.assign(2 * static_cast<std::size_t>(input_count), -1);
-    constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
+    constraint_sources_.assign(initial, -1);
+    constraint_parents_.assign(2 * initial, -1);
+    constraint_ratios_.assign(initial, 0.0);
   }
 
   void publish_witnesses(phx_mc_mesh& mesh) {

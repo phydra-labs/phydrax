@@ -135,7 +135,14 @@ double twice_area(const Result& r, std::size_t c) {
 
 double total_area(const Result& r) {
   double area = 0.0;
-  for (std::size_t c = 0; c < r.cells.size() / 3; ++c) area += 0.5 * twice_area(r, c);
+  // Accumulation error must not obscure coverage on the dense fixture.
+  double roundoff = 0.0;
+  for (std::size_t c = 0; c < r.cells.size() / 3; ++c) {
+    const double term = 0.5 * twice_area(r, c) - roundoff;
+    const double next = area + term;
+    roundoff = (next - area) - term;
+    area = next;
+  }
   return area;
 }
 
@@ -536,6 +543,41 @@ void test_ruppert_square() {
   PHX_CHECK_NEAR(total_area(r), 1.0, 1e-12);
   PHX_CHECK(r.points.size() / 2 > 4);
   for (int i = 0; i < 8; ++i) PHX_CHECK(r.points[i] == in.points[i]);
+}
+
+void test_dense_planar_refinement_retains_hole_and_authored_vertices() {
+  Input in = square_with_hole();
+  const auto first_new_vertex = static_cast<int32_t>(in.points.size() / 2);
+  in.points.insert(in.points.end(), {0.25, 0.5, 3.75, 0.5});
+  in.segments.insert(in.segments.end(), {first_new_vertex, first_new_vertex + 1});
+  in.max_area = 0x1p-15;
+  in.min_angle = 20.0;
+  const Result r = run(in);
+  PHX_CHECK(r.status == PHX_MC_OK);
+  if (r.status != PHX_MC_OK) return;
+  check_mesh(r);
+  check_segments(r, in);
+  check_quality(r, in.min_angle, in.max_area);
+  PHX_CHECK_NEAR(total_area(r), 12.0, 1e-12);
+  PHX_CHECK(r.vertex_map.size() == in.points.size() / 2);
+  PHX_CHECK(r.points.size() >= in.points.size() &&
+            std::equal(in.points.begin(), in.points.end(), r.points.begin()));
+  for (std::size_t i = 0; i < r.cells.size(); i += 3) {
+    const double* a = at(r, r.cells[i]);
+    const double* b = at(r, r.cells[i + 1]);
+    const double* c = at(r, r.cells[i + 2]);
+    const double x = (a[0] + b[0] + c[0]) / 3.0;
+    const double y = (a[1] + b[1] + c[1]) / 3.0;
+    PHX_CHECK(!(x > 1.0 && x < 3.0 && y > 1.0 && y < 3.0));
+  }
+  for (std::size_t v = in.points.size() / 2; v < r.constraint_sources.size(); ++v) {
+    if (r.constraint_sources[v] < 0) continue;
+    const int32_t first = r.constraint_parents[2 * v];
+    const int32_t last = r.constraint_parents[2 * v + 1];
+    PHX_CHECK(first >= 0 && first < static_cast<int32_t>(v));
+    PHX_CHECK(last >= 0 && last < static_cast<int32_t>(v));
+    PHX_CHECK(r.constraint_ratios[v] > 0.0 && r.constraint_ratios[v] < 1.0);
+  }
 }
 
 void test_refinement_angle_thresholds() {
@@ -971,6 +1013,7 @@ int main() {
   test_ranked_heap_matches_binary_heap();
   test_dot_sign_against_integer_reference();
   test_ruppert_square();
+  test_dense_planar_refinement_retains_hole_and_authored_vertices();
   test_refinement_angle_thresholds();
   test_ruppert_l_shape();
   test_ok_status_certifies_quality();
