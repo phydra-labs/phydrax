@@ -696,6 +696,9 @@
 - Native metric adaptation skips an unused shape measurement when a
   relocation strictly improves the edge band. Shape still decides
   equal-band moves and is still reported by the relocation proposal API.
+- Scalar metric gradation skips the constrained spectrum solve when every
+  log-eigenvalue shift is zero, retaining the rounded tensor and its
+  edgewise gradation evidence.
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
   Where supported, `candidate.prove()` certifies that mesh later. Certified
   octree hex-dominant meshes and owner-local execution require

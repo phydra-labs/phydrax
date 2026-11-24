@@ -999,7 +999,11 @@ def _scalar_violation(
 
 
 def _realize_mean_sizes(
-    eigenvalues: np.ndarray, sizes: np.ndarray, upper: float, /
+    logarithms: np.ndarray,
+    mean_logarithms: np.ndarray,
+    sizes: np.ndarray,
+    upper: float,
+    /,
 ) -> np.ndarray:
     """Uniform log-eigenvalue shifts reaching ``det(M)**(-1/(2d)) = size``.
 
@@ -1007,10 +1011,14 @@ def _realize_mean_sizes(
     raised above the upper bound, and anisotropy never increases. The piecewise
     linear mean is solved exactly for each saturation count.
     """
-    dimension = eigenvalues.shape[1]
-    logarithms = np.log(eigenvalues)
-    caps = np.maximum(logarithms, math.log(upper))
+    log_upper = math.log(upper)
     target = -2.0 * np.log(sizes)
+    unshifted = target <= mean_logarithms
+    if np.all(unshifted):
+        # Match the zero-shift reconstruction, including its log/exp rounding.
+        return np.exp(logarithms)
+    dimension = logarithms.shape[1]
+    caps = np.maximum(logarithms, log_upper)
     thresholds = caps - logarithms
     order = np.argsort(thresholds, axis=1, kind="stable")
     sorted_thresholds = np.take_along_axis(thresholds, order, axis=1)
@@ -1032,7 +1040,7 @@ def _realize_mean_sizes(
         )
         shift = np.where(accept, candidate, shift)
         solved |= accept
-    shift = np.where(target <= np.mean(logarithms, axis=1), 0.0, shift)
+    shift = np.where(unshifted, 0.0, shift)
     return np.exp(np.minimum(logarithms + shift[:, None], caps))
 
 
@@ -1242,13 +1250,17 @@ def _grade_eigenpairs(
 ) -> tuple[np.ndarray, MetricGradationEvidence]:
     rows = eigenvalues.shape[0]
     if not policy.anisotropic:
-        sizes = np.exp(-0.5 * np.mean(np.log(eigenvalues), axis=1))
+        logarithms = np.log(eigenvalues)
+        mean_logarithms = np.mean(logarithms, axis=1)
+        sizes = np.exp(-0.5 * mean_logarithms)
         lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
         growth = np.full((edges.shape[0],), policy.maximum_gradation)
         graded, pops, updates = _grade_scalar_sizes(
             sizes, edges, lengths, growth, policy.kind
         )
-        realized = _realize_mean_sizes(eigenvalues, graded, bounds[0] ** -2)
+        realized = _realize_mean_sizes(
+            logarithms, mean_logarithms, graded, bounds[0] ** -2
+        )
         achieved = np.exp(-0.5 * np.mean(np.log(realized), axis=1))
         violation = _scalar_violation(achieved, edges, lengths, growth, policy.kind)
         evidence = MetricGradationEvidence(
