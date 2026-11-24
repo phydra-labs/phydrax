@@ -131,6 +131,13 @@ bool objective_decreases(const Violations& removed, const Violations& added, boo
   return order != 0 ? order < 0 : gain;
 }
 
+// Use one reference for the entire shape stage. A committed cavity increases
+// the sum of these scores on the fixed vertex bank, even when its cell count
+// changes. The reference is the mean of the mesh entering the stage.
+double shape_score(double total, std::size_t cells, double reference) {
+  return total - static_cast<double>(cells) * reference;
+}
+
 std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
   const auto low = static_cast<std::uint32_t>(std::min(a, b));
   const auto high = static_cast<std::uint32_t>(std::max(a, b));
@@ -311,6 +318,9 @@ class Adapter {
   // Swaps: 2-3 face flips and ring reconnections (3-2 included) of interior
   // cavities, committed star-locally.
   std::int64_t swap_sweep();
+  std::int64_t shape_sweeps();
+  std::int64_t commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
+                            std::vector<IdEdge>& edges, std::optional<double> shape_reference);
   double quality(const std::array<std::int32_t, 4>& cell) const;
   // The quality of a live cell, kept until the cell or a corner changes.
   double cell_quality(std::int32_t slot);
@@ -320,8 +330,10 @@ class Adapter {
   bool oriented_quality(const std::array<std::int32_t, 4>& cell, double& value) const;
   TetEditStatus replace(TetEditKind kind, const std::vector<std::int32_t>& cavity,
                         const std::vector<std::array<std::int32_t, 4>>& cells, bool& applied);
-  TetEditStatus try_ring(std::int32_t s, std::int32_t t, bool& applied);
-  TetEditStatus try_flip23(std::int32_t slot, int face, bool& applied);
+  TetEditStatus try_ring(std::int32_t s, std::int32_t t, bool& applied,
+                         std::optional<double> shape_reference);
+  TetEditStatus try_flip23(std::int32_t slot, int face, bool& applied,
+                            std::optional<double> shape_reference);
   // Swaps the boundary edge (s t), on the facets (s t c) and (s t d) of one
   // group, for (c d): `shell` becomes `cells` and the facets (s c d) and
   // (t c d), through LocalIncidence::swap_boundary_edge.
@@ -1908,13 +1920,63 @@ TetEditStatus Adapter::replace(TetEditKind kind, const std::vector<std::int32_t>
   return TetEditStatus::kApplied;
 }
 
-TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
+constexpr std::size_t kMaxRingCells = 7;
+
+// The shared shell validation supplies either no constrained ends or two
+// distinct ends with the same source label. An empty result refuses a fork,
+// repeated vertex, or wrong closure before any tiling is proposed.
+std::vector<std::int32_t> order_ring_link(
+    std::span<const std::array<std::int32_t, 2>> links,
+    std::span<const std::pair<std::int32_t, std::int32_t>> through) {
+  const bool closed = through.empty();
+  const std::size_t target = links.size() + (closed ? 0U : 1U);
+  std::vector<std::int32_t> ring;
+  ring.reserve(target);
+  std::array<bool, kMaxRingCells> used{};
+  if (closed) {
+    ring.push_back(links.front()[0]);
+    ring.push_back(links.front()[1]);
+    used[0] = true;
+  } else {
+    ring.push_back(through.front().second);
+  }
+  while (ring.size() < target) {
+    const auto last = ring.back();
+    bool extended = false;
+    for (std::size_t index = 0; index < links.size(); ++index) {
+      const auto [first, second] = links[index];
+      if (used[index] || (first != last && second != last)) continue;
+      const auto next = first == last ? second : first;
+      if (std::ranges::find(ring, next) != ring.end()) return {};
+      ring.push_back(next);
+      used[index] = true;
+      extended = true;
+      break;
+    }
+    if (!extended) return {};
+  }
+  if (closed) {
+    for (std::size_t index = 0; index < links.size(); ++index) {
+      if (used[index]) continue;
+      const auto [first, second] = links[index];
+      if ((first == ring.back() && second == ring.front()) ||
+          (second == ring.back() && first == ring.front())) return ring;
+      break;
+    }
+    return {};
+  }
+  if (ring.back() != through.back().second) return {};
+  return ring;
+}
+
+TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
+                                 std::optional<double> shape_reference) {
   applied = false;
   if (protected_edge(s, t)) return TetEditStatus::kApplied;
   const std::span<const std::int32_t> view = incidence_.edge_star(s, t);
   std::vector<std::int32_t> shell(view.begin(), view.end());
   const std::size_t n = shell.size();
-  if (n < 2 || n > 7) return TetEditStatus::kApplied;
+  if (n < 2 || n > kMaxRingCells) return TetEditStatus::kApplied;
   std::ranges::sort(shell, {}, [&](std::int32_t cell) { return mesh_.cell_id(cell); });
   const std::int32_t region = mesh_.complex().region(shell.front());
   const std::int32_t block = cell_blocks_[static_cast<std::size_t>(shell.front())];
@@ -1924,7 +1986,8 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
   // with the new edge (c d) and its facets (s c d) and (t c d).
   std::vector<std::array<std::int32_t, 2>> links;
   std::vector<std::pair<std::int32_t, std::int32_t>> through;  // facet label, opposite vertex
-  double before_quality = std::numeric_limits<double>::infinity();
+  const bool shape = shape_reference.has_value();
+  double before_quality = shape ? 0.0 : std::numeric_limits<double>::infinity();
   for (std::int32_t slot : shell) {
     const Tetrahedron& cell = mesh_.tet(slot);
     if (mesh_.complex().region(slot) != region ||
@@ -1944,56 +2007,29 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
       if (label != kNoConstraint) through.emplace_back(label, other[1 - side]);
     }
     links.push_back(other);
-    before_quality = std::min(before_quality, cell_quality(slot));
+    const double quality = cell_quality(slot);
+    before_quality = shape ? before_quality + quality : std::min(before_quality, quality);
   }
   const bool closed = through.empty();
+  if (shape && !closed) return TetEditStatus::kApplied;
   if (!closed && (through.size() != 2 || through[0].first != through[1].first ||
                   through[0].second == through[1].second)) {
     return TetEditStatus::kApplied;
   }
   if (closed && n < 3) return TetEditStatus::kApplied;
-  std::vector<std::int32_t> ring;
-  std::vector<char> used(n, 0);
-  if (closed) {
-    ring = {links.front()[0], links.front()[1]};
-    used[0] = 1;
-  } else {
-    ring = {through[0].second};
-  }
-  while (ring.size() < (closed ? n : n + 1)) {
-    bool extended = false;
-    for (std::size_t index = 0; index < n && !extended; ++index) {
-      if (used[index] != 0) continue;
-      for (int side = 0; side < 2; ++side) {
-        if (links[index][static_cast<std::size_t>(side)] == ring.back()) {
-          ring.push_back(links[index][static_cast<std::size_t>(1 - side)]);
-          used[index] = 1;
-          extended = true;
-          break;
-        }
-      }
-    }
-    if (!extended) return TetEditStatus::kApplied;
-  }
-  if (closed) {
-    // The last link joins the ring's ends.
-    std::size_t last = 0;
-    while (last < n && used[last] != 0) ++last;
-    if (last == n) return TetEditStatus::kApplied;
-    const auto& link = links[last];
-    if (!((link[0] == ring.back() && link[1] == ring.front()) ||
-          (link[1] == ring.back() && link[0] == ring.front()))) {
-      return TetEditStatus::kApplied;
-    }
-  } else if (ring.back() != through[1].second) {
-    return TetEditStatus::kApplied;
-  }
+  const auto ring = order_ring_link(links, through);
+  if (ring.empty()) return TetEditStatus::kApplied;
   const std::size_t m = ring.size();
-  if (std::set<std::int32_t>(ring.begin(), ring.end()).size() != m) return TetEditStatus::kApplied;
 
+  const double removed_length = edge_length(s, t);
   Violations removed;
-  removed.add(edge_length(s, t));
-  removed.finish();
+  if (shape) {
+    if (!std::isfinite(removed_length)) return TetEditStatus::kApplied;
+    before_quality = shape_score(before_quality, n, *shape_reference);
+  } else {
+    removed.add(removed_length);
+    removed.finish();
+  }
   // Every triangulation of the ring polygon: two cells per triangle.
   struct Option {
     std::vector<std::array<std::int32_t, 4>> cells;
@@ -2015,7 +2051,7 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
   std::vector<double> diagonal_length(m * m, 0.0);
   const auto evaluate = [&]() {
     Option option;
-    double worst = std::numeric_limits<double>::infinity();
+    double quality = shape ? 0.0 : std::numeric_limits<double>::infinity();
     // The triangles share one winding, so one orientation serves them all; a
     // triangle that needs the other is folded and the option is no tiling.
     int winding = 0;
@@ -2049,7 +2085,7 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
       if (option.cells.size() != 2 * static_cast<std::size_t>(&triangle - triangles.data() + 1)) {
         return;
       }
-      worst = std::min({worst, first, second});
+      quality = shape ? (quality + first) + second : std::min({quality, first, second});
     }
     // The diagonals: ring index pairs of the triangles that are not ring
     // sides (an open ring's ends are joined by a new edge), each checked (new
@@ -2071,18 +2107,23 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
       if (diagonal_state[key] == 0) {
         const std::int32_t x = ring[static_cast<std::size_t>(i)];
         const std::int32_t y = ring[static_cast<std::size_t>(j)];
-        const bool admitted = !protected_edge(x, y) && incidence_.edge_star(x, y).empty();
-        diagonal_state[key] = admitted ? 1 : 2;
-        if (admitted) diagonal_length[key] = edge_length(x, y);
+        if (!protected_edge(x, y) && incidence_.edge_star(x, y).empty()) {
+          const double value = edge_length(x, y);
+          diagonal_length[key] = value;
+          const bool eligible = !shape || (value >= kLowerLength && value <= kUpperLength);
+          diagonal_state[key] = eligible ? 1 : 2;
+        } else {
+          diagonal_state[key] = 2;
+        }
       }
       if (diagonal_state[key] != 1) return;
-      option.added.add(diagonal_length[key]);
+      if (!shape) option.added.add(diagonal_length[key]);
     }
     if (!option.added.measured) return;
-    option.added.finish();
-    option.quality = worst;
-    if (!best || compare_violations(option.added, best->added) < 0 ||
-        (compare_violations(option.added, best->added) == 0 && option.quality > best->quality)) {
+    if (!shape) option.added.finish();
+    option.quality = shape ? shape_score(quality, option.cells.size(), *shape_reference) : quality;
+    const int band_order = best && !shape ? compare_violations(option.added, best->added) : 0;
+    if (!best || band_order < 0 || (band_order == 0 && option.quality > best->quality)) {
       best = std::move(option);
     }
   };
@@ -2101,7 +2142,8 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
       };
   triangulate(0, static_cast<int>(m) - 1, evaluate);
   if (!best || !removed.measured) return TetEditStatus::kApplied;
-  if (!objective_decreases(removed, best->added, best->quality > before_quality + kImprovement)) {
+  const bool gain = best->quality > before_quality + kImprovement;
+  if (!(shape ? gain : objective_decreases(removed, best->added, gain))) {
     return TetEditStatus::kApplied;
   }
   if (!closed) {
@@ -2113,7 +2155,8 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
   return status;
 }
 
-TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied) {
+TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied,
+                                   std::optional<double> shape_reference) {
   applied = false;
   if (!mesh_.complex().live(slot) || mesh_.complex().constraint(slot, face) != kNoConstraint) {
     return TetEditStatus::kApplied;
@@ -2134,32 +2177,42 @@ TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied) {
   // The face, oriented so that s is on its positive side.
   std::int32_t facet[3];
   oriented_facet(first.v, face, facet);
+  const bool shape = shape_reference.has_value();
   const double before_quality =
-      std::min(cell_quality(slot), cell_quality(other));
+      shape ? shape_score(cell_quality(slot) + cell_quality(other), 2, *shape_reference)
+            : std::min(cell_quality(slot), cell_quality(other));
   std::vector<std::array<std::int32_t, 4>> cells;
   double after_quality = std::numeric_limits<double>::infinity();
   for (int choice : {1, -1}) {
     cells.clear();
-    after_quality = std::numeric_limits<double>::infinity();
+    after_quality = shape ? 0.0 : std::numeric_limits<double>::infinity();
     for (int side = 0; side < 3; ++side) {
       std::array<std::int32_t, 4> cell{facet[side], facet[(side + 1) % 3], t, s};
       if (choice < 0) std::swap(cell[0], cell[1]);
       double value = 0.0;
       if (!oriented_quality(cell, value)) break;
-      after_quality = std::min(after_quality, value);
+      after_quality = shape ? after_quality + value : std::min(after_quality, value);
       cells.push_back(cell);
     }
     if (cells.size() == 3) break;
   }
   if (cells.size() != 3) return TetEditStatus::kApplied;
-  Violations removed;
-  removed.finish();
-  Violations added;
-  added.add(edge_length(s, t));
-  if (!added.measured) return TetEditStatus::kApplied;
-  added.finish();
-  if (!objective_decreases(removed, added, after_quality > before_quality + kImprovement)) {
-    return TetEditStatus::kApplied;
+  const double added_length = edge_length(s, t);
+  if (shape) {
+    if (!(added_length >= kLowerLength && added_length <= kUpperLength) ||
+        !(shape_score(after_quality, cells.size(), *shape_reference) >
+          before_quality + kImprovement)) {
+      return TetEditStatus::kApplied;
+    }
+  } else {
+    Violations removed;
+    Violations added;
+    added.add(added_length);
+    if (!added.measured) return TetEditStatus::kApplied;
+    added.finish();
+    if (!objective_decreases(removed, added, after_quality > before_quality + kImprovement)) {
+      return TetEditStatus::kApplied;
+    }
   }
   const std::vector<std::int32_t> cavity{slot, other};
   const TetEditStatus status = replace(TetEditKind::kFlip23, cavity, cells, applied);
@@ -2198,6 +2251,57 @@ std::int64_t Adapter::swap_sweep() {
     }
   }
   dirty_[kSwapPhase].clear();
+  return commit_swaps(faces, edges, std::nullopt);
+}
+
+std::int64_t Adapter::shape_sweeps() {
+  // The ordinary frontier contains only residual edges and poor cells.
+  // After it is exhausted, admit changes to any closed cavity, once per
+  // adapter run. Fixing the reference and moving no vertices gives a finite
+  // strictly improving topology search, without a sweep cap.
+  const auto& cells = mesh_.complex().tets;
+  std::size_t count = 0;
+  double total = 0.0;
+  for (std::size_t row = 0; row < cells.size(); ++row) {
+    const auto slot = static_cast<std::int32_t>(row);
+    if (!mesh_.complex().live(slot) || is_ghost(cells[row])) continue;
+    total += cell_quality(slot);
+    ++count;
+  }
+  if (count == 0 || !std::isfinite(total)) return 0;
+  const double reference = total / static_cast<double>(count);
+  std::vector<std::pair<std::uint64_t, int>> faces;
+  std::vector<IdEdge> edges;
+  std::int64_t sweeps = 0;
+  for (;;) {
+    faces.clear();
+    edges.clear();
+    for (std::size_t row = 0; row < cells.size(); ++row) {
+      const auto slot = static_cast<std::int32_t>(row);
+      const Tetrahedron& cell = cells[row];
+      if (!mesh_.complex().live(slot) || is_ghost(cell)) continue;
+      const auto id = mesh_.cell_id(slot);
+      for (int first = 0; first < 4; ++first) {
+        const auto other = cell.n[first];
+        if (mesh_.complex().live(other) && !is_ghost(mesh_.tet(other)) &&
+            id < mesh_.cell_id(other) &&
+            mesh_.complex().constraint(slot, first) == kNoConstraint) {
+          faces.emplace_back(id, first);
+        }
+        for (int second = first + 1; second < 4; ++second) {
+          edges.push_back(edge_ids(cell.v[first], cell.v[second]));
+        }
+      }
+    }
+    const auto applied = commit_swaps(faces, edges, reference);
+    if (fatal_ != TetEditStatus::kApplied || applied == 0) return sweeps;
+    ++sweeps;
+  }
+}
+
+std::int64_t Adapter::commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
+                                   std::vector<IdEdge>& edges,
+                                   std::optional<double> shape_reference) {
   std::sort(faces.begin(), faces.end());
   faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
   std::sort(edges.begin(), edges.end());
@@ -2207,7 +2311,7 @@ std::int64_t Adapter::swap_sweep() {
     const auto slot = mesh_.cell_slot(id);
     if (slot < 0) continue;
     bool done = false;
-    const TetEditStatus status = try_flip23(slot, face, done);
+    const TetEditStatus status = try_flip23(slot, face, done, shape_reference);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
@@ -2219,7 +2323,7 @@ std::int64_t Adapter::swap_sweep() {
     const auto b = mesh_.vertex_slot(key[1]);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
     bool done = false;
-    const TetEditStatus status = try_ring(a, b, done);
+    const TetEditStatus status = try_ring(a, b, done, shape_reference);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
@@ -3032,6 +3136,7 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
   }
   AdaptStatus status = AdaptStatus::kComplete;
   std::int64_t passes = 0;
+  bool shape_searched = false;
   // A stall certifies exhaustion only for a generation that was fully
   // queued at stage zero with all requested search gates enabled.
   std::optional<std::uint64_t> exhaustion_generation;
@@ -3075,6 +3180,17 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     } else if (input_.relocation && carriers_ && relocation_stage_ < 5) {
       ++relocation_stage_;
     } else if (input_.relocation && carriers_ && exhaustion_generation != mesh_.generation()) {
+      relocation_stage_ = 0;
+    } else if (input_.topology_operations && !shape_searched) {
+      shape_searched = true;
+      const auto shaped = shape_sweeps();
+      if (fatal_ != TetEditStatus::kApplied) return fatal_;
+      if (shaped == 0) {
+        status = AdaptStatus::kStalled;
+        break;
+      }
+      passes += shaped;
+      // Topology changes reopen the ordinary search on the new generation.
       relocation_stage_ = 0;
     } else {
       status = AdaptStatus::kStalled;
