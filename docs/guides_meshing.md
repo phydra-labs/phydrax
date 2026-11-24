@@ -3013,6 +3013,12 @@ The route returns the exact dyadic source stencils, source-cell lineage, and
 `TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
 by the host phase schedule until native periodic local commits exist.
 
+For an audited single-region affine tetrahedral source without additional
+constraints, native metric measurements can establish an unchanged result
+before mutable edit state is allocated. This requires the strict unit band
+on every edge and retains full metric evidence. A relaxed completion length
+does not widen this initial check.
+
 Host preparation gathers and sorts fixed-width entity keys by row without
 changing entity order. Variable-width polyhedral faces keep trailing padding.
 Tetrahedral preparation retains the constrained source facets and their

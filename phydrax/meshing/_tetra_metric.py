@@ -25,6 +25,7 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     IntervalBranchProgram,
+    meshcore_exact_domain,
     metric_band_quanta,
     metric_collapse_positions,
     metric_congruence_defects,
@@ -61,6 +62,8 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
+from ..discretization._cell_complex import TetrahedralConnectivity
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock
 from ..linalg._exact import solve_exact
 from ..typing import ConvertibleToArray
@@ -1682,9 +1685,9 @@ def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSour
     )
 
 
-def _canonical_lagrange_vertices(
+def _canonical_lagrange_layout(
     mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
-) -> tuple[tuple[Fraction, Fraction, Fraction], ...] | None:
+) -> bool:
     """Recognize the exact binary64 nodal map without expanding its cells."""
     from ..discretization.fem import lagrange_element
 
@@ -1697,22 +1700,135 @@ def _canonical_lagrange_vertices(
         or geometry.block_names != tuple(block.name for block in mesh.blocks)
         or not np.array_equal(np.asarray(geometry.coordinates), points)
     ):
-        return None
+        return False
     linear = lagrange_element("tetrahedron", 1)
     covered = np.zeros(points.shape[0], dtype=np.bool_)
     for block, element, route in zip(
         mesh.blocks, geometry.elements, geometry.geometry_dofs, strict=True
     ):
         if block.cell_kind != "tetrahedron" or element is not linear:
-            return None
+            return False
         vertices = np.asarray(block.vertices)
         if not np.array_equal(np.asarray(route), vertices):
-            return None
+            return False
         covered[vertices] = True
     if not np.all(covered):
         raise ValueError("Exact source geometry does not cover every metric vertex.")
+    return True
+
+
+def _canonical_lagrange_vertices(
+    mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
+) -> tuple[tuple[Fraction, Fraction, Fraction], ...] | None:
+    if not _canonical_lagrange_layout(mesh, geometry, points):
+        return None
     return tuple(
         (Fraction(float(x)), Fraction(float(y)), Fraction(float(z))) for x, y, z in points
+    )
+
+
+def _admit_metric_bank(values: np.ndarray, vertex_count: int, /) -> np.ndarray:
+    metric = _tensor_array(values, vertex_count)
+    if metric.shape[1:] != (3, 3):
+        raise ValueError(
+            "Tetra adaptation requires a true 3x3 SPD metric at every vertex."
+        )
+    symmetric, positive_definite = metric_tensor_properties(metric)
+    if not np.all(symmetric) or not np.all(positive_definite):
+        raise ValueError(
+            "Tetra adaptation requires finite symmetric positive-definite metrics."
+        )
+    if np.any(np.abs(metric) > _METRIC_ENTRY_BOUND):
+        raise ValueError(
+            "Tetra adaptation requires metric entries of magnitude at most 2**778: "
+            "larger ones cannot be measured over the exact coordinate domain."
+        )
+    return metric
+
+
+def _plain_tetra_source_is_current(source: CellMeshingResult, /) -> bool:
+    mesh = source.mesh
+    audit = source.audit
+    if (
+        source.certification is not None
+        or not audit.passed
+        or audit.recorded
+        or audit.unresolved
+        or audit.manifold_scope is not None
+        or not audit.validity.all_certified
+        or audit.mesh_id != mesh.mesh_id
+        or audit.geometry_id != cell_geometry_id(source.geometry)
+        or not source.coordinate_contract.reference_frame
+    ):
+        return False
+    checks = dict(audit.check_counts)
+    for name in (
+        "coincident_vertices",
+        "collapsed_cells",
+        "duplicate_cells",
+        "nonmanifold_facets",
+        "nonmanifold_edges",
+        "nonmanifold_vertices",
+        "inconsistent_orientation",
+        "self_intersection",
+        "invalid_geometry",
+    ):
+        if name not in audit.evaluated_checks or checks.get(name) != 0:
+            return False
+    audit.validity.require_bound(source.geometry, mesh=mesh)
+    return True
+
+
+def strict_plain_tetra_metric_noop(
+    source: CellMeshingResult, metric_values: np.ndarray, /
+) -> TetraMetricEvidence | None:
+    """Measure strict-band completion of an unprotected, single-region P1 mesh."""
+    mesh = source.mesh
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity) or len(mesh.blocks) != 1:
+        return None
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    cells = np.asarray(mesh.blocks[0].vertices)
+    if (
+        not points.size
+        or not cells.size
+        or max(points.shape[0], cells.shape[0]) >= np.iinfo(np.int32).max // 4
+        or not _canonical_lagrange_layout(mesh, source.geometry, points)
+        or not _plain_tetra_source_is_current(source)
+    ):
+        return None
+    minimum, maximum = meshcore_exact_domain()
+    magnitude = np.abs(points)
+    if not np.all(
+        (magnitude == 0.0) | ((magnitude >= 2.0**minimum) & (magnitude <= 2.0**maximum))
+    ):
+        return None
+    if not np.all(_tetra_orientation(points, cells, PredicateMode.EXACT) == 1):
+        return None
+    metric = _admit_metric_bank(metric_values, points.shape[0])
+    edges = np.asarray(connectivity.edges)
+    vertex_ids = np.asarray(mesh.vertex_global_ids)
+    reverse = vertex_ids[edges[:, 0]] > vertex_ids[edges[:, 1]]
+    if np.any(reverse):
+        edges = edges.copy()
+        edges[reverse] = edges[reverse, ::-1]
+    lengths = metric_lengths(points, metric, edges)
+    if not np.all((lengths >= _LOWER) & (lengths <= _UPPER)):
+        return None
+    quality = metric_tetra_quality(points, metric, cells)
+    if not np.all(np.isfinite(quality) & (quality > 0.0)):
+        return None
+    return _metric_evidence(
+        TetraMetricStatus.COMPLETE,
+        1,
+        dict.fromkeys(_EditCounters._fields, 0),
+        lengths,
+        np.zeros(lengths.shape, dtype=np.bool_),
+        quality,
+        0.0,
+        lambda _: (),
+        None,
+        lower=_LOWER,
     )
 
 
@@ -1764,21 +1880,7 @@ def _prepare_native_state(
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if vertex_ids.shape != (points.shape[0],):
         raise ValueError("Source vertex identities do not align with coordinates.")
-    metric = _tensor_array(metric_values, points.shape[0])
-    if metric.shape[1:] != (3, 3):
-        raise ValueError(
-            "Tetra adaptation requires a true 3x3 SPD metric at every vertex."
-        )
-    symmetric, positive_definite = metric_tensor_properties(metric)
-    if not np.all(symmetric) or not np.all(positive_definite):
-        raise ValueError(
-            "Tetra adaptation requires finite symmetric positive-definite metrics."
-        )
-    if np.any(np.abs(metric) > _METRIC_ENTRY_BOUND):
-        raise ValueError(
-            "Tetra adaptation requires metric entries of magnitude at most 2**778: "
-            "larger ones cannot be measured over the exact coordinate domain."
-        )
+    metric = _admit_metric_bank(metric_values, points.shape[0])
 
     block_cells = []
     block_cell_ids = []

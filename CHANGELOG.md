@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Tetrahedral metric adaptation returns the audited source unchanged without
+  allocating edit state when the native strict unit-band check passes.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Tetrahedral adaptation resolves full-width source lineage by direct key

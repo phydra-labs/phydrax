@@ -230,6 +230,7 @@ from ._surface_metric import (
 from ._surface_metric_controller import SurfaceMetricController
 from ._tetra_metric import (
     execute_tetra_metric_adaptation,
+    strict_plain_tetra_metric_noop,
     TetraMetricEvidence,
     TetraMetricOutcome,
     TetraMetricStatus,
@@ -7521,11 +7522,36 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
     return _finish_tetra_metric_route(prepared, request, outcome)
 
 
+def _plain_tetra_metric_controls(
+    mesh: CellMesh, constraints: _AdaptationConstraints, /
+) -> bool:
+    if mesh.topological_dimension != 3:
+        return False
+    banks = (
+        (constraints.cell_classes, mesh.entity_set(3).count, np.int64),
+        (constraints.facet_classes, mesh.entity_set(2).count, np.int64),
+        (constraints.edge_classes, mesh.entity_set(1).count, np.int64),
+        (constraints.protected_edge_mask, mesh.entity_set(1).count, np.bool_),
+        (constraints.fixed_vertex_mask, mesh.entity_set(0).count, np.bool_),
+    )
+    return all(
+        bank.shape == (count,) and bank.dtype == dtype and not np.any(bank)
+        for bank, count, dtype in banks
+    )
+
+
 def _construct_tetra_metric_edit(
     prepared: PreparedMeshAdaptation, request: MetricMeshAdaptation, /
-) -> TetraMetricOutcome:
+) -> TetraMetricOutcome | TetraMetricEvidence:
     policy = prepared.policy
     constraints = prepared.constraints
+    predicate_mode = resolve_host_predicate_mode(policy.predicate_mode)
+    if _plain_tetra_metric_controls(prepared.source.mesh, constraints):
+        unchanged = strict_plain_tetra_metric_noop(
+            prepared.source, constraints.metric_values
+        )
+        if unchanged is not None:
+            return unchanged
     return execute_tetra_metric_adaptation(
         prepared.source,
         constraints.metric_values,
@@ -7534,7 +7560,7 @@ def _construct_tetra_metric_edit(
         edge_classes=constraints.edge_classes,
         protected_edges=constraints.protected_edge_mask,
         fixed_vertices=constraints.fixed_vertex_mask,
-        predicate_mode=resolve_host_predicate_mode(policy.predicate_mode),
+        predicate_mode=predicate_mode,
         topology_operations=True,
         relocation=policy.relocation,
         accepted_minimum_length=request.accepted_minimum_length,
@@ -7544,10 +7570,10 @@ def _construct_tetra_metric_edit(
 def _finish_tetra_metric_route(
     prepared: PreparedMeshAdaptation,
     request: MetricMeshAdaptation,
-    outcome: TetraMetricOutcome,
+    outcome: TetraMetricOutcome | TetraMetricEvidence,
     /,
 ) -> _RouteOutcome:
-    evidence = outcome.evidence
+    evidence = outcome if isinstance(outcome, TetraMetricEvidence) else outcome.evidence
     match evidence.status:
         case TetraMetricStatus.COMPLETE:
             status = MeshAdaptationStatus.COMPLETE
@@ -7565,6 +7591,8 @@ def _finish_tetra_metric_route(
     )
     if applied == 0:
         return _unchanged(prepared, evidence, None, status=status)
+    if isinstance(outcome, TetraMetricEvidence):
+        raise RuntimeError("A tetrahedral no-op cannot report applied edits.")
     native = _finalize_native(
         prepared,
         outcome.edit,

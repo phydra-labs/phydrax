@@ -1885,6 +1885,7 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
         _finish_tetra_metric_route,
     )
     from phydrax.meshing._canonical import certify_cell_mesh
+    from phydrax.meshing._tetra_metric import TetraMetricEvidence
 
     rows: list[_Row] = []
     for size, h in _F6_SIZES.items():
@@ -1937,7 +1938,9 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 points: np.ndarray = points,
             ) -> _F6Run:
                 def construct() -> tuple[
-                    PreparedMeshAdaptation, MetricMeshAdaptation, TetraMetricOutcome
+                    PreparedMeshAdaptation,
+                    MetricMeshAdaptation,
+                    TetraMetricOutcome | TetraMetricEvidence,
                 ]:
                     graded, _ = grade_mesh_metric(
                         target, policy=gradation, adjacency=edges, coordinates=points
@@ -1954,7 +1957,11 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 outcome, finalization_seconds = measure_synchronized(
                     partial(_finish_tetra_metric_route, *construction)
                 )
-                evidence = construction[2].evidence
+                evidence = outcome.evidence
+                if not isinstance(evidence, TetraMetricEvidence):
+                    raise TypeError(
+                        "The tetra metric route must report tetra metric evidence."
+                    )
                 return _F6Run(
                     outcome,
                     construction_seconds,

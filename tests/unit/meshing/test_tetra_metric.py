@@ -50,6 +50,7 @@ from phydrax.meshing._tetra_metric import (
     _topology,
     _unit_metric_status,
     execute_tetra_metric_adaptation,
+    TetraMetricEvidence,
     TetraMetricOutcome,
     TetraMetricStatus,
     TetraMetricUnmetKind,
@@ -399,6 +400,73 @@ def test_nonperiodic_refinement_reaches_the_unit_metric() -> None:
     assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+
+
+def _plain_metric_request(
+    source: CellMeshingResult, scale: float, /
+) -> phx.meshing.PreparedMeshAdaptation:
+    mesh = source.mesh
+    vertices = mesh.entity_set(0)
+    scope = phx.meshing.MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        np.asarray(vertices.entity_ids, dtype=np.int64),
+    )
+    tensors = np.broadcast_to(
+        np.eye(3, dtype=np.float64) * scale,
+        (vertices.count, 3, 3),
+    )
+    field = phx.meshing.MeshMetricField(
+        scope,
+        tensors,
+        minimum_size=0.001,
+        maximum_size=10.0,
+        maximum_anisotropy=10.0,
+    )
+    return phx.meshing.prepare_mesh_adaptation(
+        source,
+        phx.meshing.MetricMeshAdaptation(field),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D, relocation=False
+        ),
+    )
+
+
+def test_plain_strict_band_noop_retains_native_evidence() -> None:
+    source = _source()
+    expected = _adapt(source, np.eye(3, dtype=np.float64) * 2.5, relocation=False)
+    result = phx.meshing.execute_mesh_adaptation(_plain_metric_request(source, 2.5))
+
+    assert result.target is source
+    assert result.transition is None
+    evidence = result.evidence
+    if not isinstance(evidence, TetraMetricEvidence):
+        pytest.fail("A tetrahedral no-op must publish tetrahedral metric evidence.")
+    assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert evidence.evidence_id == expected.evidence.evidence_id
+    assert evidence.measured_edges == source.mesh.entity_set(1).count
+
+
+def test_plain_tetra_mesh_just_above_band_enters_native_adaptation() -> None:
+    source = _source()
+    prepared = _plain_metric_request(source, 8.0 / 3.0 * (1.0 + 2.0**-15))
+    original_lengths = metric_lengths(
+        np.asarray(source.mesh.coordinates),
+        prepared.constraints.metric_values,
+        entity_keys(source.mesh, 1),
+    )
+    assert 0.0 < float(np.max(original_lengths) - np.sqrt(2.0)) < 0.0001
+    result = phx.meshing.execute_mesh_adaptation(prepared)
+
+    evidence = result.evidence
+    if not isinstance(evidence, TetraMetricEvidence):
+        pytest.fail("The native edit must publish tetrahedral metric evidence.")
+    assert evidence.splits > 0
+    assert result.target is not source
+    assert result.transition is not None
 
 
 def test_graded_split_points_are_exact_dyadic_edge_points() -> None:
