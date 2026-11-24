@@ -1943,6 +1943,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_band_quanta": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_relative_determinants": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_metric_tetra_quality_min": (_I32, (_I64, _P, _I64, _P, _P, _I32, _P)),
     "phx_mc_metric_midpoints": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_metric_survivor_goals": (_I32, (_I64, _P, _P, _I32, _P, _P, _P)),
     "phx_mc_metric_tensor_properties": (_I32, (_I64, _P, _P, _P)),
@@ -13576,6 +13577,32 @@ def metric_tetra_quality(
     return quality
 
 
+def metric_tetra_quality_min(
+    points: np.ndarray,
+    metrics: np.ndarray,
+    cells: np.ndarray,
+    /,
+    *,
+    parallelism: int,
+) -> float:
+    """Minimum exact-order native metric quality, NaN for any nonfinite row."""
+    coordinates, tensors = _metric_point_bank(points, metrics)
+    rows = _metric_rows(cells, "cells", 4)
+    workers = _int32_argument(parallelism, "parallelism")
+    minimum = _F64()
+    status = load_meshcore()["phx_mc_metric_tetra_quality_min"](
+        rows.shape[0],
+        rows.ctypes.data,
+        coordinates.shape[0],
+        coordinates.ctypes.data,
+        tensors.ctypes.data,
+        workers,
+        ctypes.addressof(minimum),
+    )
+    _raise_for_call(status, "metric_tetra_quality_min")
+    return minimum.value
+
+
 def metric_tensor_properties(tensors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Whether ``(n, 3, 3)`` tensors are symmetric and positive definite.
 
@@ -14936,6 +14963,7 @@ __all__ = [
     "metric_survivor_goals",
     "metric_tensor_properties",
     "metric_tetra_quality",
+    "metric_tetra_quality_min",
     "point_triangle_distances",
     "point_triangle_locations",
     "polygon_intersection_moments",

@@ -41,6 +41,7 @@ from .._meshcore import (
     metric_relocation_pulls,
     metric_tensor_properties,
     metric_tetra_quality,
+    metric_tetra_quality_min,
     MetricCarrierOrder,
     MetricCollapseStar,
     MetricPositionVerdict,
@@ -1810,29 +1811,6 @@ def _positive_noop_tetrahedra(
     return bool(np.all(flags))
 
 
-def _minimum_tetra_metric_quality(
-    points: np.ndarray, metric: np.ndarray, cells: np.ndarray, workers: int, /
-) -> float:
-    """Minimum row quality, or NaN if any row is nonfinite."""
-    chunk_size = _NOOP_TETRAHEDRAL_BLOCK
-    count = cells.shape[0]
-
-    def minimum(rows: np.ndarray, /) -> float:
-        quality = metric_tetra_quality(points, metric, rows)
-        return float(np.min(quality)) if np.all(np.isfinite(quality)) else np.nan
-
-    if workers == 1 or count <= chunk_size:
-        return minimum(cells)
-    minima = np.empty(((count + chunk_size - 1) // chunk_size,), dtype=np.float64)
-
-    def measure(begin: int, end: int, chunk: int, /) -> None:
-        minima[chunk] = minimum(cells[begin:end])
-
-    status = parallel_for(count, measure, chunk_size=chunk_size, parallelism=workers)
-    _raise_for_call(status, "minimum tetrahedral metric quality")
-    return float(np.min(minima))
-
-
 def _noop_metric_length_extrema(
     points: np.ndarray, metric: np.ndarray, edges: np.ndarray, workers: int, /
 ) -> tuple[float, float]:
@@ -1900,7 +1878,7 @@ def strict_plain_tetra_metric_noop(
     )
     if not _LOWER <= minimum_length <= maximum_length <= _UPPER:
         return None
-    minimum_quality = _minimum_tetra_metric_quality(points, metric, cells, workers)
+    minimum_quality = metric_tetra_quality_min(points, metric, cells, parallelism=workers)
     if not minimum_quality > 0.0:
         return None
     # Admission measured every edge; there is no protected or unmet subset.

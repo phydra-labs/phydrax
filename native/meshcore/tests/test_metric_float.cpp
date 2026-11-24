@@ -7,9 +7,11 @@
 // metric_float_vectors.inc holds each input with the output bits the kernels
 // produced when the file was written; this test requires the same bits on
 // every platform. `--emit` prints that file.
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cinttypes>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -612,6 +614,10 @@ void guards_arguments() {
             PHX_MC_INVALID_INPUT);
   PHX_CHECK(phx_mc_metric_tetra_quality(1, nullptr, 2, points, metrics, out) ==
             PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_metric_tetra_quality_min(1, bad_cell, 2, points, metrics, 2, out) ==
+            PHX_MC_INVALID_INPUT);
+  PHX_CHECK(phx_mc_metric_tetra_quality_min(1, bad_cell, 2, points, metrics, 0, out) ==
+            PHX_MC_INVALID_ARGUMENT);
   // A refused call writes nothing.
   for (const double value : out) PHX_CHECK(value == 7.0);
   PHX_CHECK(second == 7.0 && valid == 7);
@@ -645,6 +651,51 @@ void exact_cases() {
   for (int row = 0; row < 3; ++row) PHX_CHECK(above[row] == 0.0 && below[row] == 0.0);
 }
 
+void minimum_quality_across_worker_blocks() {
+  constexpr int64_t cell_count = 4109;
+  const double points[15] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                             0.0, 0.0, 1.0, 0.0, 0.0, 0x1p-10};
+  double metrics[45]{};
+  for (int vertex = 0; vertex < 5; ++vertex) {
+    for (int axis = 0; axis < 3; ++axis) {
+      metrics[9 * vertex + 4 * axis] = 0.75 + 0.25 * vertex;
+    }
+  }
+  const int64_t unit[4]{0, 1, 2, 3};
+  std::vector<int64_t> cells(4 * cell_count);
+  for (int64_t row = 0; row < cell_count; ++row) {
+    std::copy_n(unit, 4, cells.data() + 4 * row);
+  }
+  cells.back() = 4;  // Lowest quality in the final partial block.
+  std::vector<double> qualities(cell_count);
+  PHX_CHECK(phx_mc_metric_tetra_quality(cell_count, cells.data(), 5, points, metrics,
+                                      qualities.data()) == PHX_MC_OK);
+  PHX_CHECK(qualities.back() > 0.0 && qualities.back() < qualities.front());
+  for (const int32_t workers : {1, 2, 3, 4, 8}) {
+    double minimum = -1.0;
+    PHX_CHECK(phx_mc_metric_tetra_quality_min(cell_count, cells.data(), 5, points, metrics,
+                                            workers, &minimum) == PHX_MC_OK);
+    PHX_CHECK(bits_of(minimum) == bits_of(qualities.back()));
+  }
+}
+
+void minimum_quality_retains_nonfinite_evidence() {
+  constexpr double far = 0x1p+400;
+  const double points[12] = {0.0, 0.0, 0.0, far, 0.0, 0.0, 0.0, far, 0.0, 0.0, 0.0, far};
+  double metrics[36]{};
+  for (int vertex = 0; vertex < 4; ++vertex) {
+    for (int axis = 0; axis < 3; ++axis) metrics[9 * vertex + 4 * axis] = 1.0;
+  }
+  const int64_t cells[4]{0, 1, 2, 3};
+  double quality = 0.0;
+  double minimum = 0.0;
+  PHX_CHECK(phx_mc_metric_tetra_quality(1, cells, 4, points, metrics, &quality) == PHX_MC_OK);
+  PHX_CHECK(!std::isfinite(quality));
+  PHX_CHECK(phx_mc_metric_tetra_quality_min(1, cells, 4, points, metrics, 1, &minimum) ==
+            PHX_MC_OK);
+  PHX_CHECK(std::isnan(minimum));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -656,5 +707,7 @@ int main(int argc, char** argv) {
   compare(rows);
   guards_arguments();
   exact_cases();
+  minimum_quality_across_worker_blocks();
+  minimum_quality_retains_nonfinite_evidence();
   return phx::mc::test::finish("test_metric_float");
 }

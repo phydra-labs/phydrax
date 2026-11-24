@@ -7,20 +7,58 @@
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "metric_float.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <memory>
 
 namespace {
 
 using phx::mc::addressable;
+using phx::mc::ChunkContext;
+using phx::mc::GradualNearestScope;
+using phx::mc::ParallelRequest;
 
 bool indices_in_range(const int64_t* indices, int64_t count, int64_t bound) noexcept {
   for (int64_t index = 0; index < count; ++index) {
     if (indices[index] < 0 || indices[index] >= bound) return false;
   }
   return true;
+}
+
+double indexed_tetra_quality(const int64_t* cell, const double* points,
+                             const double* metrics, const double* logs) noexcept {
+  double corners[12];
+  double tensors[36];
+  double cell_logs[4];
+  for (int corner = 0; corner < 4; ++corner) {
+    const int64_t row = cell[corner];
+    std::copy_n(points + 3 * row, 3, corners + 3 * corner);
+    std::copy_n(metrics + 9 * row, 9, tensors + 9 * corner);
+    if (logs != nullptr) cell_logs[corner] = logs[row];
+  }
+  return logs == nullptr ? phx::mc::metric::tetra_quality(corners, tensors)
+                         : phx::mc::metric::tetra_quality(corners, tensors, cell_logs);
+}
+
+template <class Measure>
+int32_t nearest_ranges(std::size_t count, ParallelRequest request, const Measure& measure) {
+  const auto run = [&](std::size_t begin, std::size_t end, ChunkContext& chunk) -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    measure(begin, end, chunk);
+    return PHX_MC_OK;
+  };
+  if (request.parallelism == 1 || count <= request.chunk_size) {
+    ChunkContext chunk{0};
+    return run(0, count, chunk);
+  }
+  return phx::mc::parallel_for(count, request, run);
 }
 
 }  // namespace
@@ -168,20 +206,72 @@ int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
   const phx::mc::GradualNearestScope mode;
   if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
   for (int64_t cell = 0; cell < cell_count; ++cell) {
-    double corners[12];
-    double tensors[36];
-    for (int64_t corner = 0; corner < 4; ++corner) {
-      const int64_t point = cells[4 * cell + corner];
-      for (int64_t axis = 0; axis < 3; ++axis) {
-        corners[3 * corner + axis] = points[3 * point + axis];
-      }
-      for (int64_t index = 0; index < 9; ++index) {
-        tensors[9 * corner + index] = metrics[9 * point + index];
-      }
-    }
-    quality[cell] = phx::mc::metric::tetra_quality(corners, tensors);
+    quality[cell] = indexed_tetra_quality(cells + 4 * cell, points, metrics, nullptr);
   }
   return PHX_MC_OK;
+}
+
+int32_t phx_mc_metric_tetra_quality_min(int64_t cell_count, const int64_t* cells,
+                                        int64_t point_count, const double* points,
+                                        const double* metrics, int32_t parallelism,
+                                        double* minimum) {
+  if (cell_count <= 0 || parallelism < 1 || minimum == nullptr || cells == nullptr ||
+      !addressable(cell_count, 4, sizeof(int64_t)) ||
+      !addressable(point_count, 9, sizeof(double)) ||
+      (point_count > 0 && (points == nullptr || metrics == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  if (!indices_in_range(cells, 4 * cell_count, point_count)) return PHX_MC_INVALID_INPUT;
+  return phx::mc::guarded([&]() -> int32_t {
+    constexpr std::size_t chunk_size = 1024;
+    const ParallelRequest request{chunk_size, static_cast<uint32_t>(parallelism)};
+    // Reuse the exact per-point term on dense incidence. A smaller cell
+    // selection does not justify a point-wide preparation pass.
+    const auto log_count =
+        point_count <= cell_count ? static_cast<std::size_t>(point_count) : 0;
+    auto logs = log_count ? std::make_unique_for_overwrite<double[]>(log_count) : nullptr;
+    if (logs != nullptr) {
+      const int32_t status = nearest_ranges(
+          log_count, request, [&](std::size_t begin, std::size_t end, const ChunkContext&) {
+            for (std::size_t row = begin; row < end; ++row) {
+              logs[row] = phx::mc::metric::log_determinant(metrics + 9 * row);
+            }
+          });
+      if (status != PHX_MC_OK) return status;
+    }
+    const auto count = static_cast<std::size_t>(cell_count);
+    const std::size_t chunks = parallelism == 1 ? 1 : (count - 1) / chunk_size + 1;
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    double local;
+    auto others = chunks > 1 ? std::make_unique_for_overwrite<double[]>(chunks) : nullptr;
+    double* const partial = others != nullptr ? others.get() : &local;
+    const int32_t status = nearest_ranges(
+        count, request, [&](std::size_t begin, std::size_t end, const ChunkContext& chunk) {
+          double least = infinity;
+          for (std::size_t row = begin; row < end; ++row) {
+            const double quality = indexed_tetra_quality(cells + 4 * row, points, metrics, logs.get());
+            if (!std::isfinite(quality)) {
+              least = nan;
+              break;
+            }
+            least = std::min(least, quality);
+          }
+          partial[chunk.chunk_index] = least;
+        });
+    if (status != PHX_MC_OK) return status;
+    double least = infinity;
+    for (std::size_t chunk = 0; chunk < chunks; ++chunk) {
+      const double value = partial[chunk];
+      if (!std::isfinite(value)) {
+        least = nan;
+        break;
+      }
+      least = std::min(least, value);
+    }
+    *minimum = least;
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_metric_tensor_properties(int64_t count, const double* tensors, int8_t* symmetric,

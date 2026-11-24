@@ -1120,6 +1120,11 @@ PHX_MC_API int32_t phx_mc_metric_relative_determinants(int64_t cell_count,
 PHX_MC_API int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
                                                int64_t point_count, const double* points,
                                                const double* metrics, double* quality);
+/* Minimum of the same nonempty ordered quality bank. A nonfinite quality
+ * anywhere yields NaN; the output is written only after a successful call. */
+PHX_MC_API int32_t phx_mc_metric_tetra_quality_min(
+    int64_t cell_count, const int64_t* cells, int64_t point_count,
+    const double* points, const double* metrics, int32_t parallelism, double* minimum);
 /* Goals of metric edits on the deterministic kernels: points an edit would
  * like to reach, the same bits for the same input on every platform. They
  * propose only; the caller rounds a goal to an exact source point and decides

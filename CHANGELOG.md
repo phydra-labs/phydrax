@@ -53,6 +53,9 @@
 - Scalar gradation can measure ordered edge lengths with native workers.
   Tetrahedral no-op admission retains exact metric-length extrema without
   storing the complete metric edge-length bank.
+- Tetrahedral no-op admission reduces ordered metric quality natively and
+  reuses exact per-vertex determinant terms. Rebuild the native library for
+  the minimum-quality entry point.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once
