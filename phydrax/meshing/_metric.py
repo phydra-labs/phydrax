@@ -57,6 +57,7 @@ from ._scope import MeshingScope
 
 _SYMMETRY_POLICY = DensePropertyVerificationPolicy(require_hermitian=True)
 _SPD_POLICY = DensePropertyVerificationPolicy(require_positive_definite=True)
+_SCALAR_GRADATION_EDGE_BLOCK = 65_536
 # Residual of log(complexity): a relative complexity error of 1e-11. Bracket
 # width never terminates the solve early; only the residual certifies it.
 _COMPLEXITY_TERMINATION = NonlinearTermination(
@@ -1022,7 +1023,7 @@ def _physical_scalar_violation(
 ) -> float:
     """Certify physical growth with bounded host scratch."""
     maximum = np.float64(0.0)
-    block_size = 65_536
+    block_size = _SCALAR_GRADATION_EDGE_BLOCK
     for begin in range(0, edges.shape[0], block_size):
         end = min(begin + block_size, edges.shape[0])
         block = edges[begin:end]
@@ -1307,10 +1308,29 @@ def _incoming_slots(targets: np.ndarray, rows: int, /) -> tuple[np.ndarray, np.n
     return slots, valid
 
 
+def _scalar_gradation_edge_lengths(
+    points: np.ndarray, edges: np.ndarray, /
+) -> np.ndarray:
+    """Euclidean lengths in coordinate order with bounded host gathers."""
+    count = edges.shape[0]
+    lengths = np.empty((count,), dtype=np.float64)
+    for begin in range(0, count, _SCALAR_GRADATION_EDGE_BLOCK):
+        end = min(begin + _SCALAR_GRADATION_EDGE_BLOCK, count)
+        first, second = edges[begin:end].T
+        squared = points[second, 0] - points[first, 0]
+        np.square(squared, out=squared)
+        for axis in range(1, points.shape[1]):
+            delta = points[second, axis] - points[first, axis]
+            np.square(delta, out=delta)
+            squared += delta
+        np.sqrt(squared, out=lengths[begin:end])
+    return lengths
+
+
 def _grade_eigenpairs(
     bounds: tuple[float, float, float],
     eigenvalues: np.ndarray,
-    eigenvectors: np.ndarray,
+    eigenvectors: np.ndarray | None,
     edges: np.ndarray,
     points: np.ndarray,
     policy: MetricGradationPolicy,
@@ -1321,7 +1341,7 @@ def _grade_eigenpairs(
         logarithms = np.log(eigenvalues)
         mean_logarithms = np.mean(logarithms, axis=1)
         sizes = np.exp(-0.5 * mean_logarithms)
-        lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        lengths = _scalar_gradation_edge_lengths(points, edges)
         growth = np.full((edges.shape[0],), policy.maximum_gradation)
         graded, pops, updates = _grade_scalar_sizes(
             sizes, edges, lengths, growth, policy.kind
@@ -1341,7 +1361,16 @@ def _grade_eigenpairs(
             modified_count=int(np.count_nonzero(graded < sizes)),
             maximum_violation=violation,
         )
-        return _compose(realized, eigenvectors), evidence
+        if eigenvectors is not None:
+            return _compose(realized, eigenvectors), evidence
+        # The admitted isotropic spectrum already has the coordinate basis.
+        dimension = realized.shape[1]
+        diagonal = np.arange(dimension, dtype=np.int64)
+        tensors = np.zeros((rows, dimension, dimension), dtype=np.float64)
+        tensors[:, diagonal, diagonal] = 0.5 * (realized + realized)
+        return tensors, evidence
+    if eigenvectors is None:
+        raise RuntimeError("Anisotropic gradation requires a prepared eigenbasis.")
     sources = np.concatenate((edges[:, 0], edges[:, 1]))
     targets = np.concatenate((edges[:, 1], edges[:, 0]))
     slots, slot_valid = _incoming_slots(targets, rows)
@@ -1407,7 +1436,7 @@ def grade_mesh_metric(
         eigenvalues, eigenvectors = _host_spectrum(projected)
     else:
         eigenvalues = np.broadcast_to(scalars[:, None], (rows, dimension))
-        eigenvectors = np.broadcast_to(np.eye(dimension, dtype=np.float64), values.shape)
+        eigenvectors = None
     graded, evidence = _grade_eigenpairs(
         (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
         eigenvalues,

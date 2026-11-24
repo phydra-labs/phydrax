@@ -47,6 +47,9 @@
   bounded scratch, retaining the same rounded violation evidence.
 - Exact isotropic CPU metrics reuse the scalar spectrum for size-bound
   verification and scalar gradation without changing metric or evidence IDs.
+- Scalar metric gradation gathers edge coordinates in bounded worksets and
+  reconstructs exact isotropic diagonal tensors directly. Tetrahedral no-op
+  admission checks exact orientation in bounded worker chunks.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once

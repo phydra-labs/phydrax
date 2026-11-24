@@ -1783,13 +1783,39 @@ def _plain_tetra_source_is_current(source: CellMeshingResult, /) -> bool:
     return True
 
 
+_NOOP_TETRAHEDRAL_BLOCK = 16_384
+
+
+def _positive_noop_tetrahedra(
+    points: np.ndarray, cells: np.ndarray, workers: int, /
+) -> bool:
+    """Require the exact positive sign of every indexed tetrahedron."""
+    count = cells.shape[0]
+    block = _NOOP_TETRAHEDRAL_BLOCK
+
+    def positive(rows: np.ndarray, /) -> bool:
+        a, b, c, d = rows.T
+        signs = exact_orient3d(points[a], points[b], points[c], points[d])
+        return bool(np.all(signs == 1))
+
+    if count <= block:
+        return positive(cells)
+    flags = np.empty(((count + block - 1) // block,), dtype=np.bool_)
+
+    def measure(begin: int, end: int, chunk: int, /) -> None:
+        flags[chunk] = positive(cells[begin:end])
+
+    status = parallel_for(count, measure, chunk_size=block, parallelism=workers)
+    _raise_for_call(status, "positive tetrahedral orientation")
+    return bool(np.all(flags))
+
+
 def _minimum_tetra_metric_quality(
-    points: np.ndarray, metric: np.ndarray, cells: np.ndarray, /
+    points: np.ndarray, metric: np.ndarray, cells: np.ndarray, workers: int, /
 ) -> float:
     """Minimum row quality, or NaN if any row is nonfinite."""
-    chunk_size = 16_384
+    chunk_size = _NOOP_TETRAHEDRAL_BLOCK
     count = cells.shape[0]
-    workers = exact_kernel_parallelism()
 
     def minimum(rows: np.ndarray, /) -> float:
         quality = metric_tetra_quality(points, metric, rows)
@@ -1831,10 +1857,8 @@ def strict_plain_tetra_metric_noop(
         (magnitude == 0.0) | ((magnitude >= 2.0**minimum) & (magnitude <= 2.0**maximum))
     ):
         return None
-    # The source bank is already within the native exact predicate domain.
-    # Pack each corner column once rather than gather and repack whole cells.
-    a, b, c, d = cells.T
-    if not np.all(exact_orient3d(points[a], points[b], points[c], points[d]) == 1):
+    workers = exact_kernel_parallelism()
+    if not _positive_noop_tetrahedra(points, cells, workers):
         return None
     metric = _admit_metric_bank(metric_values, points.shape[0])
     edges = np.asarray(connectivity.edges)
@@ -1851,7 +1875,7 @@ def strict_plain_tetra_metric_noop(
     maximum_length = float(np.max(lengths))
     if not _LOWER <= minimum_length <= maximum_length <= _UPPER:
         return None
-    minimum_quality = _minimum_tetra_metric_quality(points, metric, cells)
+    minimum_quality = _minimum_tetra_metric_quality(points, metric, cells, workers)
     if not minimum_quality > 0.0:
         return None
     # Admission measured every edge; there is no protected or unmet subset.
