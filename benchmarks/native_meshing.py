@@ -368,10 +368,9 @@ def _rows(
             lambda: _overset_rows(sizes, overset_inputs),
         ),
     )
-    metric_rows = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
     if metric_inputs is not None:
-        families += ((metric_rows, lambda: _f6_rows(sizes, metric_inputs, names)),)
-    elif names is not None and metric_rows & names:
+        families += ((_F6_ROWS, lambda: _f6_rows(sizes, metric_inputs, names)),)
+    elif names is not None and _F6_ROWS & names:
         raise ValueError(
             "The 3D metric rows read the ledger's F6b banks: pass --metric-inputs."
         )
@@ -1922,6 +1921,7 @@ _F6_SIZES = {
     1_000_000: ("cube1e6", 965_817),
 }
 _F6_FIELDS = ("iso", "aniso", "coarsen")
+_F6_ROWS = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
 _F6_REFERENCE = {
     ("iso", 10_000): (0.774, 0.845),
     ("iso", 100_000): (0.870, 0.845),
@@ -4074,6 +4074,8 @@ def _ceiling(
     entry = ceilings["rows"].get(row.name, {}).get(str(row.size))
     if entry is None:
         return None
+    if row.name in _F6_ROWS and entry.get("input_sha256") != dict(row.input_sha256):
+        return None
     seconds = (
         float(entry["seconds"])
         if "seconds" in entry
@@ -4222,6 +4224,10 @@ def main(argv: list[str] | None = None) -> int:
         if row.input_sha256:
             record["input_sha256"] = dict(row.input_sha256)
         ceiling = _ceiling(ceilings, row, measured["elements"])
+        if row.name in _F6_ROWS:
+            # An unverified bank still produces measurements, not a reference verdict.
+            record["reference_inputs_verified"] = ceiling is not None
+            failed = failed or ceiling is None
         if ceiling is not None:
             seconds, allowed, tool = ceiling
             ratio = measured["minimum_seconds"] / seconds

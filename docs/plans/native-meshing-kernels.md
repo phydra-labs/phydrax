@@ -214,6 +214,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   `cube1e4.coarsen.mbin`. The `iso` and `aniso` rows and the `cube1e5`/`cube1e6`
   sizes use the corresponding files. The benchmark reports ordered coordinate,
   connectivity, and raw metric SHA-256s; it does not regenerate inputs.
+  A provider verdict requires all three digests to match the corresponding
+  archived ceiling entry. An unverified row still emits measurements, but
+  reports `reference_inputs_verified: false`, no pass/fail verdict, and a
+  nonzero process status.
   Coarsening edge share uses the archived source sizes interpolated at target
   edge midpoints, not the transferred output metric. Mean shape is Euclidean
   for scalar targets and measured in the analytic centroid metric for the

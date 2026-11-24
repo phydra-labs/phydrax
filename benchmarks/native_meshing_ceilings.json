@@ -104,7 +104,16 @@
       "1000000": {"tool": "mmg3d", "seconds": 23.59, "allowed_ratio": 1.0}
     },
     "metric-3d-coarsen": {
-      "10000": {"tool": "mmg3d", "seconds": 0.377, "allowed_ratio": 1.0},
+      "10000": {
+        "tool": "mmg3d",
+        "seconds": 0.377,
+        "allowed_ratio": 1.0,
+        "input_sha256": {
+          "points": "2d1433ca4f32731a6a97e22e5e24d189dea3e15080a9c38ae0025c6489a09c05",
+          "cells": "931bb935201bb671634d994f9bf1b8514dddffe4c9ef059ce89ca8676a1604b4",
+          "target_metric": "548ff4c83d8d94e18d07d34dd267bf4e0d62e3a88c19ef84c40e3ddcf963cc5e"
+        }
+      },
       "100000": {"tool": "mmg3d", "seconds": 1.355, "allowed_ratio": 1.0},
       "1000000": {"tool": "mmg3d", "seconds": 15.27, "allowed_ratio": 1.0}
     },
