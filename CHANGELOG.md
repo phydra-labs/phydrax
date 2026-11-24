@@ -47,6 +47,9 @@
 - Conforming Voronoi meshes center their interior lattice in the source
   box. This can change newly constructed mesh and evidence IDs; site
   spacing, wall clearance, and exact certification are unchanged.
+- Voronoi repair rounds check exact-rounded exterior vertices before
+  publishing the complete geometry. Only the final round exports exact
+  vertices and cell measures; repair decisions and output banks are unchanged.
 - Native CAD face sizing shares the nearest-chord traversal between its
   size floor and fidelity budget. Boundary grading visits the lower-bound
   child first; size and fidelity criteria are unchanged.

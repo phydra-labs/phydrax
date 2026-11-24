@@ -327,6 +327,9 @@ tetrahedra, then implicit volumes, then the CAD solid.
     phase is symmetric about each box midplane. The lattice spacing, clearance from the
     source wall, and reflected boundary seed construction are unchanged. This can change
     the mesh and evidence IDs; the same exact convexity and source-coverage checks apply.
+    A repair round rounds exterior vertices for the source-distance leak check. Full
+    exact coordinate banks and cell measures are published only after the last repair;
+    the leakage criterion, repair order, and final certification remain unchanged.
   - S6-D hex-dominant with snapping (F8; cfMesh 5.77-8.59 s at ~1e5 cells, hex fraction 0.91-0.96,
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than

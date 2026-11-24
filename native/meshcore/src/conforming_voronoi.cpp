@@ -1214,7 +1214,7 @@ class Builder {
     cells();
     timings[1] += seconds_since(clock);
     clock = Clock::now();
-    publish(out);
+    scan_leaks(out);
     timings[2] += seconds_since(clock);
   }
 
@@ -1222,6 +1222,7 @@ class Builder {
   const std::vector<std::pair<int32_t, std::array<double, 3>>>& leaks() const { return leaks_; }
   // Nearly cospherical configurations and the seed moves that resolve them.
   const std::vector<Perturbation>& near() const { return near_; }
+  void publish(phx_mc_voronoi_cells& out);
   void certify(const phx_mc_voronoi_cells& out);
   bool certified() const { return certified_; }
   int64_t open_edges() const { return open_edges_; }
@@ -1271,6 +1272,7 @@ class Builder {
   std::vector<int32_t> tet_root_;
   std::vector<int32_t> tet_vertex_;
   std::vector<int32_t> vertex_tets_;  // representative tet per vertex
+  std::vector<double> scanned_distance_;  // -1 for vertices not visited by the leak check
   std::vector<int32_t> cell_of_seed_;
   std::vector<int32_t> face_owner_seed_;
   std::vector<std::pair<int32_t, std::array<double, 3>>> leaks_;
@@ -1625,22 +1627,59 @@ class Builder {
     }
   }
 
-  void publish(phx_mc_voronoi_cells& out);
+  void scan_leaks(phx_mc_voronoi_cells& out);
   mutable double lower_ = 0.0;  // largest sampled boundary distance (certify)
   double piece_bound(const double* a, const double* b, const double* c) const;
 };
 
+// Repairs need only rounded exterior vertices and their source distances.
+// No exact expansion bank or interior geometry survives a repaired round.
+void Builder::scan_leaks(phx_mc_voronoi_cells& out) {
+  const std::size_t vertex_count = vertex_tets_.size();
+  out.vertices.resize(3 * vertex_count);
+  out.vertex_triangles.assign(vertex_count, -1);
+  scanned_distance_.assign(vertex_count, -1.0);
+  const TriangleGrid& grid = seeder_.triangles();
+  const double reach = seeder_.reach();
+  std::vector<uint8_t> leaking(count_, 0);
+  std::array<Expansion, 3> numerator;
+  Expansion denominator;
+  const int64_t faces = static_cast<int64_t>(loop_offsets_.size()) - 1;
+  for (int64_t f = 0; f < faces; ++f) {
+    if (loop_cells_[2 * f + 1] >= 0) continue;
+    const int32_t owner = loop_seeds_[2 * f];
+    for (int64_t q = loop_offsets_[f]; q < loop_offsets_[f + 1]; ++q) {
+      const int32_t v = loops_[q];
+      double* x = out.vertices.data() + 3 * static_cast<int64_t>(v);
+      double& distance = scanned_distance_[v];
+      if (distance < 0.0) {
+        exact_circumcenter(vertex_tets_[v], numerator, denominator);
+        for (int k = 0; k < 3; ++k) x[k] = rounded_quotient(numerator[k], denominator);
+        double foot[3];
+        distance = 0.0;
+        out.vertex_triangles[v] = grid.nearest(x, reach, foot, &distance);
+      }
+      vertex_distance_ = std::max(vertex_distance_, distance);
+      if (distance > reach && !leaking[owner]) {
+        leaking[owner] = 1;
+        leaks_.emplace_back(owner, std::array<double, 3>{x[0], x[1], x[2]});
+      }
+    }
+  }
+}
+
 void Builder::publish(phx_mc_voronoi_cells& out) {
   const int32_t vertex_count = static_cast<int32_t>(vertex_tets_.size());
-  out.vertices.assign(3 * static_cast<std::size_t>(vertex_count), 0.0);
   out.exact_offsets.assign(1, 0);
   out.exact_values.clear();
   std::array<Expansion, 3> numerator;
   Expansion denominator;
   for (int32_t v = 0; v < vertex_count; ++v) {
     exact_circumcenter(vertex_tets_[v], numerator, denominator);
-    for (int k = 0; k < 3; ++k)
-      out.vertices[3 * static_cast<int64_t>(v) + k] = rounded_quotient(numerator[k], denominator);
+    if (scanned_distance_[v] < 0.0) {
+      for (int k = 0; k < 3; ++k)
+        out.vertices[3 * static_cast<int64_t>(v) + k] = rounded_quotient(numerator[k], denominator);
+    }
     for (const Expansion* e : {&numerator[0], &numerator[1], &numerator[2], &denominator}) {
       out.exact_values.insert(out.exact_values.end(), e->data(), e->data() + e->size());
       out.exact_offsets.push_back(static_cast<int64_t>(out.exact_values.size()));
@@ -1653,13 +1692,9 @@ void Builder::publish(phx_mc_voronoi_cells& out) {
   out.face_facets.assign(faces, -1);
   // Boundary vertices: nearest triangle; faces between regions or towards a
   // ghost take the facet of the triangle nearest their vertex centroid.
-  out.vertex_triangles.assign(vertex_count, -1);
-  std::vector<double> vertex_distance(vertex_count, 0.0);
   const TriangleGrid& grid = seeder_.triangles();
   const double reach = seeder_.reach();
-  std::vector<uint8_t> leaking(count_, 0);
   boundary_faces_ = 0;
-  vertex_distance_ = 0.0;
   std::vector<uint8_t> boundary_cell(cell_seed_list_.size(), 0);
   for (int64_t f = 0; f < faces; ++f) {
     const int32_t owner = loop_cells_[2 * f], neighbor = loop_cells_[2 * f + 1];
@@ -1678,15 +1713,6 @@ void Builder::publish(phx_mc_voronoi_cells& out) {
       if (out.vertex_triangles[v] < 0) {
         double foot[3], d = 0.0;
         out.vertex_triangles[v] = grid.nearest(x, reach, foot, &d);
-        vertex_distance[v] = d;
-      }
-      if (exterior) {
-        vertex_distance_ = std::max(vertex_distance_, vertex_distance[v]);
-        const int32_t i = loop_seeds_[2 * f];
-        if (vertex_distance[v] > reach && !leaking[i]) {
-          leaking[i] = 1;
-          leaks_.emplace_back(i, std::array<double, 3>{x[0], x[1], x[2]});
-        }
       }
     }
     double foot[3], d = 0.0;
@@ -1913,6 +1939,9 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
       ++repairs;
       continue;
     }
+    clock = Clock::now();
+    builder.publish(out);
+    timings[2] += seconds_since(clock);
     clock = Clock::now();
     if (in.prove) builder.certify(out);
     certification = seconds_since(clock);
