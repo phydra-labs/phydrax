@@ -77,6 +77,10 @@
   insertion order on the existing workers. Box quantization, stable key
   ordering, duplicate resolution, and all exported triangulation banks are
   unchanged across worker counts.
+- Medium native Delaunay and regular 3D point sets can insert in parallel
+  columns. A finite nonconflicting boundary cell is accessed only by the
+  region that owns its shared face. Region-local walk addresses do not
+  depend on the worker; symbolic point IDs and canonical outputs are retained.
 - Uniform fixed-wall PLC recovery can prepare interior body-centered cubic
   sites directly from the source wall, then triangulate the wall and sites
   together. It adopts that triangulation only when it already recovers every

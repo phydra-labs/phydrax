@@ -258,13 +258,11 @@ class Triangulation3D {
     return status;
   }
 
-  // build() with the points after the first four inserted by
-  // insert_batches on `parallelism` workers when parallelism > 1 and the
-  // point set holds at least kParallelPoints (below it the rounds cost more
-  // than they save: measured even at 10^4 points, ahead from 3 * 10^4); the
-  // same triangulation as build(), its cells canonicalized by the caller.
+  // The parallel construction produces the same regular triangulation as
+  // build(); the caller canonicalizes its cell order.
   int32_t build(std::span<const int32_t> order, std::span<char> alive, int32_t parallelism) {
-    constexpr std::size_t kParallelPoints = 16384;
+    constexpr std::size_t kParallelPoints = 8192;
+    constexpr std::size_t kFullGridPoints = 16384;
     const std::size_t count = order.size();
     if (parallelism <= 1 || count < kParallelPoints) return build(order, alive);
     const int32_t a = order[0];
@@ -294,7 +292,8 @@ class Triangulation3D {
     }
     building_ = true;
     const auto seed_end = static_cast<std::size_t>(std::max({a, b, c, d})) + 1;
-    const int32_t status = insert_batches(rest, alive, seed_end, parallelism);
+    const int32_t status =
+        insert_batches(rest, alive, seed_end, parallelism, count < kFullGridPoints);
     building_ = false;
     return status;
   }
@@ -625,10 +624,12 @@ class Triangulation3D {
     }
   }
 
-  // The conflict cavity of `entry.point` (grow_cavity of an unconstrained
-  // complex, on the worker's visit table) and its buried vertices when
-  // weighted, walked to from `start`; status kDeferred when the walk, the
-  // cavity or a cell beyond it leaves the cells `region` owns.
+  // The conflict cavity and its buried vertices, starting in a cell owned
+  // by the region. A candidate whose walk or cavity leaves that region is
+  // deferred. The column schedule can link a finite, nonconflicting cell
+  // across the region's last face: its three shared vertices belong to this
+  // region and it cannot border a wholly owned cell from another region.
+  template <bool Columns>
   void batch_cavity(BatchWorker& worker, BatchPoint& entry, int32_t region,
                     int32_t start) {
     const int32_t p = entry.point;
@@ -661,9 +662,15 @@ class Triangulation3D {
       for (int k = 0; k < 4; ++k) {
         const int32_t neighbor = tet(t).n[k];
         if (in_cavity(neighbor)) continue;
-        // Cavity and boundary cells are edited: both must be owned.
-        if (!owned(neighbor, region)) return;
+        if constexpr (Columns) {
+          if (is_ghost(tet(neighbor))) return;
+        } else {
+          if (!owned(neighbor, region)) return;
+        }
         if (batch_conflict(worker, neighbor, p)) {
+          if constexpr (Columns) {
+            if (!owned(neighbor, region)) return;
+          }
           mutable_tet(neighbor).state = kInCavity;
           for (int32_t next : tet(neighbor).n) {
             if (static_cast<std::size_t>(next) < complex_.tets.size()) {
@@ -709,10 +716,9 @@ class Triangulation3D {
     }
   }
 
-  // Writes the cone of `entry` into its slots `entry.ids` (its cavity's,
-  // then the region's), linking the cone cells across the edges of the
-  // cavity boundary and to the cells beyond it. All of them are cells the
-  // region owns, so cones of concurrent regions never share a cell.
+  // Links the cone slots and the reciprocal faces of the cells beyond it.
+  // Each cavity is wholly owned; even a mixed boundary cell is adjacent to
+  // wholly owned cells from at most one region.
   void batch_commit(BatchWorker& worker, BatchPoint& entry) {
     const std::size_t count = entry.boundary.size();
     std::vector<Tetrahedron>& tets = complex_.tets;
@@ -814,32 +820,32 @@ class Triangulation3D {
     return true;
   }
 
-  // Inserts the points of `work` one at a time as insert() does, but only
-  // where the walk, the cavity and the cells beyond it are owned by the
-  // region; any other point is deferred. A cell next to an owned cell shares
-  // three of the region's vertices, so no other region edits it either: the
-  // reads stay within cells no concurrent worker writes.
+  // Inserts a region's points sequentially; other regions have disjoint
+  // cavities and boundary cells, including face-owned mixed cells.
+  template <bool Columns>
   void insert_region(BatchWorker& worker, RegionWork& work, std::span<char> alive) {
     BatchPoint entry;
     worker.stamp = work.stamp_start;
+    // A column region owns its walk address range, not its scratch worker.
+    if constexpr (Columns) worker.walk_step = std::uint64_t{work.stamp_start} << 32;
     int32_t start = work.start;
-    std::array<int32_t, 512> anchors;
+    std::array<int32_t, Columns ? 64 : 512> anchors;
     anchors.fill(-1);
     for (const int32_t p : work.points) {
       const int32_t anchor = anchors[vertex_fine_[static_cast<std::size_t>(p)]];
       if (anchor >= 0 && complex_.live(anchor) && owned(anchor, work.region)) start = anchor;
       entry.point = p;
-      // On the first two passes a point in the outer eighth of its region
-      // (by the 8^3 subdivision) is left to the next pass, whose shifted
-      // grid puts it near a region centre: its cavity would likely leave.
+      // Defer the outer eighth along split axes for the first two passes;
+      // the shifted grid puts those points nearer the next region center.
       const std::uint16_t fine = vertex_fine_[static_cast<std::size_t>(p)];
       const auto border = [](unsigned index) { return index == 0 || index == 7; };
       if (work.screen &&
-          (border(fine & 7U) || border((fine >> 3) & 7U) || border((fine >> 6) & 7U))) {
+          (border(fine & 7U) || border((fine >> 3) & 7U) ||
+           (!Columns && border((fine >> 6) & 7U)))) {
         work.deferred.push_back(p);
         continue;
       }
-      batch_cavity(worker, entry, work.region, start);
+      batch_cavity<Columns>(worker, entry, work.region, start);
       if (entry.status == kDeferred) {
         work.deferred.push_back(p);
         continue;
@@ -884,11 +890,10 @@ class Triangulation3D {
   // Inserts `points` (in order, into the triangulation build() owns) on
   // `parallelism` workers. After a sequential prefix, windows of points
   // (each at most as many as are inserted) are split by a grid of regions
-  // that insert their points in parallel, handed out largest first, each only
-  // where its walk, its cavity and every neighbour of the cavity lie in cells
-  // whose vertices all lie in the region (insert_region), deferring the
-  // others (on the first two passes, also every point in the outer eighth of
-  // its region). Passes on the grid shifted by 1/2, 1/4 and 3/4 of a region
+  // that run in largest-first order. Only points with walks and cavities
+  // wholly in an owned region commit there; the column schedule may link
+  // face-owned boundary cells. Defer the outer eighth along split axes in
+  // the first two passes. Passes shifted by 1/2, 1/4 and 3/4 of a region
   // take the deferred points, and insert() the few left. Every insertion is
   // the conflict cavity of its point in the
   // current triangulation, so the result is the regular triangulation of the
@@ -897,15 +902,13 @@ class Triangulation3D {
   // degenerate inputs rests on the perturbation ordered by identity(v), the
   // caller's fixed input index, which insertion order never changes.
   int32_t insert_batches(std::span<const int32_t> points, std::span<char> alive,
-                         std::size_t active_vertices, int32_t parallelism) {
-    // In a small triangulation every cavity reaches far: the first
-    // kSequentialPoints points are inserted one at a time. Regions hold
-    // about kRegionPoints points of a window.
-    constexpr std::size_t kSequentialPoints = 4096;
+                         std::size_t active_vertices, int32_t parallelism, bool columns) {
+    // Insert a serial prefix before the triangulation can support regions.
+    const std::size_t sequential_points = columns ? 1536 : 4096;
     constexpr double kRegionPoints = 16384.0;
     vertex_cell_.assign(points_.size() / 3, -1);
     std::size_t next = 0;
-    for (; next < points.size() && next < kSequentialPoints; ++next) {
+    for (; next < points.size() && next < sequential_points; ++next) {
       if (const int32_t status = insert(points[next], alive); status != PHX_MC_OK) return status;
       vertex_cell_[static_cast<std::size_t>(points[next])] = hint_;
       active_vertices = std::max(active_vertices, static_cast<std::size_t>(points[next]) + 1);
@@ -955,6 +958,8 @@ class Triangulation3D {
         // Grid coordinates of every vertex; regions are numbered by them.
         const double shift = kShifts[pass];
         const int64_t side = grid + (shift > 0.0 ? 1 : 0);
+        const std::size_t region_count =
+            static_cast<std::size_t>(side * side * (columns ? 1 : side));
         // The shifted coordinate is nonnegative and bounded by grid + 3/4.
         // Truncating after exact scaling by eight supplies both floor(c)
         // and the low three bits of floor(8c).
@@ -971,7 +976,8 @@ class Triangulation3D {
             [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
               for (std::size_t vertex = first; vertex < last; ++vertex) {
                 const double* point = points_.data() + 3 * vertex;
-                const int64_t x = bin(point, 0), y = bin(point, 1), z = bin(point, 2);
+                const int64_t x = bin(point, 0), y = bin(point, 1);
+                const int64_t z = columns ? 0 : bin(point, 2);
                 vertex_region_[vertex] = static_cast<std::uint16_t>(
                     (coarse(z) * side + coarse(y)) * side + coarse(x));
                 vertex_fine_[vertex] = static_cast<std::uint16_t>(
@@ -983,7 +989,7 @@ class Triangulation3D {
         // A start cell per region: the recorded cell of its first vertex
         // that still holds that vertex and is owned by the region (no other
         // region edits it before this region's phase).
-        std::vector<int32_t> region_start(static_cast<std::size_t>(side * side * side), -1);
+        std::vector<int32_t> region_start(region_count, -1);
         std::size_t unstarted = region_start.size();
         for (std::size_t vertex = 0; vertex < active_vertices && unstarted > 0; ++vertex) {
           const std::size_t region = vertex_region_[vertex];
@@ -998,11 +1004,9 @@ class Triangulation3D {
         }
         deferred.clear();
         {
-          // Every region with pending points, each with its points in the
-          // pending order. Regions run concurrently without colouring: a
-          // region commits only cavities whose every neighbour it owns, so
-          // its edits never touch a cell another region reads.
-          std::vector<int32_t> region_index(static_cast<std::size_t>(side * side * side), -1);
+          // Region ownership includes the reciprocal boundary faces, so
+          // no coloring or conflict arbitration is needed.
+          std::vector<int32_t> region_index(region_count, -1);
           regions.clear();
           for (const int32_t p : pending) {
             const int32_t region = vertex_region_[static_cast<std::size_t>(p)];
@@ -1071,7 +1075,11 @@ class Triangulation3D {
                   idle.pop_back();
                 }
                 for (std::size_t at = first; at < last; ++at) {
-                  insert_region(workers_[scratch], regions[at], alive);
+                  if (columns) {
+                    insert_region<true>(workers_[scratch], regions[at], alive);
+                  } else {
+                    insert_region<false>(workers_[scratch], regions[at], alive);
+                  }
                 }
                 const std::lock_guard guard(idle_lock);
                 idle.push_back(scratch);

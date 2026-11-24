@@ -957,10 +957,16 @@ void test_parallelism() {
       }
   std::vector<double> weights(random.size() / 3);
   for (double& weight : weights) weight = 1e-4 * uniform(state);
+  // Check worker invariance at a size where columns meet across mixed cells.
+  constexpr int kMediumPoints = 10000;
+  std::vector<double> medium(random.begin(), random.begin() + 3 * kMediumPoints);
+  const std::vector<double> medium_weights(weights.begin(), weights.begin() + kMediumPoints);
   const std::vector<double> equal(lattice.size() / 3, 0.25);
   PHX_CHECK(sphere.size() / 3 > 20000 && planes.size() / 3 == 30000);
   for (const auto& [points, weighting] :
        {std::pair{&random, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&medium, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&medium, &medium_weights},
         std::pair{&lattice, static_cast<const std::vector<double>*>(nullptr)},
         std::pair{&sphere, static_cast<const std::vector<double>*>(nullptr)},
         std::pair{&planes, static_cast<const std::vector<double>*>(nullptr)},
