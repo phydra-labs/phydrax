@@ -737,7 +737,8 @@ bool collapsed_quality(const TetMesh& mesh, std::span<const std::int32_t> star,
 
 bool prepare_relocation_plan(const TetMesh& mesh,
                              std::span<const std::int32_t> star,
-                             std::int32_t moved, const TetQualityRequest& request,
+                             std::int32_t moved, std::int32_t first_probe,
+                             const TetQualityRequest& request,
                              std::vector<PreparedRelocationCell>& plan) {
   plan.clear();
   if (star.empty()) return false;
@@ -764,6 +765,9 @@ bool prepare_relocation_plan(const TetMesh& mesh,
             cell.fixed_points.data(), cell.moved_corner, cell.metric_cache))) {
       return false;
     }
+    // A known violating cell is the most likely to reject a trial. Passing
+    // trials still measure the whole star and sort its scores before use.
+    if (slot == first_probe && &cell != plan.data()) std::swap(plan.front(), cell);
   }
   return true;
 }
@@ -3228,9 +3232,11 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!free_interior_vertex(mesh, removed)) return PHX_MC_OK;
     // A star whose cells all meet the targets has nothing to improve.
     incidence.collect_star(removed, star_probe);
-    if (std::none_of(star_probe.begin(), star_probe.end(), [&](std::int32_t cell) {
+    const auto first_violation =
+        std::find_if(star_probe.begin(), star_probe.end(), [&](std::int32_t cell) {
           return violating_slots[static_cast<std::size_t>(cell)] != 0;
-        })) {
+        });
+    if (first_violation == star_probe.end()) {
       return PHX_MC_OK;
     }
     LocalIncidence::Star star = incidence.vertex_star(removed);
@@ -3318,7 +3324,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         targets.push_back(apex);
       }
     }
-    if (!prepare_relocation_plan(mesh, star.cells(), removed, request, relocation_plan)) {
+    if (!prepare_relocation_plan(mesh, star.cells(), removed, *first_violation, request,
+                                 relocation_plan)) {
       return PHX_MC_INTERNAL_ERROR;
     }
     const double* original = mesh.point(removed);
@@ -3390,7 +3397,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   QualityVector shape_current;
   QualityVector shape_trial;
   std::vector<PreparedRelocationCell> shape_plan;
-  const auto target_meeting_relocation = [&](std::int32_t vertex,
+  const auto target_meeting_relocation = [&](std::int32_t vertex, std::int32_t first_probe,
                                              bool& relocated) -> std::int32_t {
     relocated = false;
     if (!free_interior_vertex(mesh, vertex)) return PHX_MC_OK;
@@ -3426,7 +3433,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         return PHX_MC_OK;
       }
     }
-    if (!prepare_relocation_plan(mesh, star.cells(), vertex, request, shape_plan)) {
+    if (!prepare_relocation_plan(mesh, star.cells(), vertex, first_probe, request, shape_plan)) {
       return PHX_MC_INTERNAL_ERROR;
     }
     const double size_excess_bound = admissible_size_excess(shape_before);
@@ -3539,7 +3546,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     for (std::int32_t vertex : current) {
       const std::uint64_t vertex_id = mesh.vertex_id(vertex);
       if (shape_refused.contains(vertex_id)) continue;
-      const std::int32_t error = target_meeting_relocation(vertex, relocated);
+      const std::int32_t error = target_meeting_relocation(vertex, slot, relocated);
       if (error != PHX_MC_OK || relocated) return error;
       shape_refused.insert(vertex_id);
     }

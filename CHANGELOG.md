@@ -16,6 +16,9 @@
   exact affine corners and a separate outward rounding budget. When
   needed, a certified interior chart correspondence tightens two-sided
   bounds without moving mesh nodes or changing the authored trim.
+- Tetrahedral quality improvement probes a known violating cell first
+  during relocation, rejecting failed trials sooner without changing
+  accepted edits or quality evidence.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.
