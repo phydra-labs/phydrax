@@ -4185,16 +4185,16 @@ typedef struct phx_mc_cad_volume_arrays {
   double* cubic_nodes;      /* (N3, 3), coordinates not in points. */
   int64_t* cubic_cell_nodes; /* (M, 16), indices into cubic_nodes; null when N3 = 0. */
 } phx_mc_cad_volume_arrays;
-PHX_MC_API int32_t phx_mc_cad_construct_volume(const phx_mc_cad_model* model,
-                                              const phx_mc_cad_surface_controls* controls,
-                                              const phx_mc_cad_volume_controls* volume,
-                                              phx_mc_cad_surface_result** result,
-                                              int32_t parallelism);
+PHX_MC_API int32_t phx_mc_cad_tetrahedralize_solid(const phx_mc_cad_model* model,
+                                                  const phx_mc_cad_surface_controls* controls,
+                                                  const phx_mc_cad_volume_controls* volume,
+                                                  phx_mc_cad_surface_result** result,
+                                                  int32_t parallelism);
 /* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits, P3 nodes. */
 PHX_MC_API int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result* result,
                                                int64_t sizes[7]);
-PHX_MC_API int32_t phx_mc_cad_export_volume(const phx_mc_cad_surface_result* result,
-                                           const phx_mc_cad_volume_arrays* arrays);
+PHX_MC_API int32_t phx_mc_cad_export_tetrahedron_banks(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }

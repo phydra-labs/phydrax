@@ -239,11 +239,11 @@ extern "C" int32_t phx_mc_cad_mesh_surface(const phx_mc_cad_model* model,
   });
 }
 
-extern "C" int32_t phx_mc_cad_construct_volume(const phx_mc_cad_model* model,
-                                              const phx_mc_cad_surface_controls* controls,
-                                              const phx_mc_cad_volume_controls* volume,
-                                              phx_mc_cad_surface_result** result,
-                                              int32_t parallelism) {
+extern "C" int32_t phx_mc_cad_tetrahedralize_solid(const phx_mc_cad_model* model,
+                                                  const phx_mc_cad_surface_controls* controls,
+                                                  const phx_mc_cad_volume_controls* volume,
+                                                  phx_mc_cad_surface_result** result,
+                                                  int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -327,8 +327,8 @@ extern "C" int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result*
   return PHX_MC_OK;
 }
 
-extern "C" int32_t phx_mc_cad_export_volume(const phx_mc_cad_surface_result* result,
-                                           const phx_mc_cad_volume_arrays* a) {
+extern "C" int32_t phx_mc_cad_export_tetrahedron_banks(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_volume_arrays* a) {
   if (!result || !a) return PHX_MC_INVALID_ARGUMENT;
   const auto& v = result->volume;
   const auto& q = v.quadratic;

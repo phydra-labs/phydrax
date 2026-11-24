@@ -1432,9 +1432,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_refinement": (_I32, (_P, _I64, _P, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
-    "phx_mc_cad_construct_volume": (_I32, (_P, _P, _P, _P, _I32)),
+    "phx_mc_cad_tetrahedralize_solid": (_I32, (_P, _P, _P, _P, _I32)),
     "phx_mc_cad_volume_bank_sizes": (_I32, (_P, _P)),
-    "phx_mc_cad_export_volume": (_I32, (_P, _P)),
+    "phx_mc_cad_export_tetrahedron_banks": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
         (
@@ -15515,8 +15515,8 @@ def _cad_volume_export(
         cubic_cell_nodes.ctypes.data,
     )
     _raise_for_call(
-        library["phx_mc_cad_export_volume"](handle, ctypes.addressof(outputs)),
-        "cad_export_volume",
+        library["phx_mc_cad_export_tetrahedron_banks"](handle, ctypes.addressof(outputs)),
+        "cad_export_tetrahedron_banks",
     )
     return CadVolumeResult(*banks, wedges, cubic_nodes, cubic_cell_nodes)
 
@@ -15590,7 +15590,7 @@ def _cad_mesh(
             parallelism,
         )
         if volume is None
-        else library["phx_mc_cad_construct_volume"](
+        else library["phx_mc_cad_tetrahedralize_solid"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
             ctypes.addressof(volume),

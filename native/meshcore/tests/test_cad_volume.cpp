@@ -172,7 +172,7 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
                                           0, nullptr, sampled_shape[0], sampled_shape[1],
                                           maximum_dihedral};
   phx_mc_cad_surface_result* handle = nullptr;
-  s.status = phx_mc_cad_construct_volume(&model, &controls, &volume, &handle, 1);
+  s.status = phx_mc_cad_tetrahedralize_solid(&model, &controls, &volume, &handle, 1);
   PHX_CHECK(handle != nullptr);
   if (!handle) return s;
   int64_t n[9]{}, m[7]{};
@@ -221,11 +221,11 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
       s.boundary.data(), s.edges.data(), s.nodes.data(), s.kinds.data(), s.entities.data(),
       s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats,
       0, nullptr, m[6], s.cubic_nodes.data(), s.cubic_cell_nodes.data()};
-  PHX_CHECK(phx_mc_cad_export_volume(handle, &out) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_cad_export_tetrahedron_banks(handle, &out) == PHX_MC_OK);
   phx_mc_cad_volume_arrays small = out;
   small.point_capacity = m[0] - 1;
   if (m[0] > 0)
-    PHX_CHECK(phx_mc_cad_export_volume(handle, &small) == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(phx_mc_cad_export_tetrahedron_banks(handle, &small) == PHX_MC_CAPACITY_EXCEEDED);
   phx_mc_cad_surface_result_free(handle);
   return s;
 }
@@ -522,23 +522,23 @@ void refusals() {
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 4, 0, nullptr, 0.0, 0.0, 180.0};
   phx_mc_cad_surface_result* handle = reinterpret_cast<phx_mc_cad_surface_result*>(&handle);
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &bad, &handle, 1) ==
+  PHX_CHECK(phx_mc_cad_tetrahedralize_solid(&model, &controls, &bad, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, nullptr, &handle, 1) ==
+  PHX_CHECK(phx_mc_cad_tetrahedralize_solid(&model, &controls, nullptr, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
   const phx_mc_cad_volume_controls linear{2.0, 15.5, 0.0, 1, 0, nullptr, 0.0, 0.0, 180.0};
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &linear, &handle, 0) ==
+  PHX_CHECK(phx_mc_cad_tetrahedralize_solid(&model, &controls, &linear, &handle, 0) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
   auto wrong_cap = linear;
   wrong_cap.max_dihedral_degrees = 89.0;
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &wrong_cap, &handle, 1) ==
+  PHX_CHECK(phx_mc_cad_tetrahedralize_solid(&model, &controls, &wrong_cap, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
   int64_t sizes_out[7];
   PHX_CHECK(phx_mc_cad_volume_bank_sizes(nullptr, sizes_out) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_cad_export_volume(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_cad_export_tetrahedron_banks(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // The proximity field over two parallel unit squares 0.25 apart (face 0 at
