@@ -750,3 +750,9 @@ from 37.89 ms to 3.77 ms and from 152.6 MB to 2.1 MB of measured scratch;
 all original metric and adaptation evidence IDs still match. A separate
 prepared-clock diagnostic takes 400.24 ms at eight requests, still
 above the 144.78 ms matched-count reference already recorded.
+
+On `3b19fe335d`, the same original Box-55 data beat the attested eight-
+worker OpenMP build in four interleaved pairs: 135.06 ms versus 143.35 ms.
+Box-12 (5.06 ms versus 3.26 ms) and Box-25 (16.77 ms versus 16.29 ms)
+still miss. Exact metric and evidence IDs stay unchanged. This qualifies
+only the largest eight-worker row, not the complete thread matrix.
