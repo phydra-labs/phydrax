@@ -363,16 +363,26 @@ def _feature_witness_scope(
 def _feature_findings(
     inputs: MeshCertificationInputs,
     certificates: tuple[SourceFidelityCertificate, ...],
+    native_cad: NativeCadCertificate | None,
     /,
 ) -> tuple[tuple[MeshCertificateFinding, ...], tuple[MeshCertificateFinding, ...]]:
     failures: list[MeshCertificateFinding] = []
     recorded: list[MeshCertificateFinding] = []
+    cad_records = inputs.native_cad_records
     for feature in inputs.protected_features or ():
         owner = inputs.feature_source
         if owner is None:
             raise ValueError(
                 "Protected feature certification requires its source entity owner."
             )
+        if (
+            native_cad is not None
+            and cad_records is not None
+            and isinstance(owner, MeshingDomain)
+            and _same_tree_content(owner, inputs.domain)
+            and native_cad.covers_protected_surface(owner, cad_records, feature)
+        ):
+            continue
         scope = feature.scope
         identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
         expected = {
@@ -1027,7 +1037,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                         detail="Material coverage requires an established global target embedding.",
                     )
                 )
-        feature_findings, recorded = _feature_findings(inputs, scoped)
+        feature_findings, recorded = _feature_findings(inputs, scoped, native_cad)
         findings.extend(feature_findings)
         self.inputs = inputs
         self.audit_policy = policy

@@ -88,6 +88,8 @@ from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._embedding_state import MeshCertificateFinding
 from ..geometry._mesh_certificates import _same_tree_content, certificate_status
 from ..geometry._rational import fraction_down, fraction_up
+from ._controls import FeatureKind
+from ._scope import MeshingEntityKind
 
 
 if TYPE_CHECKING:
@@ -577,7 +579,7 @@ def _nodal_cad_carrier(
     embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None,
     degree: int,
     /,
-) -> tuple[AffineTetrahedra, np.ndarray, _EdgeRows, _FaceRows]:
+) -> tuple[AffineTetrahedra, np.ndarray, _EdgeRows, _FaceRows, Fraction]:
     """Bind the actual continuous nodal map to the affine cell complex."""
     from ..geometry._global_embedding import ValidatedGlobalEmbedding
 
@@ -585,19 +587,34 @@ def _nodal_cad_carrier(
 
     if len(domain.regions) != 1:
         raise ValueError(f"Native {order} CAD proof requires exactly one material.")
+    exact = geometry.exact_coordinate_bank
+    source_map = geometry.source_map
     if (
         type(geometry) is not CellGeometrySpec
-        or geometry.source_map is not None
-        or geometry.source_mesh_id is not None
-        or geometry.source_topology_id is not None
-        or geometry.source_map_id is not None
-        or geometry.exact_coordinate_bank is not None
         or geometry.restriction_source is not None
         or mesh.periodic_topology is not None
     ):
         raise ValueError(
             f"Native {order} CAD proof requires a nonperiodic nodal coordinate "
-            "map without a source bank or restriction."
+            "map without a restriction."
+        )
+    if source_map is None:
+        if (
+            exact is not None
+            or geometry.source_mesh_id is not None
+            or geometry.source_topology_id is not None
+            or geometry.source_map_id is not None
+        ):
+            raise ValueError(f"Native {order} CAD proof has an unbound source bank.")
+    elif (
+        degree != 2
+        or exact is None
+        or geometry.source_mesh_id != mesh.mesh_id
+        or geometry.source_topology_id != mesh.topology_id
+        or geometry.source_map_id != source_map.source_map_id
+    ):
+        raise ValueError(
+            f"Native {order} CAD proof has no supported bound nodal source bank."
         )
     embedding_error = (
         f"Native {order} CAD proof requires a certified embedding of the "
@@ -669,6 +686,12 @@ def _nodal_cad_carrier(
             raise ValueError(
                 f"Native {order} corner coordinates must equal the carrier vertices."
             )
+        if exact is not None:
+            corners = np.unique(dofs[:, corner_dofs])
+            if coordinate_point_rounding_bound(exact.rows(corners), bank[corners]):
+                raise ValueError(
+                    "Native quadratic source corners must exactly equal the carrier."
+                )
         _bind_node_rows(
             cells, dofs, bank_bits, edge_dofs, face_dofs, edge_rows, face_rows
         )
@@ -678,12 +701,24 @@ def _nodal_cad_carrier(
         dict(zip(geometry.block_names, geometry.elements, strict=True)),
         dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
         bank,
+        source_map=source_map,
+        source_mesh=mesh if source_map is not None else None,
     )
-    if rebuilt.geometry_layout_id != geometry.geometry_layout_id:
+    if (
+        rebuilt.geometry_layout_id != geometry.geometry_layout_id
+        or rebuilt.exact_coordinate_bank != exact
+    ):
         raise ValueError(
             f"Native {order} coordinate layout does not reproduce its binding."
         )
-    return carrier, bank, edge_rows, face_rows
+    # For quadratic Lagrange basis functions, each negative vertex weight
+    # has magnitude at most 1/8. There are at most four, and the signed
+    # weights sum to one. Thus the sum of absolute weights is at most two
+    # on the simplex and on every boundary trace, including collapsed sides.
+    rounding = (
+        Fraction(0) if exact is None else 2 * coordinate_point_rounding_bound(exact, bank)
+    )
+    return carrier, bank, edge_rows, face_rows, rounding
 
 
 def _nodal_chart_nodes(
@@ -776,6 +811,26 @@ def _nodal_refusal(detail: str, /) -> tuple[MeshCertificateFinding, ...]:
     return (MeshCertificateFinding("cad_fidelity", "unresolved", "mesh", detail=detail),)
 
 
+def native_cad_wall_feature_supported(
+    domain: MeshingDomain, feature: ProtectedFeature, tolerance: float, /
+) -> bool:
+    """Whether the full native two-sided wall proof owns this obligation."""
+    scope = feature.scope
+    return (
+        len(domain.regions) == 1
+        and feature.hard
+        and feature.feature_kind is FeatureKind.SURFACE
+        and feature.maximum_deviation >= tolerance
+        and scope.entity_kind is MeshingEntityKind.GEOMETRY
+        and scope.entity_dimension == 2
+        and not scope.side_records
+        and (scope.source_id, scope.source_revision)
+        == (domain.source_id, domain.source_revision)
+        and scope.entity_set_id == domain.scope_entity_set_id(2)
+        and np.array_equal(scope.entity_ids, domain.scope_entity_ids(2))
+    )
+
+
 def _native_findings(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -783,7 +838,7 @@ def _native_findings(
     witness: NativeCadSurfaceWitness,
     cell_regions: np.ndarray,
     tolerance: float,
-    protected_features: bool,
+    unsupported_features: bool,
     normal_deviation: bool,
     /,
     *,
@@ -800,9 +855,8 @@ def _native_findings(
     from ._native_cad_shell import certify_native_trim_references, source_shell
     from .providers._native_cad_bundle import cad_geometry_bundle, coefficient_bounds
 
-    # No native owner proves feature evidence or a normal-deviation bound yet.
     requested = (
-        *(("protected features",) if protected_features else ()),
+        *(("protected features",) if unsupported_features else ()),
         *(("maximum_normal_deviation",) if normal_deviation else ()),
     )
     if requested:
@@ -844,8 +898,7 @@ def _native_findings(
             )
         except ValueError as error:
             return _nodal_refusal(str(error)), None, None
-        tetrahedra = nodal_data[0]
-        rounding = Fraction(0)
+        tetrahedra, _, _, _, rounding = nodal_data
     else:
         affine_embedding = (
             embedding.certificate
@@ -869,8 +922,8 @@ def _native_findings(
             )
         tetrahedra, rounding = carrier
     points, cells = tetrahedra.points, tetrahedra.cells
-    # Matching barycentric weights move every point of a chart facet by at
-    # most the largest vertex displacement, in either direction.
+    # Pay the two-sided discrepancy between the exact map and the binary64
+    # trace consumed by V3 before the verifier spends the fidelity tolerance.
     fidelity_tolerance = (
         tolerance if not rounding else fraction_down(Fraction(tolerance) - rounding)
     )
@@ -967,7 +1020,7 @@ def _native_findings(
         finding = _volume_finding(points, cells, triangles, None, None)
         if finding is not None:
             return (finding,), None, None
-        _, bank, edge_rows, face_rows = nodal_data
+        _, bank, edge_rows, face_rows, _ = nodal_data
         try:
             trace_nodes = _nodal_chart_nodes(
                 mesh, domain, model, witness, points, bank, edge_rows, face_rows, degree
@@ -1097,7 +1150,10 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
             witness,
             cell_regions,
             tolerance,
-            bool(protected_features),
+            any(
+                not native_cad_wall_feature_supported(domain, feature, tolerance)
+                for feature in protected_features or ()
+            ),
             maximum_normal_deviation is not None,
             embedding=embedding,
             degree=degree,
@@ -1112,6 +1168,25 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         self.geometry_id = cell_geometry_id(geometry)
         self.status = certificate_status(findings)
         self.certificate_id = self._identity()
+
+    def covers_protected_surface(
+        self,
+        domain: MeshingDomain,
+        records: NativeCadRecords,
+        feature: ProtectedFeature,
+        /,
+    ) -> bool:
+        """Whether this certified wall covers the retained feature obligation."""
+        bound = self.maximum_deviation
+        return (
+            self.status == "certified"
+            and bound is not None
+            and bound <= feature.maximum_deviation
+            and self.records_id == records.records_id
+            and (records.source_id, records.source_revision)
+            == (domain.source_id, domain.source_revision)
+            and native_cad_wall_feature_supported(domain, feature, self.tolerance)
+        )
 
     def require_binding(
         self,

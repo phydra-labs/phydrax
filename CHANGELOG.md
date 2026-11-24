@@ -9,6 +9,13 @@
   authored vertices, hole domains and constraint ancestry are retained.
 - Quadratic geometry validity prepares one ordered sparse derivative stencil
   per bank without changing exact verdicts, bounds, or geometry.
+- Native CAD solids with compatible hard whole-wall protection use the
+  native construction and two-sided certificate, reporting the protected
+  bound after proof. Newly admitted requests can change mesh identity.
+- Native quadratic CAD certificates accept bound exact nodal maps with
+  exact affine corners and a separate outward rounding budget. Protected
+  P2 relaxation limits wall motion and reprojects smaller shared-edge
+  moves before running unchanged acceptance checks.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.

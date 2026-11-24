@@ -2017,6 +2017,114 @@ def _project_constrained(
     return _apply_periodic(result, periodic), rows, projectors
 
 
+def _protected_native_wall_tolerance(
+    source: CellMeshingResult | None, degree: int, /
+) -> float | None:
+    report = None if source is None else source.certification
+    if (
+        degree != 2
+        or report is None
+        or report.native_cad is None
+        or not report.inputs.protected_features
+    ):
+        return None
+    return report.native_cad.tolerance
+
+
+def _limit_projected_wall_move(
+    proposed: np.ndarray, projected: np.ndarray, rows: np.ndarray, limit: float, /
+) -> np.ndarray:
+    delta = proposed[rows] - projected[rows]
+    lengths = np.linalg.norm(delta, axis=1)
+    limited = lengths > limit
+    if not np.any(limited):
+        return proposed
+    result = proposed.copy()
+    result[rows[limited]] = projected[rows[limited]] + delta[limited] * (
+        limit / lengths[limited, None]
+    )
+    return result
+
+
+def _quadratic_wall_centroid_backoff(
+    source: CellMeshingResult,
+    geometry: CellGeometrySpec,
+    projected: np.ndarray,
+    proposed: np.ndarray,
+    tolerance: float,
+    /,
+) -> np.ndarray | None:
+    """Propose smaller shared-node moves on overshooting chart centroids."""
+    from .._meshcore import (
+        cad_geometry_evaluate,
+        CadEntityKind,
+        CadGeometryQuantity,
+    )
+    from ..geometry._meshing_domain import MeshingDomain
+    from ._native_cad_certificate import _bind_node_rows, _quadratic_dofs
+    from .providers._native_cad_bundle import cad_geometry_bundle
+
+    report = source.certification
+    if report is None:
+        raise ValueError("Quadratic wall relaxation requires its CAD source proof.")
+    domain, witness = report.inputs.domain, report.inputs.native_cad_surface
+    if not isinstance(domain, MeshingDomain) or witness is None:
+        raise ValueError("Quadratic wall relaxation requires its native CAD charts.")
+    mesh = source.mesh
+    elements, routes, _ = geometry.resolve(mesh)
+    edges: dict[tuple[int, int], tuple[int, ...]] = {}
+    faces: dict[tuple[int, ...], int] = {}
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        _, local_edges = _quadratic_dofs(element, block.cell_kind)
+        _bind_node_rows(
+            np.asarray(block.vertices),
+            np.asarray(route),
+            proposed.view(np.uint64),
+            tuple((slot,) for slot in local_edges),
+            (),
+            edges,
+            faces,
+        )
+    rows = np.flatnonzero(np.asarray(witness.chart_to_mesh) >= 0)
+    triangles = np.asarray(witness.chart_triangles)[rows]
+    mids = np.asarray(
+        [
+            tuple(
+                edges[min(a, b), max(a, b)][0]
+                for a, b in ((first, second), (second, third), (third, first))
+            )
+            for first, second, third in triangles.tolist()
+        ],
+        dtype=np.int64,
+    )
+    moved = np.any(np.any(proposed[mids] != projected[mids], axis=-1), axis=-1)
+    if not np.any(moved):
+        return None
+    rows, triangles, mids = rows[moved], triangles[moved], mids[moved]
+    uv = np.asarray(witness.chart_uv)[rows].mean(axis=1)
+    names = np.asarray(witness.chart_patches)[rows]
+    # The canonical P2 trace has corner weight -1/9 and midpoint
+    # weight 4/9 at its centroid. This is a proposal screen, not a bound.
+    corners = np.asarray(mesh.coordinates)[triangles]
+    centroid = (-corners.sum(axis=1) + 4.0 * proposed[mids].sum(axis=1)) / 9.0
+    model = cad_geometry_bundle(domain).model
+    overshoots = np.zeros(rows.shape, dtype=np.bool_)
+    for face in np.unique(names).tolist():
+        group = np.flatnonzero(names == face)
+        points = cad_geometry_evaluate(
+            model, CadEntityKind.SURFACE, face, uv[group], CadGeometryQuantity.VALUE
+        )
+        overshoots[group] = np.linalg.norm(centroid[group] - points, axis=1) > tolerance
+    if not np.any(overshoots):
+        return None
+    selected = np.unique(mids[overshoots])
+    result = proposed.copy()
+    result[selected] = projected[selected] + 0.75 * (
+        proposed[selected] - projected[selected]
+    )
+    return result
+
+
 @collection_scope()
 def curve_cell_mesh(
     mesh: CellMesh,
@@ -2104,6 +2212,8 @@ def curve_cell_mesh(
         pairs,
         cache=projection_cache,
     )
+    wall_tolerance = _protected_native_wall_tolerance(source_result, policy.degree)
+    projected_wall = coordinates
     # Cache updates replace their arrays. Retain the initial exact-query rows
     # without copying them so rollback does not repeat source projections.
     straight_projection_cache = replace(projection_cache)
@@ -2180,6 +2290,13 @@ def curve_cell_mesh(
         moved = np.asarray(relaxed.coordinates, dtype=np.float64)
         if not np.all(np.isfinite(moved)):
             break
+        if wall_tolerance is not None:
+            # An edge can move to repair an incident Jacobian while an
+            # entire face must stay close to its authored chart. Leave room
+            # for compound edge motion rather than relaxing the proof bound.
+            moved = _limit_projected_wall_move(
+                moved, projected_wall, constrained_rows, 0.75 * wall_tolerance
+            )
         coordinates, constrained_rows, projectors = _project_constrained(
             projection,
             moved,
@@ -2193,6 +2310,25 @@ def curve_cell_mesh(
             # no evidence; the last round's candidate is always certified.
             continue
         record(round_, coordinates, admissible)
+        if (
+            wall_tolerance is not None
+            and source_result is not None
+            and admissible
+            and candidates[-1][3].passes(policy)
+        ):
+            backed_off = _quadratic_wall_centroid_backoff(
+                source_result,
+                candidates[-1][2],
+                projected_wall,
+                coordinates,
+                wall_tolerance,
+            )
+            if backed_off is not None:
+                backed_off, _, _ = _project_constrained(
+                    projection, backed_off, classes, pairs, cache=projection_cache
+                )
+                record(round_, backed_off, admissible)
+            break
 
     def full_evidence(
         geometry: CellGeometrySpec, local: _LocalEvidence, /
