@@ -3058,6 +3058,21 @@ tangents. With relocation enabled, the native loop reports STALLED only
 after exhausting the enabled searches on one unchanged mesh generation.
 If an edit invalidates an earlier sweep, the loop requeues the live mesh
 before reporting residual edges.
+On an authored Cartesian face with a rounded-image source chart, shallow
+boundary relocation tries the current wall ring's mean first. A candidate
+at that target still needs the same source carrier, transported metric, and
+transaction checks. Seam and deeper searches retain their existing order.
+After the ordinary searches exhaust or an edited mesh first meets the
+requested band, a closed-cavity search improves aggregate metric shape
+without changing vertex coordinates, constrained facets, or protected
+edges. New edges must meet the strict unit band and any stricter requested
+completion lower bound.
+Admitted replacements retain source-cell ancestry. If the band is not yet
+met, they reopen the ordinary searches rather than confer completion.
+When an edited mesh meets the band and relocation is enabled, a separate
+interior sweep improves mean cell shape using exact source carriers. It
+revisits changed stars until no improving move preserves those bounds.
+It does not move boundary vertices or vertices incident to a protected edge.
 The route returns the exact dyadic source stencils, source-cell lineage, and
 `TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
 by the host phase schedule until native periodic local commits exist.
@@ -3112,11 +3127,21 @@ but is still measured and reported on the result.
 Within one directed star, collapse reuses its invariant pre-edit objective and
 identical rejected numerical variants. Source-stencil checks and native
 admission remain independent; this does not retain proposals across changed stars.
-A stationary, witness-free boundary survivor can use a local commit when its
-exact stencil image and the correctly rounded binary64 point both lie inside
-one declared axis-aligned source facet group. The rounding displacement must
-avoid the group rim and every authored source segment. Crossing an internal
-triangle edge without a source feature is allowed.
+A stationary, witness-free boundary survivor or a witness-free exterior
+facet relocation can use a local commit when its exact stencil image and its
+correctly rounded binary64 point both lie inside one declared axis-aligned
+source facet group. The rounding displacement must avoid the group rim and
+source segments. Crossing an internal triangle edge without a source feature
+is allowed.
+
+For an ordinary binary64-exact source, a seam shared by two exterior
+Cartesian facet groups uses immutable source segments derived from their
+shared source edges. These segments do not add live constraints or protection.
+An unambiguous seam vertex can relocate within the same seam chart using a
+segment witness reconstructed from its dyadic stencil, including when the
+exact point rounds to a different binary64 value. The native commit still
+checks the witness, the affected facets, and positive cell orientation.
+Oblique and authored rational geometry keep their existing admission paths.
 Edge worksets use persistent endpoint IDs for measurement and tie-breaking.
 Proposed edits and final band evidence measure in the same endpoint order,
 including when only one endpoint moves or a split introduces a new one.

@@ -1110,6 +1110,18 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
   }
 }
 
+const TetMesh::PreparedFacetGroup* LocalIncidence::prepared_declared_group(
+    const TetMesh& mesh, std::int32_t source) {
+  if (prepared_declared_groups_) {
+    const auto cached = prepared_declared_groups_->find(source);
+    if (cached != prepared_declared_groups_->end()) return &cached->second;
+  }
+  const auto declared = mesh.declared_groups_.find(source);
+  if (declared == mesh.declared_groups_.end()) return nullptr;
+  if (!prepared_declared_groups_) prepared_declared_groups_.emplace();
+  return &prepared_declared_groups_->try_emplace(source, mesh, declared->second).first->second;
+}
+
 TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVertex& moved,
                                                const Star& star,
                                                const SourceStencil* moved_stencil) {
@@ -1164,12 +1176,18 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
 
     // The facets and segments through the vertex, in bank order.
     const std::uint64_t id = moved.id;
+    const auto dimension = mesh.vertex_dimension(slot);
+    const bool rounded =
+        moved_stencil != nullptr && moved_stencil->image == SourceStencilImage::kRoundedPlane;
     std::vector<std::size_t> facet_rows;
     std::vector<std::size_t> segment_rows;
     for (std::int32_t cell : star) {
       const Tetrahedron& tet = mesh.tet(cell);
       for (int face = 0; face < 4; ++face) {
         if (tet.v[face] == slot || mesh.complex_.constraint(cell, face) == kNoConstraint) continue;
+        if (rounded && !is_ghost(mesh.tet(tet.n[face]))) {
+          return TetEditStatus::kRejectedTopology;
+        }
         std::int32_t corners[3];
         oriented_facet(tet.v, face, corners);
         const auto found = boundary_index_.facets.find(sorted_ids(
@@ -1178,20 +1196,34 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
         facet_rows.push_back(found->second);
       }
       for (std::int32_t other : tet.v) {
-        if (other == slot || mesh.vertex_dimension(slot) > 1 || mesh.vertex_dimension(other) > 1) {
+        if (other == slot || (!rounded && (dimension > 1 || mesh.vertex_dimension(other) > 1))) {
           continue;
         }
         const auto found = boundary_index_.segments.find(sorted_ids(id, mesh.vertex_id(other)));
-        if (found != boundary_index_.segments.end()) segment_rows.push_back(found->second);
+        if (found == boundary_index_.segments.end()) continue;
+        if (rounded) return TetEditStatus::kRejectedTopology;
+        segment_rows.push_back(found->second);
       }
     }
     for (auto* rows : {&facet_rows, &segment_rows}) {
       std::sort(rows->begin(), rows->end());
       rows->erase(std::unique(rows->begin(), rows->end()), rows->end());
     }
-    if (moved_stencil != nullptr &&
-        ((facet_rows.empty() && segment_rows.empty()) ||
-         !source_stencil_matches(*moved_stencil, mesh.source_points_, moved.carrier.data()))) {
+    if (rounded) {
+      if (dimension != 2 || facet_rows.empty()) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      const std::int32_t group = mesh.facets_[facet_rows.front()].source;
+      if (!std::ranges::all_of(facet_rows, [&](std::size_t row) {
+            return mesh.facets_[row].source == group;
+          }) ||
+          !rounded_plane_support(mesh, group, *moved_stencil, moved.carrier.data())) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    } else if (moved_stencil != nullptr &&
+               ((facet_rows.empty() && segment_rows.empty()) ||
+                !source_stencil_matches(*moved_stencil, mesh.source_points_,
+                                        moved.carrier.data()))) {
       return TetEditStatus::kRejectedTopology;
     }
     const auto supports_stencil = [&](const auto& groups, std::int32_t source) {
@@ -1201,12 +1233,14 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
     const TetMesh::RelocationOverlay overlay{std::span<const TetEditVertex>(&moved, 1)};
     for (std::size_t row : facet_rows) {
       const TetSnapshotFacet& facet = mesh.facets_[row];
-      if (moved_stencil != nullptr &&
+      if (!rounded && moved_stencil != nullptr &&
           !supports_stencil(boundary_index_.face_group_points, facet.source)) {
         return TetEditStatus::kRejectedTopology;
       }
       const TetEditFacet check{facet.id, facet.vertices, facet.source, facet.orientation, false};
-      if (!mesh.source_face_valid(check, &overlay)) return mesh.source_face_refusal_status();
+      if (!mesh.source_face_valid(check, &overlay, prepared_declared_group(mesh, facet.source))) {
+        return mesh.source_face_refusal_status();
+      }
     }
     for (std::size_t row : segment_rows) {
       const TetSnapshotSegment& segment = mesh.segments_[row];
@@ -1305,7 +1339,8 @@ TetEditStatus LocalIncidence::commit_boundary_edit(TetMesh& mesh, const TetEdit&
       return facet.protected_facet || fixed ? TetEditStatus::kRejectedProtected
                                             : TetEditStatus::kRejectedTopology;
     }
-    if (!mesh.source_face_valid(facet, edit.overlay)) return mesh.source_face_refusal_status();
+    const auto* group = prepared_declared_group(mesh, facet.source);
+    if (!mesh.source_face_valid(facet, edit.overlay, group)) return mesh.source_face_refusal_status();
   }
   for (const TetEditFacet& facet : operation.replacement_facets) {
     if (!new_ids.insert(facet.id).second) return TetEditStatus::kRejectedTopology;
@@ -1378,7 +1413,8 @@ TetEditStatus LocalIncidence::commit_boundary_edit(TetMesh& mesh, const TetEdit&
       check.vertices = facet.vertices;
       check.source = facet.source;
       check.orientation = facet.orientation;
-      if (!mesh.source_face_valid(check, edit.overlay)) return mesh.source_face_refusal_status();
+      const auto* group = prepared_declared_group(mesh, facet.source);
+      if (!mesh.source_face_valid(check, edit.overlay, group)) return mesh.source_face_refusal_status();
     }
     for (std::size_t row : segment_rows) {
       const TetSnapshotSegment& segment = mesh.segments_[row];

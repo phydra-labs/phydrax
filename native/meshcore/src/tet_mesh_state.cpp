@@ -910,29 +910,29 @@ bool TetMesh::constraints_covered() const {
   const auto prepare_group = [&](GroupRows rows, PreparedFacetGroup& group) {
     const std::int32_t source = rows.front().first;
     const bool implicit = implicit_group(source);
-    group.rows.clear();
     group.primitives.clear();
     group.indices.clear();
     group.bounds.clear();
-    group.prepare_declared = !implicit && declared_groups_.contains(source);
-    group.prepare_bounds = !implicit && !group.prepare_declared;
+    if (!implicit) {
+      const auto declared = declared_groups_.find(source);
+      if (declared != declared_groups_.end()) {
+        prepare_declared_group(declared->second, group);
+        return;
+      }
+    }
     for (const auto& entry : rows) {
       const std::size_t row = entry.second;
       const auto* face = source_faces_.data() + 3 * row;
-      group.rows.push_back(row);
       group.primitives.push_back({face[0], face[1], face[2], static_cast<std::int32_t>(row)});
       group.indices.push_back(static_cast<std::int32_t>(group.indices.size()));
-      if (group.prepare_bounds) {
+      if (!implicit) {
         group.bounds.push_back(facet_bounds(
             source_points_.data() + 3 * static_cast<std::size_t>(face[0]),
             source_points_.data() + 3 * static_cast<std::size_t>(face[1]),
             source_points_.data() + 3 * static_cast<std::size_t>(face[2])));
       }
     }
-    if (group.prepare_declared) {
-      const auto declared = declared_groups_.find(source);
-      if (declared != declared_groups_.end()) prepare_declared_group(declared->second, group);
-    } else if (group.prepare_bounds) {
+    if (!implicit) {
       group.coverage_index.build(group.primitives, group.indices, group.bounds);
     }
   };

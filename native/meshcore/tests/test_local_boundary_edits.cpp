@@ -2538,13 +2538,41 @@ void rounded_survivor_matches_batch_across_chart_boundary(RoundedControl control
   const std::array<double, 3> weights{1.0 - b, b - a, a};
   constexpr auto rounded = detail::SourceStencilImage::kRoundedPlane;
   const SourceStencil stencil{rows, weights, rounded};
+  const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
+  const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1], weights[2] + 0x1p-49};
+  const std::array bad_stencils{
+      SourceStencil{wrong_group, weights, rounded},
+      SourceStencil{rows, wrong_point, rounded},
+      SourceStencil{rows, std::span(weights).first<2>(), rounded},
+  };
   MovePlan move{incidence.vertex_star(kept), {}};
   move.vertex.id = local.vertex_id(kept);
   const bool wrong_zero = control == RoundedControl::kOppositeZeroSign;
   const double z = oblique ? 0.125 * x : (wrong_zero ? -0.0 : 0.0);
   move.vertex.carrier = {x, y, z};
-  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star) ==
-            TetEditStatus::kApplied);
+  const auto refuses_move = [&](Point carrier, const SourceStencil& proof,
+                                TetEditStatus expected = TetEditStatus::kRejectedTopology) {
+    TetEditVertex candidate = move.vertex;
+    candidate.carrier = carrier;
+    PHX_CHECK(incidence.relocate(local, std::span(&candidate, 1), move.star, &proof) == expected);
+    PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+  };
+  if (admit) {
+    for (const SourceStencil& bad : bad_stencils) refuses_move(move.vertex.carrier, bad);
+    const std::array<std::int32_t, 2> rim_rows{1, 3};
+    const std::array<double, 2> rim_weights{0.1875, 0.8125};
+    refuses_move({5.0, 7.0 * 0.8125, 0.0}, {rim_rows, rim_weights, rounded});
+
+    // A supported image inside the source group can still invert the star.
+    const std::array<std::int32_t, 3> inverted_rows{0, 1, 3};
+    const std::array<double, 3> inverted_weights{0.75, 0.125, 0.125};
+    refuses_move({1.25, 0.875, 0.0}, {inverted_rows, inverted_weights, rounded},
+                 TetEditStatus::kInvalidGeometry);
+  } else {
+    refuses_move(move.vertex.carrier, stencil);
+  }
+  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star,
+                               admit ? &stencil : nullptr) == TetEditStatus::kApplied);
   if (wrong_zero) PHX_CHECK(std::signbit(local.point(kept)[2]));
   TetEditStatus status = TetEditStatus::kApplied;
   PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
@@ -2560,13 +2588,7 @@ void rounded_survivor_matches_batch_across_chart_boundary(RoundedControl control
     if (!plan) continue;
     const auto star = incidence.vertex_star(removed);
     if (admit) {
-      const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
-      const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1],
-                                             weights[2] + 0x1p-49};
-      for (const SourceStencil bad : {
-               SourceStencil{wrong_group, weights, rounded},
-               SourceStencil{rows, wrong_point, rounded},
-               SourceStencil{rows, std::span(weights).first<2>(), rounded}}) {
+      for (const SourceStencil& bad : bad_stencils) {
         PHX_CHECK(!incidence.collapse_boundary(local, plan->operation, star, nullptr, &bad));
         PHX_CHECK(same_state(local, batch));
       }
@@ -2678,6 +2700,45 @@ void stencil_relocations_verify_the_candidate() {
             consistent_complex(local) && incidence_current(local, incidence));
 }
 
+void prepared_relocation_rebinds_to_new_source() {
+  LocalIncidence incidence;
+  for (double offset : {0.0, 16.0}) {
+    Box box = witness_free_box({4, 4, 4}, true);
+    for (auto* points : {&box.points, &box.source_points}) {
+      for (std::size_t row = 0; row < points->size(); row += 3) (*points)[row] += offset;
+    }
+    for (std::int32_t group : box.face_groups) {
+      const Piece& piece = box.pieces.at(group);
+      const auto axis = static_cast<std::size_t>(piece.axis);
+      std::array<double, 9> plane{offset};
+      plane[axis] = piece.value + (axis == 0 ? offset : 0.0);
+      plane[3 + (axis + 1) % 3] = 1.0;
+      plane[6 + (axis + 2) % 3] = 1.0;
+      box.face_planes.insert(box.face_planes.end(), plane.begin(), plane.end());
+      box.face_plane_tolerances.push_back(0.0);
+    }
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    if (!build(mesh, box, {})) return;
+    PHX_CHECK(incidence.initialize(mesh));
+    constexpr std::int32_t slot = 6;
+    const auto generation = mesh.generation();
+    const auto star = incidence.vertex_star(slot);
+    const std::array<std::int32_t, 3> rows{0, 8, 2};
+    const std::array<double, 3> extrapolated{-0.375, 1.125, 0.25};
+    const TetEditVertex outside{mesh.vertex_id(slot), {offset + 2.25, 1.0, 0.0}};
+    const SourceStencil unsupported{rows, extrapolated};
+    PHX_CHECK(incidence.relocate(mesh, std::span(&outside, 1), star, &unsupported) ==
+              TetEditStatus::kInvalidGeometry);
+    PHX_CHECK(mesh.generation() == generation && mesh.point(slot)[0] == offset + 1.0);
+    const std::array<double, 3> weights{0.125, 0.625, 0.25};
+    const TetEditVertex inside{mesh.vertex_id(slot), {offset + 1.25, 1.0, 0.0}};
+    const SourceStencil supported{rows, weights};
+    PHX_CHECK(incidence.relocate(mesh, std::span(&inside, 1), star, &supported) ==
+              TetEditStatus::kApplied);
+    PHX_CHECK(mesh.generation() == generation + 1 && mesh.point(slot)[0] == inside.carrier[0]);
+  }
+}
+
 void stencil_relocations_respect_incident_segments() {
   for (bool split_faces : {false, true}) {
     Box box = witness_free_box({4, 4, 4}, split_faces);
@@ -2731,6 +2792,7 @@ int main() {
   rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kOppositeZeroSign);
   boundary_lookups_require_bound_mesh();
   stencil_relocations_verify_the_candidate();
+  prepared_relocation_rebinds_to_new_source();
   stencil_relocations_respect_incident_segments();
   return phx::mc::test::finish("test_local_boundary_edits");
 }

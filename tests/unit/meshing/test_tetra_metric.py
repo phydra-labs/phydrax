@@ -3253,15 +3253,25 @@ def test_stalled_adaptation_reports_typed_unmet_edges() -> None:
     assert all(edge.vertex_ids in target_edges for edge in evidence.unmet_edges)
 
 
-def test_stalled_metric_adaptation_has_no_moves_on_unchanged_continuation() -> None:
+@pytest.mark.parametrize(
+    ("scales", "expected_status"),
+    (
+        pytest.param((0.25, 3.0, 5.0), TetraMetricStatus.STALLED, id="short-source-edge"),
+        pytest.param((3.0, 9.0, 12.0), TetraMetricStatus.COMPLETE, id="reconnected-cube"),
+    ),
+)
+def test_terminal_metric_adaptation_has_no_moves_on_unchanged_continuation(
+    scales: tuple[float, float, float], expected_status: TetraMetricStatus
+) -> None:
     from phydrax.meshing._tetra_metric import (
         _adapted_evidence,
         _LOWER,
         _metric_adapt_inputs,
     )
 
-    # A late relocation used to reopen ordinary moves on this anisotropic cube.
-    tensor = np.diag(np.asarray((3.0, 9.0, 12.0), dtype=np.float64))
+    # The short-source-edge case cannot grow a pinned cube ridge to the unit
+    # band. The other case now completes after its interior reconnections.
+    tensor = np.diag(np.asarray(scales, dtype=np.float64))
     state = _state(_source(), tensor)
     with state.native as native:
         banks = _metric_adapt_inputs(state)
@@ -3278,8 +3288,10 @@ def test_stalled_metric_adaptation_has_no_moves_on_unchanged_continuation() -> N
         first = native.metric_adapt(int(state.snapshot.generation), **banks)
         terminal = native.arrays()
         evidence = _adapted_evidence(state, first, terminal, _LOWER)
-        assert evidence.status is TetraMetricStatus.STALLED
-        assert evidence.out_of_range_edges > 0
+        assert evidence.status is expected_status
+        assert (evidence.out_of_range_edges == 0) is (
+            expected_status is TetraMetricStatus.COMPLETE
+        )
 
         banks.update(
             vertex_ids=first.vertex_ids,
@@ -3298,7 +3310,7 @@ def test_stalled_metric_adaptation_has_no_moves_on_unchanged_continuation() -> N
         second = native.metric_adapt(int(terminal.generation), **banks)
         continued = native.arrays()
         repeated = _adapted_evidence(state, second, continued, _LOWER)
-        assert repeated.status is TetraMetricStatus.STALLED
+        assert repeated.status is expected_status
         assert repeated.out_of_range_edges == evidence.out_of_range_edges
         assert continued.generation == terminal.generation
         np.testing.assert_array_equal(continued.points, terminal.points)

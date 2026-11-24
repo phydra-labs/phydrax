@@ -426,6 +426,7 @@ class _NativeState:
     source_mesh: CellMesh
     source_points: np.ndarray
     source_exact_points: tuple[tuple[Fraction, Fraction, Fraction], ...]
+    source_has_authored_rounding: bool
     implicit_groups: frozenset[int]
     target_mesh: CellMesh
     source_metric: np.ndarray
@@ -1527,6 +1528,100 @@ def _declared_face_planes(points: np.ndarray, faces: np.ndarray, /) -> np.ndarra
     return planes
 
 
+def _cartesian_source_seams(
+    points: np.ndarray,
+    vertex_ids: np.ndarray,
+    vertex_row_by_id: Mapping[int, int],
+    constrained_faces: list[_SourceFacet],
+    face_groups: np.ndarray,
+    declared_planes: np.ndarray,
+    edge_id_by_key: Mapping[tuple[int, int], int],
+    live_segment_keys: list[tuple[int, int]],
+    fixed: np.ndarray,
+    /,
+) -> tuple[list[tuple[int, int]], dict[int, tuple[tuple[int, int], int]]]:
+    """Find immutable ridge edges and canonical source endpoint witnesses.
+
+    A ridge uses exactly two oppositely oriented exterior triangles from
+    different Cartesian planes. Scan the constrained source incidence once;
+    neither live facets nor the entire tetrahedral edge bank define the chart.
+    """
+    constant_axes = np.all(declared_planes[:, 1:] == 0.0, axis=1)
+    if np.count_nonzero(np.any(constant_axes, axis=0)) < 2:
+        return [], {}
+    group_axes = np.where(
+        np.count_nonzero(constant_axes, axis=1) == 1,
+        np.argmax(constant_axes, axis=1),
+        -1,
+    )
+    authored = set(live_segment_keys)
+    authored_vertices = {vertex for key in authored for vertex in key}
+    edge_uses: dict[tuple[int, int], list[tuple[int, bool]]] = defaultdict(list)
+    vertex_groups: dict[int, set[int]] = defaultdict(set)
+    for face_row, (_, _, corners, _) in enumerate(constrained_faces):
+        a, b, c = (int(vertex_ids[corner]) for corner in corners)
+        group = int(face_groups[face_row])
+        for first, second in ((a, b), (b, c), (c, a)):
+            vertex_groups[first].add(group)
+            forward = first < second
+            key = (first, second) if forward else (second, first)
+            edge_uses[key].append((face_row, forward))
+
+    seams: list[tuple[int, int]] = []
+    incident_seams: dict[int, list[tuple[tuple[int, int], int]]] = defaultdict(list)
+    for key, uses in edge_uses.items():
+        if len(uses) != 2 or key in authored:
+            continue
+        (first, forward), (second, reverse) = uses
+        if (
+            forward == reverse
+            or constrained_faces[first][3][0] != 1
+            or constrained_faces[second][3][0] != 1
+        ):
+            continue
+        first_axis = int(group_axes[face_groups[first]])
+        second_axis = int(group_axes[face_groups[second]])
+        if first_axis < 0 or second_axis < 0 or first_axis == second_axis:
+            continue
+        # Two different fixed axes leave one direction along the intersection.
+        axis = 3 - first_axis - second_axis
+        seams.append(key)
+        for vertex in key:
+            incident_seams[vertex].append((key, axis))
+
+    witnesses: dict[int, tuple[tuple[int, int], int]] = {}
+    for vertex, incident in incident_seams.items():
+        row = vertex_row_by_id[vertex]
+        if (
+            len(vertex_groups[vertex]) != 2
+            or len(incident) != 2
+            or vertex in authored_vertices
+            or fixed[row]
+        ):
+            continue
+        (first_key, axis), (second_key, other_axis) = incident
+        if axis != other_axis:
+            continue
+        point = points[row]
+        first_end = first_key[0] if vertex == first_key[1] else first_key[1]
+        second_end = second_key[0] if vertex == second_key[1] else second_key[1]
+        first = points[vertex_row_by_id[first_end], axis]
+        second = points[vertex_row_by_id[second_end], axis]
+        if not (first < point[axis] < second or second < point[axis] < first):
+            continue
+        # Expansion realization canonicalizes zero; only install a witness
+        # when the unchanged native carrier also has that sign bit.
+        if np.any((point == 0.0) & np.signbit(point)):
+            continue
+        key = (
+            first_key
+            if edge_id_by_key[first_key] < edge_id_by_key[second_key]
+            else second_key
+        )
+        witnesses[row] = (key, 0 if vertex == key[0] else 1)
+    return seams, witnesses
+
+
 def _cell_volume(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
     determinants, _ = metric_relative_determinants(points[cells])
     return np.abs(determinants) / 6.0
@@ -1884,6 +1979,7 @@ def _prepare_native_state(
     protected_edges: ArrayLike,
     fixed_vertices: ArrayLike,
     implicit_source: _ImplicitMetricSource | None = None,
+    derive_cartesian_seams: bool = False,
 ) -> _NativeState:
     """Prepare a source-bound P1 tetrahedral complex and persistent native owner."""
     if not isinstance(mesh, CellMesh):
@@ -1902,6 +1998,7 @@ def _prepare_native_state(
 
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     exact_source_points = _canonical_lagrange_vertices(mesh, geometry, points)
+    has_authored_rounding = False
     if exact_source_points is None:
         if not _piecewise_linear_geometry(mesh, geometry):
             raise ValueError(
@@ -1916,6 +2013,9 @@ def _prepare_native_state(
             raise ValueError(
                 "Tetra source vertices are not canonical exact-source roundings."
             )
+        has_authored_rounding = any(
+            value != float(value) for point in exact_source_points for value in point
+        )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if vertex_ids.shape != (points.shape[0],):
         raise ValueError("Source vertex identities do not align with coordinates.")
@@ -2029,23 +2129,22 @@ def _prepare_native_state(
     vertex_row_by_id = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
     }
-    source_segment_keys = [
+    live_segment_keys = [
         _edge_key(edge_keys[row].tolist())
         for row in range(edge_ids.size)
         if edge_codes[row] > 0 or protected[row]
     ]
-    source_segment_keys.sort(key=lambda key: edge_id_by_key[key])
-    source_segment_ids = np.asarray(
-        [edge_id_by_key[key] for key in source_segment_keys], dtype=np.int64
+    live_segment_keys.sort(key=lambda key: edge_id_by_key[key])
+    live_segment_ids = np.asarray(
+        [edge_id_by_key[key] for key in live_segment_keys], dtype=np.int64
     )
-    source_segments = np.asarray(
+    live_segments = np.asarray(
         [
             [vertex_row_by_id[identifier] for identifier in key]
-            for key in source_segment_keys
+            for key in live_segment_keys
         ],
         dtype=np.int32,
     ).reshape((-1, 2))
-    segment_groups = np.arange(source_segment_ids.size, dtype=np.int32)
     # Exactly coplanar source triangles joined across non-segment edges form
     # one planar source facet (one group): boundary vertices then move and
     # collapse across the facet's internal diagonals. On a periodic lift each
@@ -2055,7 +2154,7 @@ def _prepare_native_state(
         points,
         source_faces,
         [sides for *_, sides in constrained_faces],
-        {_edge_key(row) for row in source_segments.tolist()},
+        {_edge_key(row) for row in live_segments.tolist()},
     )
     implicit_rows: list[int] = []
     if implicit_source is not None:
@@ -2101,12 +2200,8 @@ def _prepare_native_state(
         group: frozenset(vertex for triangle in triangles for vertex in triangle)
         for group, triangles in source_group_triangles.items()
     }
-    source_segment_vertices = {
-        row: frozenset(key) for row, key in enumerate(source_segment_keys)
-    }
-    source_segment_group_rows = {
-        int(identifier): row for row, identifier in enumerate(source_segment_ids.tolist())
-    }
+    seam_keys: list[tuple[int, int]] = []
+    endpoint_witnesses: dict[int, tuple[tuple[int, int], int]] = {}
     # Off a periodic lift each facet declares the exact plane of its first
     # triangle (origin a, axes b - a and c - a) when those axes are binary64,
     # so the native admits a carrier rounding a point of the plane
@@ -2116,23 +2211,64 @@ def _prepare_native_state(
         face_planes = representatives[face_groups]
         if implicit_groups:
             face_planes[implicit_rows] = np.nan
+        elif derive_cartesian_seams and not has_authored_rounding:
+            seam_keys, endpoint_witnesses = _cartesian_source_seams(
+                points,
+                vertex_ids,
+                vertex_row_by_id,
+                constrained_faces,
+                face_groups,
+                representatives,
+                edge_id_by_key,
+                live_segment_keys,
+                fixed,
+            )
     else:
         face_planes = np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64)
     declared_source_faces = frozenset(
         frozenset(constrained_faces[row][1])
         for row in np.flatnonzero(~np.isnan(face_planes[:, 0, 0])).tolist()
     )
+    witness_strata = np.zeros((vertex_ids.size,), dtype=np.int8)
+    witness_entities = np.full((vertex_ids.size,), -1, dtype=np.int32)
+    witness_parameters = np.zeros((vertex_ids.size, 2), dtype=np.float64)
+    source_segment_keys = live_segment_keys
+    source_segment_ids = live_segment_ids
+    source_segments = live_segments
+    if seam_keys:
+        # Live constraints keep their original IDs. The source bank
+        # interleaves ridge primitives in the same stable physical ID order.
+        source_segment_keys = live_segment_keys + seam_keys
+        source_segment_keys.sort(key=lambda key: edge_id_by_key[key])
+        source_segment_ids = np.asarray(
+            [edge_id_by_key[key] for key in source_segment_keys], dtype=np.int64
+        )
+        source_segments = np.asarray(
+            [(vertex_row_by_id[a], vertex_row_by_id[b]) for a, b in source_segment_keys],
+            dtype=np.int32,
+        )
+    source_segment_vertices = {
+        row: frozenset(key) for row, key in enumerate(source_segment_keys)
+    }
+    source_segment_group_rows = {
+        int(identifier): row for row, identifier in enumerate(source_segment_ids.tolist())
+    }
+    for row, (key, endpoint) in endpoint_witnesses.items():
+        # One primitive per source group; witness entities index primitive rows.
+        witness_strata[row] = 1  # SourceStratum::kSegment
+        witness_entities[row] = source_segment_group_rows[edge_id_by_key[key]]
+        witness_parameters[row, 0] = endpoint
     source_complex = TetMeshSourceComplex(
         points=points,
         faces=source_faces,
         face_group_rows=face_groups,
         face_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
         segments=source_segments,
-        segment_group_rows=segment_groups,
+        segment_group_rows=np.arange(source_segment_ids.size, dtype=np.int32),
         segment_tolerances=np.zeros((source_segment_ids.size,), dtype=np.float64),
-        witness_strata=np.zeros((vertex_ids.size,), dtype=np.int8),
-        witness_entities=np.full((vertex_ids.size,), -1, dtype=np.int32),
-        witness_parameters=np.zeros((vertex_ids.size, 2), dtype=np.float64),
+        witness_strata=witness_strata,
+        witness_entities=witness_entities,
+        witness_parameters=witness_parameters,
         face_ids=source_face_ids,
         segment_ids=source_segment_ids,
         face_planes=face_planes,
@@ -2190,15 +2326,15 @@ def _prepare_native_state(
         regions,
         source_faces,
         source_face_ids[face_groups],
-        source_segments,
-        source_segment_ids,
+        live_segments,
+        live_segment_ids,
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
         protection_radii=np.zeros((vertex_ids.size,), dtype=np.float64),
         protected_vertices=np.asarray(fixed, dtype=np.int8),
         vertex_ids=vertex_ids,
         cell_ids=source_cell_ids,
         facet_ids=source_face_row_ids,
-        segment_ids=source_segment_ids,
+        segment_ids=live_segment_ids,
         source=source_complex,
         implicit_source=native_implicit,
         source_id=source_identity[0],
@@ -2264,6 +2400,7 @@ def _prepare_native_state(
         source_mesh=mesh,
         source_points=points,
         source_exact_points=exact_source_points,
+        source_has_authored_rounding=has_authored_rounding,
         implicit_groups=implicit_groups,
         target_mesh=mesh,
         periodic_vertex_windings=periodic_vertex_windings,
@@ -7631,6 +7768,14 @@ def execute_tetra_metric_adaptation(
     metric_array = np.asarray(metric_values)
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
+    from .providers._native_sources import NativeImplicitSource
+
+    # An implicit authority remains implicit even when its metric source
+    # tube is not admitted for this request.
+    report = source.certification
+    ordinary_source = report is None or not isinstance(
+        report.inputs.feature_source, NativeImplicitSource
+    )
     state = _prepare_native_state(
         source.mesh,
         source.geometry,
@@ -7642,6 +7787,7 @@ def execute_tetra_metric_adaptation(
         protected_edges=protected_edges,
         fixed_vertices=fixed_vertices,
         implicit_source=_implicit_metric_source(source),
+        derive_cartesian_seams=ordinary_source and relocation,
     )
     lower = _LOWER if accepted_minimum_length is None else accepted_minimum_length
     if state.periodic_state is not None:
@@ -7701,17 +7847,15 @@ def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
     vertex_order = np.argsort(source_ids, kind="stable")
     vertex_ids = source_ids[vertex_order]
     cell_ids = state.source_cell_ids
-    exact = state.source_exact_points
-    has_authored_rounding = any(
-        value != float(value) for point in exact for value in point
-    )
     return {
         "source_points": state.source_points,
         "source_metrics": state.source_metric,
         "source_logarithms": state.source_metric_log,
         "source_vertex_ids": source_ids,
         "source_cells": state.source_cell_vertices,
-        "exact_source_points": exact if has_authored_rounding else None,
+        "exact_source_points": (
+            state.source_exact_points if state.source_has_authored_rounding else None
+        ),
         "vertex_ids": vertex_ids,
         "stencil_offsets": np.arange(vertex_ids.size + 1, dtype=np.int64),
         "stencil_rows": vertex_order.astype(np.int32),

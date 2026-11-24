@@ -6,6 +6,10 @@
 - Restricted-Delaunay implicit volume candidates defer local map validity
   and global embedding to acceptance instead of proving them during
   construction. Facet refinement and source checks that steer it remain.
+- Native 3D metric relocation can use correctly rounded source carriers
+  inside declared Cartesian facets and on exactly witnessed Cartesian seams.
+  Derived seam primitives do not add live constraints. Relocation retains
+  source stencils, stable identities, and the existing metric band.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;
@@ -38,6 +42,21 @@
   floating filter pass and measures cell quality in bounded worker chunks.
   Metric gradation avoids a redundant input eigensolve on admitted fields.
   The strict band, output metric, and evidence identities are unchanged.
+- Native tetrahedral adaptation can improve metric shape through
+  closed-cavity reconnections with in-band new edges. The shape sweep leaves
+  vertices and constrained facets unchanged and retains source-cell
+  ancestry. Newly reconnected meshes can have new cell and evidence IDs.
+- After reaching the metric band through edits, interior relocation can
+  improve mean shape by retransporting the exact source metric without
+  moving boundary or protected vertices or introducing violations.
+- Native adaptation's shape sweeps preserve stricter requested completion
+  lengths as well as the unit band.
+- Shallow Cartesian-wall relocation can begin with a wall-ring proposal.
+  Its source witnesses and edit checks are unchanged. Adapted mesh and
+  evidence IDs can change where the new proposal is accepted.
+- Native metric edits reuse ordered edge lengths while both endpoint
+  identities and carrier revisions remain unchanged. Trial coordinates
+  and tensor measurements still use the original exact-input path.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned
@@ -710,6 +729,15 @@
 - Planar native meshing computes the same Hilbert insertion keys with
   grouped coordinate-bit transitions. Quantization, tie ordering, and
   triangulation outputs are unchanged.
+- Native 3D boundary edits reuse exact source-facet coverage and rim
+  indexes across edits of the same mesh. Witness, orientation, coverage,
+  and rollback checks are unchanged.
+- Native metric relocation reuses stationary corner metric logarithmic
+  determinants within a candidate search. Quality reduction order,
+  transported metrics, and accepted edits are unchanged.
+- Native metric adaptation skips an unused shape measurement when a
+  relocation strictly improves the edge band. Shape still decides
+  equal-band moves and is still reported by the relocation proposal API.
 - Scalar metric gradation skips the constrained spectrum solve when every
   log-eigenvalue shift is zero, retaining the rounded tensor and its
   edgewise gradation evidence.

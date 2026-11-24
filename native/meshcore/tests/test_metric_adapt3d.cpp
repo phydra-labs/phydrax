@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <span>
 #include <vector>
 
 #include "check.hpp"
@@ -139,71 +140,22 @@ struct Run {
   TetEditStatus status = TetEditStatus::kApplied;
 };
 
-// Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
-Run adapt_cube(int n, double c, bool witnessed = false, double lower = kLower) {
-  Cube cube = kuhn_cube(n);
-  const std::int32_t moved = n + 2;  // (0, 1/n, 1/n)
-  if (witnessed) cube.points[3 * moved + 1] *= 0.625;
+Run adapt_constant_metric(TetMesh& mesh, std::span<const double> points,
+                          std::span<const std::int32_t> tetrahedra, double c,
+                          double lower, bool topology, bool relocation = true) {
   Run run;
-  TetMesh mesh(BoundaryPolicy::kConforming);
-  const std::vector<std::int32_t> regions(cube.tetrahedra.size() / 4, 0);
-  // Each cube side declares its exact plane (origin, two axes): the plane of
-  // its first face, whose axes are exact binary64 differences.
-  const std::size_t faces = cube.sides.size();
-  std::vector<double> planes(9 * faces);
-  std::map<std::int32_t, std::size_t> first_face;
-  for (std::size_t row = 0; row < faces; ++row) first_face.emplace(cube.sides[row], row);
-  for (std::size_t row = 0; row < faces; ++row) {
-    const std::size_t first = first_face.at(cube.sides[row]);
-    const double* a = cube.points.data() + 3 * cube.faces[3 * first];
-    for (std::size_t corner = 0; corner < 3; ++corner) {
-      const double* p = cube.points.data() + 3 * cube.faces[3 * first + corner];
-      for (std::size_t axis = 0; axis < 3; ++axis) {
-        planes[9 * row + 3 * corner + axis] = corner == 0 ? a[axis] : p[axis] - a[axis];
-      }
-    }
-  }
-  const std::vector<std::int64_t> face_ids(cube.sides.begin(), cube.sides.end());
-  const std::vector<double> zeros(faces, 0.0);
-  SourceComplexView source;
-  source.points = cube.points;
-  source.faces = cube.faces;
-  source.face_group_rows = cube.sides;
-  source.face_ids = face_ids;
-  source.face_tolerances = zeros;
-  source.face_planes = planes;
-  source.face_plane_tolerances = zeros;
-  std::vector<SourceWitness> witnesses;
-  std::vector<std::int8_t> fixed;
-  const std::size_t count = cube.points.size() / 3;
-  if (witnessed) {
-    witnesses.resize(count);
-    fixed.assign(count, 1);
-    fixed[static_cast<std::size_t>(moved)] = 0;
-    for (std::size_t row = 0; row < faces; ++row) {
-      const auto first = cube.faces.begin() + static_cast<std::ptrdiff_t>(3 * row);
-      const auto corner = std::find(first, first + 3, moved);
-      if (corner == first + 3) continue;
-      witnesses[static_cast<std::size_t>(moved)] = {
-          SourceStratum::kFacet, static_cast<std::int32_t>(row),
-          {corner == first + 1 ? 1.0 : 0.0, corner == first + 2 ? 1.0 : 0.0}};
-      break;
-    }
-    source.witnesses = witnesses;
-  }
-  PHX_CHECK(mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides, {}, {}, {},
-                       {}, &source, fixed) == PHX_MC_OK);
   PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
   metric::AdaptInput input;
-  input.source_points = cube.points;
+  input.source_points.assign(points.begin(), points.end());
   const double tensor[9] = {c, 0, 0, 0, c, 0, 0, 0, c};
   const double logarithm[9] = {std::log(c), 0, 0, 0, std::log(c), 0, 0, 0, std::log(c)};
+  const auto count = points.size() / 3;
   for (std::size_t row = 0; row < count; ++row) {
     input.source_metrics.insert(input.source_metrics.end(), tensor, tensor + 9);
     input.source_logarithms.insert(input.source_logarithms.end(), logarithm, logarithm + 9);
     input.source_vertex_ids.push_back(row);
   }
-  input.source_cells.assign(cube.tetrahedra.begin(), cube.tetrahedra.end());
+  input.source_cells.assign(tetrahedra.begin(), tetrahedra.end());
   // The live mesh is the source: each vertex its own source row.
   input.stencil_offsets.push_back(0);
   for (const auto& vertex : run.before.vertices) {
@@ -227,10 +179,95 @@ Run adapt_cube(int n, double c, bool witnessed = false, double lower = kLower) {
   input.next_target_vertex = count;
   input.next_target_cell = input.next_cell_id;
   input.lower = lower;
-  input.topology_operations = !witnessed;
+  input.topology_operations = topology;
+  input.relocation = relocation;
   run.status = metric::adapt_metric(mesh, input, run.output);
   PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
   return run;
+}
+
+enum class CubeBoundary { kUnbound, kFacetWitness, kSourceOnlySeam, kTiltedSourceOnlySeam };
+
+// Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
+Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
+               double lower = kLower) {
+  Cube cube = kuhn_cube(n);
+  const bool tilted = boundary == CubeBoundary::kTiltedSourceOnlySeam;
+  const bool seam = boundary == CubeBoundary::kSourceOnlySeam || tilted;
+  if (tilted) {
+    for (std::size_t row = 0; row < cube.points.size(); row += 3) cube.points[row] += 1.0;
+  }
+  const bool witnessed = boundary != CubeBoundary::kUnbound;
+  const std::int32_t moved = seam ? 1 : n + 2;
+  if (witnessed) cube.points[3 * moved + (seam ? 2 : 1)] *= 0.625;
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  const std::vector<std::int32_t> regions(cube.tetrahedra.size() / 4, 0);
+  // Each cube side declares its exact plane (origin, two axes): the plane of
+  // its first face, whose axes are exact binary64 differences.
+  const std::size_t faces = cube.sides.size();
+  std::vector<double> planes(9 * faces);
+  std::map<std::int32_t, std::size_t> first_face;
+  for (std::size_t row = 0; row < faces; ++row) first_face.emplace(cube.sides[row], row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    const std::size_t first = first_face.at(cube.sides[row]);
+    const double* a = cube.points.data() + 3 * cube.faces[3 * first];
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const double* p = cube.points.data() + 3 * cube.faces[3 * first + corner];
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        planes[9 * row + 3 * corner + axis] = corner == 0 ? a[axis] : p[axis] - a[axis];
+      }
+    }
+    if (tilted && cube.sides[row] == 0) {
+      // The declaration is oblique, but its x displacement fits inside
+      // the rounding boxes of all source corners stored at x = 1.
+      planes[9 * row + 3] = 0x1p-56 * planes[9 * row + 5];
+      planes[9 * row + 6] = 0x1p-56 * planes[9 * row + 8];
+    }
+  }
+  const std::vector<std::int64_t> face_ids(cube.sides.begin(), cube.sides.end());
+  const std::vector<double> zeros(faces, 0.0);
+  SourceComplexView source;
+  source.points = cube.points;
+  source.faces = cube.faces;
+  source.face_group_rows = cube.sides;
+  source.face_ids = face_ids;
+  source.face_tolerances = zeros;
+  source.face_planes = planes;
+  source.face_plane_tolerances = zeros;
+  std::vector<SourceWitness> witnesses;
+  std::vector<std::int8_t> fixed;
+  const std::size_t count = cube.points.size() / 3;
+  const std::array<std::int32_t, 6> segments{0, 1, 1, 2, 2, 3};
+  const std::array<std::int32_t, 3> segment_groups{0, 1, 2};
+  const std::array<std::int64_t, 3> segment_ids{0, 1, 2};
+  const std::array<double, 3> segment_tolerances{};
+  if (witnessed) {
+    witnesses.resize(count);
+    fixed.assign(count, 1);
+    fixed[static_cast<std::size_t>(moved)] = 0;
+    if (seam) {
+      PHX_CHECK(n == 3);
+      source.segments = segments;
+      source.segment_group_rows = segment_groups;
+      source.segment_ids = segment_ids;
+      source.segment_tolerances = segment_tolerances;
+      witnesses[static_cast<std::size_t>(moved)] = {SourceStratum::kSegment, 0, {1.0, 0.0}};
+    } else {
+      for (std::size_t row = 0; row < faces; ++row) {
+        const auto first = cube.faces.begin() + static_cast<std::ptrdiff_t>(3 * row);
+        const auto corner = std::find(first, first + 3, moved);
+        if (corner == first + 3) continue;
+        witnesses[static_cast<std::size_t>(moved)] = {
+            SourceStratum::kFacet, static_cast<std::int32_t>(row),
+            {corner == first + 1 ? 1.0 : 0.0, corner == first + 2 ? 1.0 : 0.0}};
+        break;
+      }
+    }
+    source.witnesses = witnesses;
+  }
+  PHX_CHECK(mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides, {}, {}, {},
+                       {}, &source, fixed) == PHX_MC_OK);
+  return adapt_constant_metric(mesh, cube.points, cube.tetrahedra, c, lower, !witnessed);
 }
 
 // The result's contract, checked from its snapshot alone.
@@ -305,13 +342,54 @@ void check_completion_tolerance_does_not_skip_eligible_collapses() {
   // Axis edges are sqrt(1.9)/2 ≈ 0.689: above the requested final lower
   // bound, but below the fixed collapse trigger. Even body diagonals are
   // below the upper bound, so a request-only precheck would return early.
-  const Run run = adapt_cube(2, 1.9, false, 0.67);
+  const Run run = adapt_cube(2, 1.9, CubeBoundary::kUnbound, 0.67);
   PHX_CHECK(run.status == TetEditStatus::kApplied);
   PHX_CHECK(run.output.counters.collapses > 0);
 }
 
+void completed_shape_cannot_reopen_the_requested_band() {
+  // The bipyramid's quality-improving flip would introduce the 7/8 apex
+  // edge. Splitting the separate cell's length-2 edge reaches the requested
+  // band and triggers the post-completion shape sweep.
+  const std::array<double, 27> points{
+      0, 0, 0, 1.375, 0, 0, .6875, 1.1875, 0, .6875, .390625, .4375,
+      .6875, .390625, -.4375, 3, 0, 0, 5, 0, 0, 4, .9375, 0, 4, .4375, .8125};
+  const std::array<std::int32_t, 12> tetrahedra{0, 1, 2, 3, 0, 2, 1, 4, 5, 6, 7, 8};
+  const std::array<std::int32_t, 30> faces{
+      0, 1, 3, 0, 4, 1, 0, 3, 2, 0, 2, 4, 1, 2, 3,
+      2, 1, 4, 5, 7, 6, 5, 6, 8, 5, 8, 7, 6, 7, 8};
+  const std::array<std::int32_t, 10> groups{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  const std::array<std::int32_t, 3> regions{};
+  const std::array<double, 10> tolerances{};
+  SourceComplexView source;
+  source.points = points;
+  source.faces = faces;
+  source.face_group_rows = groups;
+  source.face_tolerances = tolerances;
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(mesh.build(points, tetrahedra, regions, faces, groups, {}, {}, {}, {},
+                       &source, {}) == PHX_MC_OK);
+  constexpr double lower = .9;
+  const Run run = adapt_constant_metric(mesh, points, tetrahedra, 1.0, lower, true, false);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  PHX_CHECK(run.output.counters.splits == 1);
+  std::map<std::uint64_t, const double*> carrier;
+  for (const auto& vertex : run.after.vertices) carrier.emplace(vertex.id, vertex.carrier.data());
+  for (const auto& cell : run.after.cells) {
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        const auto* p = carrier.at(cell.vertices[first]);
+        const auto* q = carrier.at(cell.vertices[second]);
+        const double length = std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        PHX_CHECK(length >= lower && length <= kUpper);
+      }
+    }
+  }
+}
+
 void check_witnessed_boundary_relocation() {
-  const Run run = adapt_cube(2, 4.0, true);
+  const Run run = adapt_cube(2, 4.0, CubeBoundary::kFacetWitness);
   PHX_CHECK(run.status == TetEditStatus::kApplied);
   PHX_CHECK(run.output.counters.relocations > 0);
   if (run.before.vertices.size() <= 4 || run.after.vertices.size() <= 4) {
@@ -336,6 +414,55 @@ void check_witnessed_boundary_relocation() {
   PHX_CHECK(source_carrier(corners, witness.stratum, witness.parameters, point.data(), deviation));
   PHX_CHECK(after.carrier == point && after.carrier[0] == 0.0);
   PHX_CHECK(witness.deviation == 0.0 && deviation == 0.0);
+}
+
+void check_source_only_seam_relocates_across_a_primitive() {
+  const Run run = adapt_cube(3, 5.76, CubeBoundary::kSourceOnlySeam);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.counters.relocations > 0);
+  PHX_CHECK(run.before.constrained_segments.empty() && run.after.constrained_segments.empty());
+  if (run.before.vertices.size() < 2 || run.after.vertices.size() < 2) {
+    PHX_CHECK(false);
+    return;
+  }
+  const auto& before = run.before.vertices[1];
+  const auto& after = run.after.vertices[1];
+  PHX_CHECK(before.id == after.id && after.carrier[2] > before.carrier[2]);
+  PHX_CHECK(after.carrier[0] == 0.0 && after.carrier[1] == 0.0);
+  const SourceWitness& witness = after.witness;
+  PHX_CHECK(witness.stratum == SourceStratum::kSegment && witness.entity == 1);
+  if (witness.stratum != SourceStratum::kSegment || witness.entity != 1) return;
+  const double* corners[3]{};
+  for (std::size_t i = 0; i < 2; ++i) {
+    corners[i] = run.before.source_points.data() + 3 * run.before.source_segments[2 + i];
+  }
+  std::array<double, 3> point{};
+  double deviation = 0.0;
+  PHX_CHECK(source_carrier(corners, witness.stratum, witness.parameters, point.data(), deviation));
+  PHX_CHECK(point == after.carrier);
+  PHX_CHECK(run.before.cells.size() == run.after.cells.size());
+  for (std::size_t row = 0; row < run.output.cell_ids.size(); ++row) {
+    const auto id = run.output.cell_ids[row];
+    const auto cell = std::ranges::find(run.before.cells, id, &TetSnapshotCell::id);
+    PHX_CHECK(cell != run.before.cells.end() && run.output.cell_target_ids[row] == id);
+    if (cell == run.before.cells.end()) continue;
+    const bool moved = std::ranges::find(cell->vertices, after.id) != cell->vertices.end();
+    PHX_CHECK((run.output.cell_relocated[row] != 0) == moved);
+  }
+}
+
+void check_source_only_seam_refuses_a_tilted_declaration() {
+  const Run run = adapt_cube(3, 5.76, CubeBoundary::kTiltedSourceOnlySeam);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.counters.relocations == 0);
+  if (run.before.vertices.size() < 2 || run.after.vertices.size() < 2) {
+    PHX_CHECK(false);
+    return;
+  }
+  const auto& before = run.before.vertices[1];
+  const auto& after = run.after.vertices[1];
+  PHX_CHECK(before.id == after.id && before.carrier == after.carrier);
+  PHX_CHECK(after.witness.stratum == SourceStratum::kSegment && after.witness.entity == 0);
 }
 
 Run adapt_direction_sensitive_edge(bool permuted, std::uint64_t next_target_cell = 800) {
@@ -464,7 +591,10 @@ int main() {
   check_refinement();
   check_coarsening();
   check_completion_tolerance_does_not_skip_eligible_collapses();
+  completed_shape_cannot_reopen_the_requested_band();
   check_witnessed_boundary_relocation();
+  check_source_only_seam_relocates_across_a_primitive();
+  check_source_only_seam_refuses_a_tilted_declaration();
   metric_worksets_ignore_physical_vertex_order();
   metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");

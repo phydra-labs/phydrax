@@ -282,6 +282,58 @@ void reversed_spoke_is_not_a_band_improvement() {
   PHX_CHECK(search.next(group, candidate_lengths) == metric::RelocationEnd::kExhausted);
 }
 
+void shape_relocation_keeps_the_requested_lower_bound() {
+  namespace metric = phx::mc::metric;
+  using phx::mc::Dyadic;
+  constexpr double old_height = 17.0 / 16.0;
+  constexpr double goal_height = 13.0 / 16.0;
+  constexpr double side = 7.0 / 8.0;
+  const std::vector<double> points{0, 0, old_height, 0, 0, 0, 0, side, 0, side, 0, 0};
+  auto source_points = points;
+  source_points[2] = goal_height;
+  std::vector<Dyadic> numerators;
+  for (double coordinate : source_points) {
+    numerators.push_back(Dyadic(coordinate).scaled_power(4));
+  }
+  const metric::CarrierSource source(source_points, std::move(numerators), Dyadic(16.0),
+                                     {0, 1, 2, 3});
+  std::array<double, 36> tensors{}, logs{};
+  for (std::size_t row = 0; row < 4; ++row) {
+    for (std::size_t axis = 0; axis < 3; ++axis) tensors[9 * row + 4 * axis] = 1.0;
+  }
+  const std::int8_t measured[]{1, 1, 1};
+  const auto diagonal = std::hypot(side, old_height);
+  const double lengths[]{old_height, diagonal, diagonal};
+  const std::int64_t cells[]{0, 1, 2, 3};
+  const double pull[]{0, 0, goal_height - old_height};
+  metric::RelocationStar star;
+  star.point_count = 4;
+  star.points = points.data();
+  star.metrics = tensors.data();
+  star.measured = measured;
+  star.before_lengths = lengths;
+  star.before_quality = metric::tetra_quality(points.data(), tensors.data());
+  star.cell_count = 1;
+  star.cells = cells;
+  star.determinant_floor = kFloor;
+  star.improvement = kImprovement;
+  for (const double lower : {metric::kLowerLength, 0.9}) {
+    metric::RelocationMode mode;
+    mode.shape_lower = lower;
+    metric::RelocationSearch search(source, tensors.data(), logs.data(), star, 1, pull,
+                                    nullptr, nullptr, {}, mode);
+    std::vector<metric::RelocationCandidate> group;
+    std::vector<double> candidate_lengths;
+    const auto verdict = search.next(group, candidate_lengths);
+    if (lower > goal_height) {
+      PHX_CHECK(verdict == metric::RelocationEnd::kExhausted);
+    } else {
+      PHX_CHECK(verdict == metric::RelocationEnd::kGroup && group.size() == 1);
+      PHX_CHECK(!group.empty() && group.front().carrier.point[2] == goal_height);
+    }
+  }
+}
+
 void refuses() {
   Source source;
   create(source, 4.0);
@@ -333,6 +385,7 @@ void refuses() {
 int main() {
   sequences();
   reversed_spoke_is_not_a_band_improvement();
+  shape_relocation_keeps_the_requested_lower_bound();
   refuses();
   return phx::mc::test::finish("test_metric_relocation");
 }

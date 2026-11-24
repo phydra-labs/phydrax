@@ -72,10 +72,18 @@ struct RelocationMode {
   bool band_only = false;
   // The field is one tensor: goals are screened by the full evaluation.
   bool constant_field = false;
+  // Positive only for the completed-band shape sweep. Every spoke must
+  // retain this lower bound as well as the unit band.
+  double shape_lower = 0.0;
+  // Keep the quality of strict band improvements only for callers that
+  // consume it. Equal-band acceptance always checks quality.
+  bool report_quality = true;
+  // An optional initial goal is tried at full displacement only.
+  bool try_first_pull_once = false;
 };
 
-// One candidate: the carrier, its interpolated tensor and the smallest cell
-// quality of the star with the vertex at it.
+// One candidate: its carrier, interpolated tensor, and shape measure when
+// requested or used to decide acceptance.
 struct RelocationCandidate {
   Carrier carrier;
   std::array<double, 9> metric{};
@@ -146,6 +154,8 @@ class RelocationSearch {
   std::array<double, 9> projector_{};
   CarrierChartView chart_;
   RelocationMode mode_;
+  // Stationary corner logs are immutable; entry zero follows the candidate.
+  std::vector<double> quality_logs_;
 
   // The cursor: the pull and step of the next raw goal, the goals seen, the
   // stencils examined, and for a refining search the admitted goals and the

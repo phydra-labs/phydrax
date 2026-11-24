@@ -103,7 +103,11 @@ bool RelocationSearch::raw_goal(double* goal) {
         reached = reached && goal[axis] == vertex[axis];
       }
       if (!reached) {
-        ++step_;
+        if (pull_ == 0 && mode_.try_first_pull_once) {
+          ++pull_;
+        } else {
+          ++step_;
+        }
         return true;
       }
     }
@@ -149,16 +153,36 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
                        short_)) {
     return Verdict::kUnmeasured;
   }
+  const bool shape = mode_.shape_lower > 0.0;
+  if (shape && (!long_.empty() || !short_.empty() ||
+                (mode_.shape_lower > kLowerLength &&
+                 std::ranges::any_of(selected_, [&](double value) {
+                   return value < mode_.shape_lower;
+                 })))) {
+    return Verdict::kRejected;
+  }
   const bool equal = long_ == before_long_ && short_ == before_short_;
   const bool decreased = smaller(long_, before_long_) ||
                          (long_ == before_long_ && smaller(short_, before_short_));
   if (equal ? mode_.band_only : !decreased) return Verdict::kRejected;
   if (!floor_oriented(position)) return Verdict::kRejected;
+  if (!equal && !mode_.report_quality && !shape) return Verdict::kAdmitted;
 
-  // The smallest cell quality, a NaN when any quality is one.
+  // Prepare only on the first candidate that reaches the shape test.
+  if (quality_logs_.empty()) {
+    quality_logs_.reserve(static_cast<std::size_t>(point_count_));
+    quality_logs_.push_back(0.0);
+    for (std::int64_t row = 1; row < point_count_; ++row) {
+      quality_logs_.push_back(log_determinant(metrics_.data() + 9 * row));
+    }
+  }
+  quality_logs_.front() = log_determinant(metric);
+
+  // The usual merit is the minimum; the closed-band shape sweep uses the mean.
   double corners[12];
   double tensors[36];
-  double smallest = 0.0;
+  double logs[4];
+  double measure = 0.0;
   bool undefined = false;
   for (std::int64_t cell = 0; cell < cell_count_; ++cell) {
     for (std::size_t slot = 0; slot < 4; ++slot) {
@@ -168,12 +192,19 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
           row == 0 ? metric : metrics_.data() + 9 * static_cast<std::size_t>(row);
       for (std::size_t axis = 0; axis < 3; ++axis) corners[3 * slot + axis] = values[axis];
       for (std::size_t entry = 0; entry < 9; ++entry) tensors[9 * slot + entry] = tensor[entry];
+      logs[slot] = quality_logs_[static_cast<std::size_t>(row)];
     }
-    const double value = tetra_quality(corners, tensors);
-    if (value != value) undefined = true;
-    if (cell == 0 || value < smallest) smallest = value;
+    const double value = tetra_quality(corners, tensors, logs);
+    if (shape) {
+      if (!std::isfinite(value)) return Verdict::kRejected;
+      measure += value;
+    } else {
+      if (value != value) undefined = true;
+      if (cell == 0 || value < measure) measure = value;
+    }
   }
-  quality = undefined ? std::numeric_limits<double>::quiet_NaN() : smallest;
+  if (shape) measure /= static_cast<double>(cell_count_);
+  quality = undefined ? std::numeric_limits<double>::quiet_NaN() : measure;
   if (equal && !(quality > before_quality_ + improvement_)) return Verdict::kRejected;
   return Verdict::kAdmitted;
 }

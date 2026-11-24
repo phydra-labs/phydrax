@@ -816,15 +816,15 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
   return PHX_MC_OK;
 }
 
-bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
+TetMesh::PreparedFacetGroup::PreparedFacetGroup(const TetMesh& mesh, const DeclaredGroup& declared) {
+  mesh.prepare_declared_group(declared, *this);
+}
+
+void TetMesh::prepare_declared_group(const DeclaredGroup& declared,
                                     PreparedFacetGroup& group) const {
-  if (declared.rows.empty() || declared.rows.size() != group.rows.size()) return false;
-  for (std::size_t row = 0; row < group.rows.size(); ++row) {
-    if (declared.rows[row] < 0 ||
-        static_cast<std::size_t>(declared.rows[row]) != group.rows[row]) return false;
-  }
+  if (declared.rows.empty()) return;
   const double* plane = face_plane(declared.rows.front());
-  if (plane == nullptr) return false;
+  if (plane == nullptr) return;
   Dyadic normal[3];
   if (metric_active_) {
     affine_projection_normal(plane, metric_, normal);
@@ -835,14 +835,20 @@ bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
   }
   int projection_axis = 0;
   while (projection_axis < 3 && normal[projection_axis].sign() == 0) ++projection_axis;
-  if (projection_axis == 3) return false;
+  if (projection_axis == 3) return;
 
   // Every declared row has a nonzero projected orientation, established by
   // install_declared_planes. Bound its three exact projected vertices once.
+  group.primitives.reserve(declared.rows.size());
+  group.indices.reserve(declared.rows.size());
+  for (std::int32_t row : declared.rows) {
+    const auto* face = source_faces_.data() + 3 * static_cast<std::size_t>(row);
+    group.primitives.push_back({face[0], face[1], face[2], row});
+    group.indices.push_back(static_cast<std::int32_t>(group.indices.size()));
+  }
   std::unordered_map<std::int32_t, FacetCoverageBounds> vertices;
-  vertices.reserve(group.rows.size());
-  group.bounds.clear();
-  group.bounds.reserve(group.rows.size());
+  vertices.reserve(declared.rows.size());
+  group.bounds.reserve(declared.rows.size());
   const Dyadic unit(1.0);
   for (const auto& face : group.primitives) {
     FacetCoverageBounds box{};
@@ -865,7 +871,7 @@ bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
     }
     group.bounds.push_back(box);
   }
-  if (!group.coverage_index.build(group.primitives, group.indices, group.bounds)) return false;
+  if (!group.coverage_index.build(group.primitives, group.indices, group.bounds)) return;
   group.declared_projection_axis = projection_axis;
   group.boundary_primitives.reserve(declared.boundary_edges.size());
   group.boundary_indices.reserve(declared.boundary_edges.size());
@@ -873,7 +879,7 @@ bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
   for (const auto& edge : declared.boundary_edges) {
     const auto first = vertices.find(edge[0]);
     const auto second = vertices.find(edge[1]);
-    if (first == vertices.end() || second == vertices.end()) return true;
+    if (first == vertices.end() || second == vertices.end()) return;
     FacetCoverageBounds box = first->second;
     for (int coordinate = 0; coordinate < 2; ++coordinate) {
       box.lower[coordinate] = std::min(box.lower[coordinate], second->second.lower[coordinate]);
@@ -885,7 +891,6 @@ bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
   }
   group.boundary_index.build(group.boundary_primitives, group.boundary_indices,
                              group.boundary_bounds);
-  return true;
 }
 
 bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
@@ -1261,10 +1266,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     }
   }
 
-  const std::size_t count = prepared ? group->rows.size() : source_faces_.size() / 3;
-  for (std::size_t index = 0; index < count; ++index) {
-    const std::size_t row = prepared ? group->rows[index] : index;
-    if (source_face_groups_[row] != facet.source) continue;
+  for (const auto& face : primitives) {
+    const auto row = static_cast<std::size_t>(face[3]);
     if (point_deviations[0] > source_face_tolerances_[row] ||
         point_deviations[1] > source_face_tolerances_[row] ||
         point_deviations[2] > source_face_tolerances_[row]) continue;
