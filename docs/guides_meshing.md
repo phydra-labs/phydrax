@@ -3017,6 +3017,8 @@ Host preparation gathers and sorts fixed-width entity keys by row without
 changing entity order. Variable-width polyhedral faces keep trailing padding.
 Tetrahedral preparation retains the constrained source facets and their
 group IDs rather than a second lookup table of every face ID and class.
+Lineage lookup matches a full simplex support by sorted global vertex IDs.
+Smaller supports still retain every source entity that contains them.
 
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.

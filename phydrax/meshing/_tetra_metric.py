@@ -7971,17 +7971,30 @@ def _intermediate_relations(
         tuple(int(value) for value in row if int(value) >= 0)
         for row in source_rows.tolist()
     ]
-    rows_by_vertex: dict[int, set[int]] = defaultdict(set)
-    for row, key in enumerate(source_keys):
-        for vertex in key:
-            rows_by_vertex[vertex].add(row)
+    source_set = set(source_keys)
+    width = dimension + 1
+    rows_by_vertex: dict[int, set[int]] | None = None
     relations: set[tuple[tuple[int, ...], tuple[int, ...], EntityLineageKind]] = set()
     for target_key in target_keys:
+        if target_key in source_set:
+            relations.add((target_key, target_key, EntityLineageKind.PRESERVED))
         support: set[int] = set()
         for vertex in target_key:
             support.update(stencils[int(vertex)])
-        if not support or len(support) > dimension + 1:
+        if not support or len(support) > width:
             continue
+        # Full simplex support fits a source row of this width only by
+        # equality. Smaller supports still need every incident source row.
+        if source_rows.shape[1] <= width and len(support) == width:
+            key = tuple(sorted(support))
+            if key != target_key and key in source_set:
+                relations.add((key, target_key, EntityLineageKind.REFINED_FROM))
+            continue
+        if rows_by_vertex is None:
+            rows_by_vertex = defaultdict(set)
+            for row, key in enumerate(source_keys):
+                for vertex in key:
+                    rows_by_vertex[vertex].add(row)
         candidates: set[int] | None = None
         for vertex in support:
             rows = rows_by_vertex.get(vertex, set())
@@ -7990,17 +8003,8 @@ def _intermediate_relations(
                 break
         for row in candidates or ():
             source_key = source_keys[row]
-            if support <= set(source_key):
-                kind = (
-                    EntityLineageKind.PRESERVED
-                    if source_key == target_key
-                    else EntityLineageKind.REFINED_FROM
-                )
-                relations.add((source_key, target_key, kind))
-    source_set = set(source_keys)
-    for key in target_keys:
-        if key in source_set:
-            relations.add((key, key, EntityLineageKind.PRESERVED))
+            if source_key != target_key and support <= set(source_key):
+                relations.add((source_key, target_key, EntityLineageKind.REFINED_FROM))
     ordered = sorted(relations, key=lambda row: (row[0], row[1], int(row[2])))
     return _relation_records(
         dimension,

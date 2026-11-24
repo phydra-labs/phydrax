@@ -5,6 +5,8 @@
 ### Added
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
+- Tetrahedral adaptation resolves full-width source lineage by direct key
+  lookup, preserving all parents for smaller or mixed-width supports.
 - Native CAD face sizing shares the nearest-chord traversal between its
   size floor and fidelity budget. Boundary grading visits the lower-bound
   child first; size and fidelity criteria are unchanged.
