@@ -155,6 +155,7 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
                          (long_ == before_long_ && smaller(short_, before_short_));
   if (equal ? mode_.band_only : !decreased) return Verdict::kRejected;
   if (!floor_oriented(position)) return Verdict::kRejected;
+  if (!equal && !mode_.report_quality && !mode_.closed_band_shape) return Verdict::kAdmitted;
 
   // Prepare only on the first candidate that reaches the shape test.
   if (quality_logs_.empty()) {

@@ -74,10 +74,13 @@ struct RelocationMode {
   bool constant_field = false;
   // Started in the strict band: keep it and improve the star's mean quality.
   bool closed_band_shape = false;
+  // Keep the quality of strict band improvements only for callers that
+  // consume it. Equal-band acceptance always checks quality.
+  bool report_quality = true;
 };
 
-// One candidate: the carrier, its interpolated tensor and the selected star
-// quality with the vertex at it.
+// One candidate: its carrier, interpolated tensor, and shape measure when
+// requested or used to decide acceptance.
 struct RelocationCandidate {
   Carrier carrier;
   std::array<double, 9> metric{};

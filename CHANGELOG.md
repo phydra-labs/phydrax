@@ -693,6 +693,9 @@
 - Native metric relocation reuses stationary corner metric logarithmic
   determinants within a candidate search. Quality reduction order,
   transported metrics, and accepted edits are unchanged.
+- Native metric adaptation skips an unused shape measurement when a
+  relocation strictly improves the edge band. Shape still decides
+  equal-band moves and is still reported by the relocation proposal API.
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
   Where supported, `candidate.prove()` certifies that mesh later. Certified
   octree hex-dominant meshes and owner-local execution require

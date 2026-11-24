@@ -2861,6 +2861,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   mode.refine = tangents || (deep && relocation_stage_ == 2);
   mode.band_only = tangents || deep;
   mode.closed_band_shape = closed_band_shape;
+  mode.report_quality = false;
   RelocationStar relocation_star;
   relocation_star.point_count = static_cast<std::int64_t>(rows.size());
   relocation_star.points = points.data();
