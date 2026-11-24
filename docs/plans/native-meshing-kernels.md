@@ -533,18 +533,25 @@ queries only.
   0.517 s for tets. All native connectivity IDs are invariant under worker
   requests; certified donors pass the independent check. These are assembly
   clocks, not cold process or proof times.
-- F14 conforming Voronoi remains sequential. On the shared source geometry
-  and archived size controls, all 32 native rows met the timing and archived
-  quality ceilings. Of the 32 comparisons against VoroCrust at 1/2/4/8
-  threads, 31 pass using the archived quality ceilings and 29 pass when
-  scored against the fastest retained reference meshes using the same
-  ledger metrics. On the small cube, Phydrax's maximum is 27 faces per cell
-  versus 25 at one reference thread and 26 at four. The fastest small
-  Steinmetz 4-thread reference had a sampled convexity finding. Native mesh
-  and evidence IDs are invariant across worker requests. Output counts
-  differ, and the large sphere retains the archived 5,000-cell reference
-  target. These times compare candidate construction, not equal-cell
-  throughput or proof.
+- F14 conforming Voronoi construction remains sequential. The pre-centering
+  matrix passed timing at all 32 size/worker combinations, 31 of 32 using
+  archived quality ceilings and 29 of 32 against the fastest retained
+  VoroCrust meshes. The large sphere uses the archived 5,000-cell reference.
+  These are candidate construction clocks, not equal-cell throughput or proof.
+  The centered lattice reduces the small cube's maximum from 27 to 25 faces
+  and meets the former 25/26 reference limits. The centered candidate passed
+  both live comparisons: 0.807 s versus 3.205 s (one worker) and 0.818 s
+  versus 4.515 s (four), also below the faster serial ceiling. Its mesh and
+  evidence IDs matched across requests of 1, 2, 3, 4, and 8.
+  Splitting repair scans from publication retained all eight exact centered
+  output banks, including the independently certified small cube. On the
+  combined image the small Steinmetz at four workers took 5.327 s versus
+  10.349 s, below the 6.574 s serial clock, with 25 versus 32 maximum faces.
+  The fastest serial VoroCrust output had two independent convexity findings,
+  so the strict fastest-output serial comparison remains unqualified. The
+  faster of the valid retained serial outputs took 8.729 s versus 5.350 s
+  for Phydrax, with all measured quality criteria met. No timing or method
+  was substituted for the strict comparison.
 - Periodic Delaunay and fixed-boundary recovery remain sequential in the
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
