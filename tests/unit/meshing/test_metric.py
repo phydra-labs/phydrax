@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._jax_config import default_device
 from phydrax.meshing._metric import _edge_length_enclosure, _PreparedMetricEnclosures
 
 
@@ -162,6 +163,36 @@ def test_scalar_gradation_bounds_every_edge_and_ignores_numbering() -> None:
         np.testing.assert_array_equal(
             np.asarray(permuted.values), np.asarray(graded.values)[permutation]
         )
+
+
+def test_scalar_gradation_preserves_isotropic_identity_across_cpu_placement() -> None:
+    if jax.default_backend() != "cpu":
+        pytest.skip("The exact isotropic preparation route is a CPU contract.")
+    values = np.full((3, 3, 3), -0.0, dtype=np.float64)
+    diagonal = np.arange(3, dtype=np.int64)
+    values[:, diagonal, diagonal] = np.array([4.0, 1.0, 9.0], dtype=np.float64)[:, None]
+    points = np.array(
+        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.0, 0.25, 0.0]], dtype=np.float64
+    )
+    edges = np.array([[0, 1], [0, 2], [1, 2]], dtype=np.int64)
+    policy = meshing.MetricGradationPolicy(1.25)
+    field = meshing.MeshMetricField(
+        _scope(3), values, minimum_size=0.125, maximum_size=2.0
+    )
+    implicit, evidence = meshing.grade_mesh_metric(
+        field, policy=policy, adjacency=edges, coordinates=points
+    )
+    with default_device(jax.devices("cpu")[0]):
+        placed, placed_evidence = meshing.grade_mesh_metric(
+            field, policy=policy, adjacency=edges, coordinates=points
+        )
+    assert evidence.converged and evidence.modified_count > 0
+    assert placed_evidence.evidence_id == evidence.evidence_id
+    assert placed.metric_id == implicit.metric_id
+    np.testing.assert_array_equal(
+        np.asarray(placed.values).view(np.uint64),
+        np.asarray(implicit.values).view(np.uint64),
+    )
 
 
 def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:

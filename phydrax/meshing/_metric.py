@@ -31,9 +31,11 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._jax_config import default_device_selection
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
+from ..config import x64_enabled
 from ..geometry.brep._model import BRepModel
 from ..linalg import (
     DensePropertyVerificationPolicy,
@@ -205,6 +207,31 @@ def _tensor_array(values: ArrayLike, rows: int, /) -> np.ndarray:
     return tensors
 
 
+def _exact_cpu_isotropic_scalars(tensors: np.ndarray, /) -> np.ndarray | None:
+    """Scalar eigenvalues of a bank of exact positive multiples of identity."""
+    dimension = tensors.shape[1]
+    if (
+        dimension == 1
+        or not tensors.shape[0]
+        or not x64_enabled()
+        or default_device_selection() is not None
+        or jax.default_backend() != "cpu"
+    ):
+        return None
+    scalars = tensors[:, 0, 0]
+    # Stay strictly within the binary64 LAPACK non-rescaling range so the
+    # literal diagonal agrees with the general CPU solver's rounded spectrum.
+    if not np.all((scalars >= 2.0**-400) & (scalars <= 2.0**400)):
+        return None
+    for row in range(1, dimension):
+        if not np.array_equal(tensors[:, row, row], scalars):
+            return None
+        for column in range(row):
+            if np.any(tensors[:, row, column]) or np.any(tensors[:, column, row]):
+                return None
+    return scalars
+
+
 @jax.jit
 def _project_admitted_metric(values: Array, /) -> Array:
     # The field has already passed the SPD check. Only the rounded
@@ -278,7 +305,11 @@ def _bound_violations(
     estimate, so the admitted anisotropy roundoff is condition-scaled. Only
     violations beyond that roundoff are reported.
     """
-    evidence = verify_dense_properties(jnp.asarray(metric), policy=_SPD_POLICY)
+    scalars = _exact_cpu_isotropic_scalars(metric)
+    # This proof uses the spectrum endpoints, not rank: every eigenvalue is
+    # the same positive scalar, so verify the equivalent one-entry spectrum.
+    verification_bank = metric if scalars is None else scalars[:, None, None]
+    evidence = verify_dense_properties(jnp.asarray(verification_bank), policy=_SPD_POLICY)
     if not np.all(np.asarray(evidence.hermitian)):
         raise ValueError("Mesh metrics must be symmetric.")
     if not np.all(np.asarray(evidence.positive_definite)):
@@ -1370,8 +1401,13 @@ def grade_mesh_metric(
     rows, dimension = values.shape[0], values.shape[-1]
     edges = _edges(adjacency, rows)
     points = _points(coordinates, rows, dimension)
-    projected = _project_admitted_metric(jnp.asarray(values))
-    eigenvalues, eigenvectors = _host_spectrum(projected)
+    scalars = None if policy.anisotropic else _exact_cpu_isotropic_scalars(values)
+    if scalars is None:
+        projected = _project_admitted_metric(jnp.asarray(values))
+        eigenvalues, eigenvectors = _host_spectrum(projected)
+    else:
+        eigenvalues = np.broadcast_to(scalars[:, None], (rows, dimension))
+        eigenvectors = np.broadcast_to(np.eye(dimension, dtype=np.float64), values.shape)
     graded, evidence = _grade_eigenpairs(
         (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
         eigenvalues,

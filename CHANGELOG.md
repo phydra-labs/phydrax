@@ -45,6 +45,8 @@
   all edge growth bounds already hold, while retaining final evidence.
 - Physical scalar gradation measures each undirected edge once with
   bounded scratch, retaining the same rounded violation evidence.
+- Exact isotropic CPU metrics reuse the scalar spectrum for size-bound
+  verification and scalar gradation without changing metric or evidence IDs.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once
