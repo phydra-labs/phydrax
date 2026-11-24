@@ -11,6 +11,7 @@
   per bank without changing exact verdicts, bounds, or geometry.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
+  Admission reuses its extrema directly in the zero-edit evidence.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned

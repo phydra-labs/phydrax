@@ -1808,27 +1808,43 @@ def strict_plain_tetra_metric_noop(
     metric = _admit_metric_bank(metric_values, points.shape[0])
     edges = np.asarray(connectivity.edges)
     vertex_ids = np.asarray(mesh.vertex_global_ids)
-    reverse = vertex_ids[edges[:, 0]] > vertex_ids[edges[:, 1]]
-    if np.any(reverse):
-        edges = edges.copy()
-        edges[reverse] = edges[reverse, ::-1]
+    if not np.all(vertex_ids[:-1] < vertex_ids[1:]) or not np.all(
+        edges[:, 0] < edges[:, 1]
+    ):
+        reverse = vertex_ids[edges[:, 0]] > vertex_ids[edges[:, 1]]
+        if np.any(reverse):
+            edges = edges.copy()
+            edges[reverse] = edges[reverse, ::-1]
     lengths = metric_lengths(points, metric, edges)
-    if not np.all((lengths >= _LOWER) & (lengths <= _UPPER)):
+    minimum_length = float(np.min(lengths))
+    maximum_length = float(np.max(lengths))
+    if not _LOWER <= minimum_length <= maximum_length <= _UPPER:
         return None
     quality = metric_tetra_quality(points, metric, cells)
-    if not np.all(np.isfinite(quality) & (quality > 0.0)):
+    minimum_quality = float(np.min(quality))
+    if minimum_quality <= 0.0 or not np.all(np.isfinite(quality)):
         return None
-    return _metric_evidence(
-        TetraMetricStatus.COMPLETE,
-        1,
-        dict.fromkeys(_EditCounters._fields, 0),
-        lengths,
-        np.zeros(lengths.shape, dtype=np.bool_),
-        quality,
-        0.0,
-        lambda _: (),
-        None,
-        lower=_LOWER,
+    # Admission measured every edge; there is no protected or unmet subset.
+    return TetraMetricEvidence(
+        status=TetraMetricStatus.COMPLETE,
+        passes=1,
+        splits=0,
+        collapses=0,
+        flips23=0,
+        flips32=0,
+        ring_reconnections=0,
+        relocations=0,
+        rejected_topology=0,
+        rejected_protected=0,
+        rejected_uncertain=0,
+        rejected_invalid=0,
+        measured_edges=lengths.size,
+        out_of_range_edges=0,
+        minimum_metric_length=minimum_length,
+        maximum_metric_length=maximum_length,
+        minimum_metric_quality=minimum_quality,
+        maximum_region_volume_error=0.0,
+        unmet_edges=(),
     )
 
 

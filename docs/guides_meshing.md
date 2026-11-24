@@ -3029,8 +3029,9 @@ by the host phase schedule until native periodic local commits exist.
 For an audited single-region affine tetrahedral source without additional
 constraints, native metric measurements can establish an unchanged result
 before mutable edit state is allocated. This requires the strict unit band
-on every edge and retains full metric evidence. A relaxed completion length
-does not widen this initial check.
+on every edge. The measured extrema both decide admission and appear in the
+evidence, so no protection or violation masks are needed. A relaxed
+completion length does not widen this initial check.
 
 Host preparation gathers and sorts fixed-width entity keys by row without
 changing entity order. Variable-width polyhedral faces keep trailing padding.
