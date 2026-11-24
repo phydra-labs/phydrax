@@ -1550,7 +1550,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, ctypes.POINTER(_ConformingVoronoiArrays)),
     ),
     "phx_mc_conforming_voronoi_free": (None, (_P,)),
-    "phx_mc_hex_dominant": (_I32, (ctypes.POINTER(_HexDominantRequest),)),
+    "phx_mc_hex_dominant_build": (_I32, (ctypes.POINTER(_HexDominantRequest), _I32)),
     "phx_mc_hex_dominant_sizes": (_I32, (_P, _P)),
     "phx_mc_hex_dominant_export": (_I32, (_P, ctypes.POINTER(_HexDominantArrays))),
     "phx_mc_hex_dominant_certify": (_I32, (_P, _P)),
@@ -3305,6 +3305,7 @@ def hex_dominant(
     feature_angle_degrees: float,
     layer_thicknesses: object,
     prove: bool,
+    parallelism: int = 1,
 ) -> HexDominant:
     """Hex-dominant mesh of a closed outward-oriented triangle surface.
 
@@ -3351,7 +3352,8 @@ def hex_dominant(
         result=ctypes.pointer(handle),
     )
     library = load_meshcore()
-    status = library["phx_mc_hex_dominant"](ctypes.byref(request))
+    workers = _int32_argument(parallelism, "parallelism")
+    status = library["phx_mc_hex_dominant_build"](ctypes.byref(request), workers)
     if not handle.value:
         _raise_for_call(
             status,

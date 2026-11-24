@@ -67,6 +67,9 @@
 - Octree hex-dominant candidates can be certified with `.prove()` without
   reconstructing the mesh. Unproved execution still skips cell and source
   certification. Rebuild meshcore for the native verifier.
+- Octree hex smoothing refreshes independent face geometry and cell
+  centroids with configured native workers. Repair order and mesh geometry
+  are unchanged. Rebuild meshcore for the worker-aware build entry point.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once

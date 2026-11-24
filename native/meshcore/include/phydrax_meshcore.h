@@ -2150,7 +2150,9 @@ typedef struct phx_mc_hex_dominant_arrays {
   uint8_t* vertex_kinds;
   double* stats;
 } phx_mc_hex_dominant_arrays;
-PHX_MC_API int32_t phx_mc_hex_dominant(const phx_mc_hex_dominant_request* request);
+/* Independent geometry rows may use positive worker count parallelism. */
+PHX_MC_API int32_t phx_mc_hex_dominant_build(const phx_mc_hex_dominant_request* request,
+                                            int32_t parallelism);
 /* points, faces, face vertex entries, cells, cell vertex entries. */
 PHX_MC_API int32_t phx_mc_hex_dominant_sizes(const phx_mc_hex_dominant_mesh* result,
                                              int64_t* sizes);

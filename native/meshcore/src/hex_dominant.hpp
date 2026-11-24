@@ -3,7 +3,7 @@
 //
 // Hex-dominant meshing of a closed oriented triangle surface by a balanced
 // octree core, a snapped projection layer and optional hexahedral boundary
-// layers (see phx_mc_hex_dominant in phydrax_meshcore.h). Construction in
+// layers (see phx_mc_hex_dominant_build in phydrax_meshcore.h). Construction in
 // floating point with exact predicates for inside/outside; certification after
 // construction with local repair.
 #pragma once
@@ -31,6 +31,7 @@ struct Input {
   int32_t layer_count;
   const double* layer_thicknesses;
   int32_t prove;
+  uint32_t parallelism;
 };
 
 // The face-based mixed mesh: faces oriented out of their owner; boundary faces

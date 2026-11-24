@@ -64,11 +64,13 @@ int32_t validate(const phx_mc_hex_dominant_request* in) {
 
 extern "C" {
 
-int32_t phx_mc_hex_dominant(const phx_mc_hex_dominant_request* request) {
+int32_t phx_mc_hex_dominant_build(const phx_mc_hex_dominant_request* request,
+                                  int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
     const int32_t status = validate(request);
     if (status != PHX_MC_OK) return status;
     auto result = std::make_unique<phx_mc_hex_dominant_mesh>();
@@ -76,7 +78,7 @@ int32_t phx_mc_hex_dominant(const phx_mc_hex_dominant_request* request) {
         request->vertex_count,   request->vertices,         request->triangle_count,
         request->triangles,      request->triangle_facets,  request->core_size,
         request->boundary_size,  request->feature_angle_degrees, request->layer_count,
-        request->layer_thicknesses, request->prove};
+        request->layer_thicknesses, request->prove, static_cast<uint32_t>(parallelism)};
     const int32_t built = phx::mc::hex_dominant::build(input, result->mesh);
     if (built == PHX_MC_OK || built == PHX_MC_UNRESOLVED) *request->result = result.release();
     return built;

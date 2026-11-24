@@ -44,6 +44,7 @@ import equinox as eqx
 import numpy as np
 
 import phydrax._meshcore as meshcore
+from phydrax._exact_kernels import exact_kernel_parallelism
 from phydrax._physical import SpatialCoordinateContract
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
@@ -745,6 +746,7 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             feature_angle_degrees=_FEATURE_ANGLE_DEGREES,
             layer_thicknesses=thicknesses,
             prove=False,
+            parallelism=exact_kernel_parallelism(),
         )
         proof = native.proof
         if proof is None:

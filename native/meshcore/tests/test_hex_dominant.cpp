@@ -144,7 +144,7 @@ struct Result {
 };
 
 Result mesh(const Surface& s, double core, double boundary, const std::vector<double>& layers,
-            int32_t prove = 1, int64_t* failed_cells = nullptr) {
+            int32_t prove = 1, int64_t* failed_cells = nullptr, int32_t parallelism = 1) {
   Result r;
   const std::vector<int32_t> facets(s.f.size() / 3, 0);
   phx_mc_hex_dominant_mesh* handle = nullptr;
@@ -160,7 +160,7 @@ Result mesh(const Surface& s, double core, double boundary, const std::vector<do
                                             layers.data(),
                                             prove,
                                             &handle};
-  r.status = phx_mc_hex_dominant(&request);
+  r.status = phx_mc_hex_dominant_build(&request, parallelism);
   if (handle == nullptr) return r;
   if (failed_cells != nullptr) {
     PHX_CHECK(phx_mc_hex_dominant_certify(handle, failed_cells) == PHX_MC_OK);
@@ -513,7 +513,7 @@ void deferred_proof_preserves_the_layered_mesh() {
   const Surface source = icosphere(4);
   const Result eager = mesh(source, 0.25, 0.125, {0.01, 0.012});
   int64_t failed_cells = -1;
-  const Result deferred = mesh(source, 0.25, 0.125, {0.01, 0.012}, 0, &failed_cells);
+  const Result deferred = mesh(source, 0.25, 0.125, {0.01, 0.012}, 0, &failed_cells, 4);
   PHX_CHECK(eager.status == PHX_MC_OK && deferred.status == PHX_MC_OK);
   PHX_CHECK(failed_cells == 0);
   PHX_CHECK(eager.points == deferred.points);

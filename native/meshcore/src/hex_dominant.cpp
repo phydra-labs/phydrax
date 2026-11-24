@@ -73,6 +73,8 @@
 #include <utility>
 #include <vector>
 
+#include "floating_point_mode.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -974,7 +976,7 @@ struct Builder {
     const auto& grid = splits[split_of[row]].grid;
     return norm(sub(point(grid.back()), point(grid[0]))) + 0.25 * b;
   }
-  void smooth();
+  int32_t smooth();
   int32_t certify();
 };
 
@@ -2475,7 +2477,7 @@ void Builder::place_layers() {
   place_mids();
 }
 
-void Builder::smooth() {
+int32_t Builder::smooth() {
   Topology t = topology(mesh);
   const int64_t points = static_cast<int64_t>(mesh.points.size() / 3);
   const int64_t cells = static_cast<int64_t>(mesh.cell_kinds.size());
@@ -2591,11 +2593,31 @@ void Builder::smooth() {
     }
     centroid[c] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
   };
-  for (int64_t f = 0; f < faces; ++f) face_update(f);
-  for (int64_t c = 0; c < cells; ++c) cell_geometry(c);
-  auto geometry = [&]() {
-    for (const int32_t f : active_faces) face_update(f);
-    for (const int32_t c : active_cells) cell_geometry(c);
+  // All workers see the same coordinates. Complete the face bank before
+  // updating cell centroids, with the original reduction order inside a row.
+  const auto visit = [&](std::size_t count, const auto& row) -> int32_t {
+    constexpr std::size_t chunk_size = 2048;
+    if (in.parallelism == 1 || count <= chunk_size) {
+      for (std::size_t i = 0; i < count; ++i) row(i);
+      return PHX_MC_OK;
+    }
+    return parallel_for(count, ParallelRequest{chunk_size, in.parallelism},
+                        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+      const GradualNearestScope mode;
+      if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+      for (std::size_t i = begin; i < end; ++i) row(i);
+      return PHX_MC_OK;
+    });
+  };
+  int32_t status = visit(faces, face_update);
+  if (status != PHX_MC_OK) return status;
+  status = visit(cells, cell_geometry);
+  if (status != PHX_MC_OK) return status;
+  const auto geometry = [&]() -> int32_t {
+    const int32_t faces_status =
+        visit(active_faces.size(), [&](std::size_t i) { face_update(active_faces[i]); });
+    if (faces_status != PHX_MC_OK) return faces_status;
+    return visit(active_cells.size(), [&](std::size_t i) { cell_geometry(active_cells[i]); });
   };
   // The vertex average of a cell's distinct vertices (the certified
   // decomposition's center) at the current positions.
@@ -2657,7 +2679,7 @@ void Builder::smooth() {
       }
     }
   };
-  auto settle = [&]() {
+  const auto settle = [&]() -> int32_t {
     check.clear();
     next.clear();
     ++epoch;
@@ -2681,7 +2703,8 @@ void Builder::smooth() {
     // The first pass reads the geometry of the moved positions; a later pass
     // refreshes the cells it checks (those around reverted vertices). Within
     // a pass a cell around a vertex reverted earlier in it is read afresh.
-    geometry();
+    const int32_t geometry_status = geometry();
+    if (geometry_status != PHX_MC_OK) return geometry_status;
     for (bool first = true; !next.empty(); first = false) {
       check.swap(next);
       next.clear();
@@ -2707,6 +2730,7 @@ void Builder::smooth() {
         }
       }
     }
+    return PHX_MC_OK;
   };
   // Smoothing constants, tuned on the F8 sphere and checked on the quadric
   // (ledger cad.md F8). Twelve centroidal sweeps at relaxation 0.6: a full
@@ -2783,7 +2807,8 @@ void Builder::smooth() {
     // offset directions, and a revert restores them with the wall.
     place_layers();
     for (int64_t v = layer_first; v < points; ++v) moved[v] = 1;
-    settle();
+    status = settle();
+    if (status != PHX_MC_OK) return status;
   }
   // 2. Descent on E = sum over interior faces of (1 - cos) of the angle
   // between the centroid join and the area vector, plus the skewness term;
@@ -2859,7 +2884,8 @@ void Builder::smooth() {
       moved[v] = 1;
     }
     std::vector<uint8_t> attempted(moved);
-    settle();
+    status = settle();
+    if (status != PHX_MC_OK) return status;
     for (int64_t v = 0; v < points; ++v) {
       if (!attempted[v]) continue;
       trust[v] = moved[v] ? std::min(kTrust * b, 1.25 * trust[v]) : 0.5 * trust[v];
@@ -2922,7 +2948,8 @@ void Builder::smooth() {
   std::vector<Vec> starts;
   std::vector<int32_t> sample_items;
   for (int round = 0; round < kRepairRounds; ++round) {
-    geometry();
+    status = geometry();
+    if (status != PHX_MC_OK) return status;
     std::vector<std::tuple<double, int32_t, bool>> bad;
     const double goal_cosine = std::cos(kAngleGoal * (3.14159265358979323846 / 180.0));
     for (const int64_t f : active_faces) {
@@ -3215,6 +3242,7 @@ void Builder::smooth() {
   }
   stats[26] = static_cast<double>(repaired);
   stats[21] = static_cast<double>(reverted);
+  return PHX_MC_OK;
 }
 
 int32_t Builder::certify() {
@@ -3274,7 +3302,8 @@ int32_t build(const Input& in, Mesh& mesh) {
   builder.place_layers();
   stats[4] = seconds(stage);
   stage = Clock::now();
-  builder.smooth();
+  status = builder.smooth();
+  if (status != PHX_MC_OK) return status;
   stats[5] = seconds(stage);
   // Surface vertex ancestry and kinds: the triangle under a patch vertex and
   // a triangle on the feature edge under a curve vertex (walks from the item
