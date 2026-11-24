@@ -967,7 +967,12 @@ class TetMesh {
                            const SourceWitness* const* witness_records,
                            std::int8_t orientation, const PreparedFacetGroup* prepared) const;
   struct PreparedFacetGroup {
-    std::vector<std::size_t> rows;
+    PreparedFacetGroup() = default;
+    PreparedFacetGroup(const TetMesh& mesh, const DeclaredGroup& declared);
+    // The indexes borrow this record's primitive and bounds banks.
+    PreparedFacetGroup(const PreparedFacetGroup&) = delete;
+    PreparedFacetGroup& operator=(const PreparedFacetGroup&) = delete;
+
     std::vector<std::array<std::int32_t, 4>> primitives;
     std::vector<std::int32_t> indices;
     std::vector<FacetCoverageBounds> bounds;
@@ -977,11 +982,9 @@ class TetMesh {
     std::vector<FacetCoverageBounds> boundary_bounds;
     FacetCoverageIndex boundary_index;
     mutable std::vector<std::size_t> coverage_scratch;
-    bool prepare_bounds = false;
-    bool prepare_declared = false;
     int declared_projection_axis = -1;
   };
-  bool prepare_declared_group(const DeclaredGroup& declared, PreparedFacetGroup& group) const;
+  void prepare_declared_group(const DeclaredGroup& declared, PreparedFacetGroup& group) const;
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
                          const RelocationOverlay* overlay = nullptr,

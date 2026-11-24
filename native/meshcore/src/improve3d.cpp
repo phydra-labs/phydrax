@@ -45,6 +45,7 @@ bool LocalIncidence::initialize(const TetMesh& mesh) {
   mesh_ = &mesh;
   ++topology_revision_;
   boundary_index_ready_ = false;
+  prepared_declared_groups_.reset();
   const std::size_t vertex_count = mesh.vertex_ids_.size();
   vertex_cell_.assign(vertex_count, -1);
   vertex_degree_.assign(vertex_count, 0);

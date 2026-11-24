@@ -215,6 +215,8 @@ class LocalIncidence {
                     std::vector<std::int32_t>& cells) const;
   bool current_star(const Star& star, std::int32_t vertex) const noexcept;
   bool ensure_boundary_index(const TetMesh& mesh);
+  const TetMesh::PreparedFacetGroup* prepared_declared_group(const TetMesh& mesh,
+                                                             std::int32_t source);
   bool rounded_plane_support(const TetMesh& mesh, std::int32_t group,
                              const SourceStencil& stencil, const double* carrier) const;
   // Validates and commits a boundary edit resolved by collapse_boundary or
@@ -238,6 +240,9 @@ class LocalIncidence {
   mutable std::vector<std::int32_t> edge_scratch_;
   TetSegmentIndex* segment_index_ = nullptr;
   BoundaryIndex boundary_index_;
+  // Immutable source proofs survive local edits, but not a new mesh binding.
+  // Node storage keeps index views valid as more groups are prepared.
+  std::optional<std::unordered_map<std::int32_t, TetMesh::PreparedFacetGroup>> prepared_declared_groups_;
   bool boundary_index_ready_ = false;
   std::uint64_t topology_revision_ = 0;
 };

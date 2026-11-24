@@ -687,6 +687,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native 3D boundary relocation reuses exact source-facet coverage and rim
+  indexes across edits of the same mesh. Witness, orientation, coverage,
+  and rollback checks are unchanged.
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
   Where supported, `candidate.prove()` certifies that mesh later. Certified
   octree hex-dominant meshes and owner-local execution require

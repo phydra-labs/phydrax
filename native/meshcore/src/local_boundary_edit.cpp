@@ -1110,6 +1110,18 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
   }
 }
 
+const TetMesh::PreparedFacetGroup* LocalIncidence::prepared_declared_group(
+    const TetMesh& mesh, std::int32_t source) {
+  if (prepared_declared_groups_) {
+    const auto cached = prepared_declared_groups_->find(source);
+    if (cached != prepared_declared_groups_->end()) return &cached->second;
+  }
+  const auto declared = mesh.declared_groups_.find(source);
+  if (declared == mesh.declared_groups_.end()) return nullptr;
+  if (!prepared_declared_groups_) prepared_declared_groups_.emplace();
+  return &prepared_declared_groups_->try_emplace(source, mesh, declared->second).first->second;
+}
+
 TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVertex& moved,
                                                const Star& star,
                                                const SourceStencil* moved_stencil) {
@@ -1226,7 +1238,9 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
         return TetEditStatus::kRejectedTopology;
       }
       const TetEditFacet check{facet.id, facet.vertices, facet.source, facet.orientation, false};
-      if (!mesh.source_face_valid(check, &overlay)) return mesh.source_face_refusal_status();
+      if (!mesh.source_face_valid(check, &overlay, prepared_declared_group(mesh, facet.source))) {
+        return mesh.source_face_refusal_status();
+      }
     }
     for (std::size_t row : segment_rows) {
       const TetSnapshotSegment& segment = mesh.segments_[row];
