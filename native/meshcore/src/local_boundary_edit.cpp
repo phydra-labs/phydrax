@@ -1339,7 +1339,8 @@ TetEditStatus LocalIncidence::commit_boundary_edit(TetMesh& mesh, const TetEdit&
       return facet.protected_facet || fixed ? TetEditStatus::kRejectedProtected
                                             : TetEditStatus::kRejectedTopology;
     }
-    if (!mesh.source_face_valid(facet, edit.overlay)) return mesh.source_face_refusal_status();
+    const auto* group = prepared_declared_group(mesh, facet.source);
+    if (!mesh.source_face_valid(facet, edit.overlay, group)) return mesh.source_face_refusal_status();
   }
   for (const TetEditFacet& facet : operation.replacement_facets) {
     if (!new_ids.insert(facet.id).second) return TetEditStatus::kRejectedTopology;
@@ -1412,7 +1413,8 @@ TetEditStatus LocalIncidence::commit_boundary_edit(TetMesh& mesh, const TetEdit&
       check.vertices = facet.vertices;
       check.source = facet.source;
       check.orientation = facet.orientation;
-      if (!mesh.source_face_valid(check, edit.overlay)) return mesh.source_face_refusal_status();
+      const auto* group = prepared_declared_group(mesh, facet.source);
+      if (!mesh.source_face_valid(check, edit.overlay, group)) return mesh.source_face_refusal_status();
     }
     for (std::size_t row : segment_rows) {
       const TetSnapshotSegment& segment = mesh.segments_[row];
