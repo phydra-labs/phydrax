@@ -870,6 +870,21 @@ void test_floating_point_hazards() {
   });
 }
 
+void test_dense_planar_seed_respects_predicate_coordinate_minimum() {
+  const double side = phx::mc::kCoordinateMinMagnitude;
+  Input in;
+  in.points = {0, 0, side, 0, side, side, 0, side};
+  in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+  in.max_area = side * side * 0x1p-20;
+  const Result r = run(in);
+  PHX_CHECK(r.status == PHX_MC_UNRESOLVED);
+  if (r.status != PHX_MC_UNRESOLVED) return;
+  PHX_CHECK(std::all_of(r.points.begin(), r.points.end(), phx::mc::coordinate_in_domain));
+  check_mesh(r);
+  check_segments(r, in);
+  PHX_CHECK(total_area(r) == side * side);
+}
+
 // Fault caught: a wrong child bound or sift step in the 4-ary heap, or a free
 // block of one bucket handed to another while still in use, changes the pop
 // sequence against std::priority_queue under the same strict total order.
@@ -1024,5 +1039,6 @@ int main() {
   test_acute_input_corner_retains_its_constraints();
   test_arguments();
   test_floating_point_hazards();
+  test_dense_planar_seed_respects_predicate_coordinate_minimum();
   return phx::mc::test::finish("test_cdt2d");
 }

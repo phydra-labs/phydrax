@@ -131,6 +131,7 @@ void seed_row(const std::vector<SeedEdge>& edges, double y, double clearance,
 }
 
 bool admits_seed(Triangulation2D& coarse, int32_t& hint, const double* point) {
+  if (!coordinate_in_domain(point[0]) || !coordinate_in_domain(point[1])) return false;
   hint = coarse.walk(hint, point);
   if (coarse.region[static_cast<std::size_t>(hint)] == 0) return false;
   const auto& t = coarse.triangles[static_cast<std::size_t>(hint)];
