@@ -7,12 +7,17 @@
 #include <limits>
 #include <numeric>
 #include <numbers>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "cad_cubic_shape.hpp"
 #include "cad_faces.hpp"
+#include "cad_quadratic_shape.hpp"
 #include "floating_point_mode.hpp"
+#include "geometry3.hpp"
+#include "quadratic_validity_screen.hpp"
 #include "spatial_sort.hpp"
 
 namespace phx::mc {
@@ -359,18 +364,43 @@ class QuadraticCurving {
 
   int32_t run(const cad::CadGeometry& geometry) {
     const CurvingSource source(geometry, input_);
-    int32_t status = source.validate<2>();
+    const int32_t prepared = prepare(source);
+    if (prepared != PHX_MC_OK) return prepared;
+    if (input_.sampled_minimum_scaled_jacobian == 0.0 &&
+        input_.sampled_minimum_determinant_ratio == 0.0) return repair(true);
+    const int32_t sampled = polish_shape();
+    if (sampled != PHX_MC_OK && sampled != PHX_MC_UNRESOLVED) return sampled;
+    const int32_t validity = repair(false);
+    return validity == PHX_MC_OK ? sampled : validity;
+  }
+
+  // This is a numerical lifting seed, not an issued quadratic map. The
+  // caller audits the actual cubic geometry instead of proving this seed.
+  int32_t seed(const CurvingSource& source) {
+    const int32_t status = prepare(source);
+    if (status != PHX_MC_OK) return status;
+    return polish_shape();
+  }
+
+ private:
+  int32_t prepare(const CurvingSource& source) {
+    const int32_t status = source.validate<2>();
     if (status != PHX_MC_OK) return status;
     result_.cell_edges.resize(static_cast<std::size_t>(input_.tetrahedron_count));
     source.enumerate_edges(result_.edges, [&](uint64_t slot, int64_t edge) {
       result_.cell_edges[static_cast<std::size_t>(slot / 6)][slot % 6] = edge;
     });
-    status = place_nodes(source);
-    if (status != PHX_MC_OK) return status;
-    return repair();
+    return place_nodes(source);
   }
 
- private:
+  int32_t polish_shape() {
+    std::vector<std::int64_t> touched;
+    return polish_cad_quadratic_shape(
+        input_, input_.length_scale, input_.sampled_minimum_scaled_jacobian,
+        input_.sampled_minimum_determinant_ratio, result_, touched,
+        result_.unmet_sampled_shape);
+  }
+
   void prepare_incidence() {
     // Edge-to-cell incidence (CSR) in ascending cell order.
     const std::size_t edges = result_.edges.size();
@@ -411,26 +441,56 @@ class QuadraticCurving {
     return PHX_MC_OK;
   }
 
+  void pack_cell(std::size_t id, double* row) const {
+    const int32_t* cell = input_.tetrahedra + 4 * id;
+    for (int i = 0; i < 4; ++i) {
+      const double* point = input_.points + 3 * static_cast<int64_t>(cell[i]);
+      for (int c = 0; c < 3; ++c) row[3 * i + c] = point[c];
+    }
+    const auto& edges = result_.cell_edges[id];
+    for (int e = 0; e < 6; ++e)
+      for (int c = 0; c < 3; ++c) row[12 + 3 * e + c] = result_.nodes[edges[e]][c];
+  }
+
+  int32_t decide_packed(std::size_t count, int32_t* decisions) const {
+    static const DerivativeWeights weights;
+    return phx_mc_quadratic_tetrahedron_validity(
+        static_cast<int64_t>(count), buffer_.data(), weights.values.data(),
+        input_.relative_floor, decisions, nullptr, nullptr);
+  }
+
+  int32_t decide_all() {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (!(input_.relative_floor >= 0.0 && input_.relative_floor < 1.0) ||
+        !addressable(input_.tetrahedron_count, 30, sizeof(double))) return PHX_MC_INVALID_ARGUMENT;
+    // CurvingSource already validated the affine points. Check each shared
+    // midpoint once before presenting rows to the rigorous native screen.
+    for (const Point& node : result_.nodes)
+      if (!finite(node)) return PHX_MC_NONFINITE_INPUT;
+    const auto count = static_cast<std::size_t>(input_.tetrahedron_count);
+    result_.cell_decisions.assign(count, PHX_MC_QUADRATIC_VALIDITY_VALID);
+    static const DerivativeWeights weights;
+    static const QuadraticDerivativeStencil stencil(weights.values.data());
+    std::vector<int64_t> unresolved;
+    std::array<double, 30> packed;
+    for (std::size_t row = 0; row < count; ++row) {
+      pack_cell(row, packed.data());
+      if (!quadratic_affine_neighborhood_screen(packed.data(), input_.relative_floor) &&
+          !quadratic_validity_screen(packed.data(), stencil, input_.relative_floor))
+        unresolved.push_back(static_cast<int64_t>(row));
+    }
+    return decide(unresolved);
+  }
+
   // Decide `cells` (ascending) into result_.cell_decisions.
   int32_t decide(const std::vector<int64_t>& cells) {
     if (cells.empty()) return PHX_MC_OK;
-    static const DerivativeWeights weights;
     buffer_.resize(30 * cells.size());
-    for (std::size_t k = 0; k < cells.size(); ++k) {
-      const int32_t* cell = input_.tetrahedra + 4 * cells[k];
-      double* row = buffer_.data() + 30 * k;
-      for (int i = 0; i < 4; ++i) {
-        const double* point = input_.points + 3 * static_cast<int64_t>(cell[i]);
-        for (int c = 0; c < 3; ++c) row[3 * i + c] = point[c];
-      }
-      const auto& edges = result_.cell_edges[static_cast<std::size_t>(cells[k])];
-      for (int e = 0; e < 6; ++e)
-        for (int c = 0; c < 3; ++c) row[12 + 3 * e + c] = result_.nodes[edges[e]][c];
-    }
+    for (std::size_t k = 0; k < cells.size(); ++k)
+      pack_cell(static_cast<std::size_t>(cells[k]), buffer_.data() + 30 * k);
     decisions_.resize(cells.size());
-    const int32_t status = phx_mc_quadratic_tetrahedron_validity(
-        static_cast<int64_t>(cells.size()), buffer_.data(), weights.values.data(),
-        input_.relative_floor, decisions_.data(), nullptr, nullptr);
+    const int32_t status = decide_packed(cells.size(), decisions_.data());
     if (status != PHX_MC_OK) return status;
     for (std::size_t k = 0; k < cells.size(); ++k)
       result_.cell_decisions[static_cast<std::size_t>(cells[k])] = decisions_[k];
@@ -498,12 +558,9 @@ class QuadraticCurving {
     return decide(incident_cells(changed));
   }
 
-  int32_t repair() {
+  int32_t repair(bool allow_wall_repair) {
     const int64_t cells = input_.tetrahedron_count;
-    result_.cell_decisions.assign(static_cast<std::size_t>(cells), PHX_MC_QUADRATIC_VALIDITY_VALID);
-    std::vector<int64_t> all(static_cast<std::size_t>(cells));
-    for (int64_t t = 0; t < cells; ++t) all[static_cast<std::size_t>(t)] = t;
-    int32_t status = decide(all);
+    int32_t status = decide_all();
     if (status != PHX_MC_OK) return status;
     result_.initial_decisions = result_.cell_decisions;
     std::vector<int64_t> failing;
@@ -511,7 +568,14 @@ class QuadraticCurving {
       const int32_t decision = result_.cell_decisions[static_cast<std::size_t>(t)];
       if (decision == PHX_MC_QUADRATIC_VALIDITY_INVALID) ++result_.stats.initial_invalid;
       if (decision == PHX_MC_QUADRATIC_VALIDITY_UNRESOLVED) ++result_.stats.initial_unresolved;
-      if (decision != PHX_MC_QUADRATIC_VALIDITY_VALID) failing.push_back(t);
+      if (allow_wall_repair && decision != PHX_MC_QUADRATIC_VALIDITY_VALID) failing.push_back(t);
+    }
+    if (!allow_wall_repair) {
+      // A sampled shape proposal keeps the authored wall fixed. Record the
+      // exact verdict of the issued map without steering another proposal.
+      result_.stats.final_invalid = result_.stats.initial_invalid;
+      result_.stats.final_unresolved = result_.stats.initial_unresolved;
+      return PHX_MC_OK;
     }
     if (!failing.empty()) {
       prepare_incidence();
@@ -596,9 +660,47 @@ std::array<ChartPoint, 3> chart_corners(const int32_t* triangle, const double* u
   return {corner(0), corner(1), corner(2)};
 }
 
+Point quadratic_displacement(const CadQuadraticInput& input, const CadQuadraticMesh& seed,
+                             std::size_t edge) {
+  const auto [a, b] = seed.edges[edge];
+  const Point middle = chord_midpoint(input.points, a, b);
+  Point shift;
+  geometry::difference(seed.nodes[edge].data(), middle.data(), shift.data());
+  return shift;
+}
+
+template <class Displacement>
+void lift_cubic_face(Point& xyz, const CadQuadraticMesh& seed, std::int64_t owner,
+                     Displacement&& displacement) {
+  const auto& edges = seed.cell_edges[owner / 4];
+  const auto opposite = static_cast<int>(owner % 4);
+  // At the face centroid each of the three edge bubbles is 4/9.
+  for (int edge = 0; edge < 6; ++edge) {
+    if (kEdgeCorners[edge][0] == opposite || kEdgeCorners[edge][1] == opposite) continue;
+    const Point& shift = displacement(edges[edge]);
+    for (int axis = 0; axis < 3; ++axis) xyz[axis] += (4.0 / 9.0) * shift[axis];
+  }
+}
+
+std::array<Point, 2> cubic_edge_points(const CadQuadraticInput& input, const Edge& edge,
+                                       const Point* displacement) {
+  const Point a = point_at(input.points, edge[0]), b = point_at(input.points, edge[1]);
+  std::array<Point, 2> result{third_point(a, b), third_point(b, a)};
+  if (displacement != nullptr) {
+    // An edge bubble has value 8/9 at both cubic trisection sites.
+    for (int axis = 0; axis < 3; ++axis) {
+      const double shift = (8.0 / 9.0) * (*displacement)[axis];
+      result[0][axis] += shift;
+      result[1][axis] += shift;
+    }
+  }
+  return result;
+}
+
 int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource& source,
                           const CadQuadraticInput& input, std::size_t edge_nodes,
-                          CadCubicMesh& result) {
+                          const CadQuadraticMesh* seed, std::span<const Point> displacement,
+                          CadCubicMesh& result, std::vector<std::int64_t>* face_owners) {
   // Sort physical triples with CAD chart declarations (negative slots) before
   // cell incidences. A CAD interface may be owned by two cells; the exterior
   // must have a chart, and a face cannot declare two distinct owning rows.
@@ -627,6 +729,7 @@ int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource&
       face_count > result.nodes.max_size() - edge_nodes)
     return PHX_MC_INDEX_RANGE_ERROR;
   result.nodes.resize(edge_nodes + face_count);
+  if (face_owners != nullptr) face_owners->reserve(face_count);
 
   cad::EvaluationWorkspace workspace;
   std::size_t node = edge_nodes;
@@ -640,6 +743,7 @@ int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource&
     if (incidence == 0 || incidence > 2 || (!on_cad && incidence == 1) ||
         slots[begin].second < 0)
       return PHX_MC_INVALID_INPUT;
+    if (face_owners != nullptr) face_owners->push_back(on_cad ? -1 : slots[begin].second);
 
     Point& xyz = result.nodes[node];
     if (on_cad) {
@@ -654,6 +758,10 @@ int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource&
     } else {
       xyz = centroid(point_at(input.points, key[0]), point_at(input.points, key[1]),
                      point_at(input.points, key[2]));
+      if (seed != nullptr) {
+        lift_cubic_face(xyz, *seed, slots[begin].second,
+                        [&](std::int64_t edge) -> const Point& { return displacement[edge]; });
+      }
     }
     if (!finite(xyz)) return PHX_MC_NONFINITE_INPUT;
     for (std::size_t i = begin; i < end; ++i) {
@@ -666,7 +774,8 @@ int32_t place_cubic_faces(const cad::CadGeometry& geometry, const CurvingSource&
 }
 
 int32_t place_cubic_edges(const CurvingSource& source, const CadQuadraticInput& input,
-                          const std::vector<Edge>& edges, std::vector<Point>& nodes) {
+                          const std::vector<Edge>& edges, std::span<const Point> displacement,
+                          std::vector<Point>& nodes) {
   constexpr int32_t interior = -1, unused_curve = -2, used_curve = -3;
   // Nonnegative values are the single owning patch of a non-curve edge.
   std::vector<int32_t> owners(edges.size(), interior);
@@ -690,11 +799,112 @@ int32_t place_cubic_edges(const CurvingSource& source, const CadQuadraticInput& 
   for (std::size_t e = 0; e < edges.size(); ++e) {
     if (owners[e] == unused_curve) return PHX_MC_INVALID_INPUT;
     if (owners[e] != interior) continue;
-    const Point a = point_at(input.points, edges[e][0]), b = point_at(input.points, edges[e][1]);
-    nodes[2 * e] = third_point(a, b);
-    nodes[2 * e + 1] = third_point(b, a);
+    const auto placed = cubic_edge_points(input, edges[e],
+        displacement.empty() ? nullptr : &displacement[e]);
+    nodes[2 * e] = placed[0];
+    nodes[2 * e + 1] = placed[1];
   }
   return PHX_MC_OK;
+}
+
+int32_t place_cubic_nodes(const cad::CadGeometry& geometry, const CurvingSource& source,
+                         const CadQuadraticInput& input, const CadQuadraticMesh* seed,
+                         CadCubicMesh& result, std::vector<std::int64_t>* face_owners = nullptr) {
+  result.cell_nodes.resize(static_cast<std::size_t>(input.tetrahedron_count));
+  const auto set_edge = [&](uint64_t slot, int64_t edge) {
+    const auto t = static_cast<std::size_t>(slot / 6);
+    const auto e = static_cast<std::size_t>(slot % 6);
+    const int32_t* cell = input.tetrahedra + 4 * t;
+    const bool reverse = cell[kEdgeCorners[e][0]] > cell[kEdgeCorners[e][1]];
+    result.cell_nodes[t][2 * e] = 2 * edge + reverse;
+    result.cell_nodes[t][2 * e + 1] = 2 * edge + !reverse;
+  };
+  std::vector<Edge> new_edges;
+  std::vector<Point> displacement;
+  const auto& edges = seed == nullptr ? new_edges : seed->edges;
+  if (seed == nullptr) {
+    source.enumerate_edges(new_edges, set_edge);
+  } else {
+    for (std::size_t t = 0; t < seed->cell_edges.size(); ++t) {
+      for (std::size_t e = 0; e < 6; ++e) set_edge(6 * t + e, seed->cell_edges[t][e]);
+    }
+    displacement.reserve(edges.size());
+    for (std::size_t e = 0; e < edges.size(); ++e)
+      displacement.push_back(quadratic_displacement(input, *seed, e));
+  }
+  const int32_t faces = place_cubic_faces(geometry, source, input, 2 * edges.size(), seed,
+                                        displacement, result, face_owners);
+  if (faces != PHX_MC_OK) return faces;
+  return place_cubic_edges(source, input, edges, displacement, result.nodes);
+}
+
+std::vector<std::int64_t> cubic_faces_changed(
+    const CadQuadraticMesh& seed, const CadCubicMesh& result,
+    std::span<const std::int64_t> face_owners, std::span<const std::int64_t> touched,
+    std::span<const std::int64_t> changed) {
+  const auto edge_nodes = static_cast<std::int64_t>(2 * seed.edges.size());
+  std::vector<std::int64_t> faces;
+  for (const std::int64_t cell : touched) {
+    for (int f = 0; f < 4; ++f) {
+      const std::int64_t node = result.cell_nodes[cell][12 + f];
+      if (face_owners[node - edge_nodes] < 0) continue;
+      const auto& edges = seed.cell_edges[cell];
+      for (int e = 0; e < 6; ++e) {
+        if (kEdgeCorners[e][0] == f || kEdgeCorners[e][1] == f) continue;
+        if (std::binary_search(changed.begin(), changed.end(), edges[e])) {
+          faces.push_back(node);
+          break;
+        }
+      }
+    }
+  }
+  std::sort(faces.begin(), faces.end());
+  faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+  return faces;
+}
+
+int32_t apply_cubic_feedback(const CadQuadraticInput& input, const CadQuadraticMesh& seed,
+                             std::span<const std::int64_t> face_owners,
+                             std::span<const std::int64_t> touched,
+                             std::span<const std::int64_t> changed, CadCubicMesh& result) {
+  const auto faces = cubic_faces_changed(seed, result, face_owners, touched, changed);
+  std::vector<std::pair<std::int64_t, Point>> rollback;
+  rollback.reserve(2 * changed.size() + faces.size());
+  const auto replace = [&](std::int64_t id, const Point& value) {
+    rollback.emplace_back(id, result.nodes[id]);
+    result.nodes[id] = value;
+  };
+  for (const std::int64_t edge : changed) {
+    const Point shift = quadratic_displacement(input, seed, edge);
+    const auto xy = cubic_edge_points(input, seed.edges[edge], &shift);
+    replace(2 * edge, xy[0]);
+    replace(2 * edge + 1, xy[1]);
+  }
+  for (const std::int64_t node : faces) {
+    const auto owner = face_owners[node - 2 * seed.edges.size()];
+    const int32_t* cell = input.tetrahedra + 4 * (owner / 4);
+    const int* local = kFaceCorners[owner % 4];
+    const auto key = sorted_face({cell[local[0]], cell[local[1]], cell[local[2]]});
+    Point xyz = centroid(point_at(input.points, key[0]), point_at(input.points, key[1]),
+                           point_at(input.points, key[2]));
+    lift_cubic_face(xyz, seed, owner, [&](std::int64_t edge) {
+      return quadratic_displacement(input, seed, edge);
+    });
+    replace(node, xyz);
+  }
+  // Both owners of a moved face contain one of its changed P2 edges, so
+  // the P2 edge incident closure also covers all changed cubic maps.
+  const auto after = sample_cad_cubic_shape(input, result, touched);
+  if (after.failing_cells.empty()) {
+    result.unmet_sampled_shape = {};
+    return PHX_MC_OK;
+  }
+  for (const auto& [node, value] : rollback) result.nodes[node] = value;
+  return PHX_MC_UNRESOLVED;
+}
+
+bool sampled_shape_met(const CadCubicShape& sample) {
+  return sample.unmet[0] == 0 && sample.unmet[1] == 0;
 }
 
 }  // namespace
@@ -713,19 +923,42 @@ int32_t cad_cubic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInpu
   const int32_t valid_input = source.validate<3>();
   if (valid_input != PHX_MC_OK) return valid_input;
 
-  std::vector<Edge> edges;
-  result.cell_nodes.resize(static_cast<std::size_t>(input.tetrahedron_count));
-  source.enumerate_edges(edges, [&](uint64_t slot, int64_t edge) {
-    const auto t = static_cast<std::size_t>(slot / 6);
-    const auto e = static_cast<std::size_t>(slot % 6);
-    const int32_t* cell = input.tetrahedra + 4 * t;
-    const bool reverse = cell[kEdgeCorners[e][0]] > cell[kEdgeCorners[e][1]];
-    result.cell_nodes[t][2 * e] = 2 * edge + reverse;
-    result.cell_nodes[t][2 * e + 1] = 2 * edge + !reverse;
-  });
-  const int32_t faces = place_cubic_faces(geometry, source, input, 2 * edges.size(), result);
-  if (faces != PHX_MC_OK) return faces;
-  return place_cubic_edges(source, input, edges, result.nodes);
+  if (input.sampled_minimum_scaled_jacobian == 0.0 &&
+      input.sampled_minimum_determinant_ratio == 0.0) {
+    return place_cubic_nodes(geometry, source, input, nullptr, result);
+  }
+  CadQuadraticMesh seed;
+  const int32_t seeded = QuadraticCurving(input, seed).seed(source);
+  if (seeded != PHX_MC_OK && seeded != PHX_MC_UNRESOLVED) return seeded;
+  std::vector<std::int64_t> face_owners;
+  const int32_t placed = place_cubic_nodes(geometry, source, input, &seed, result, &face_owners);
+  if (placed != PHX_MC_OK) return placed;
+  const CadCubicShape sample = sample_cad_cubic_shape(input, result);
+  result.unmet_sampled_shape = sample.unmet;
+  if (sampled_shape_met(sample)) return PHX_MC_OK;
+
+  // One bounded feedback pass accounts for the measured loss from replacing
+  // the elevated trace by the CAD-owned cubic wall nodes.
+  CadQuadraticInput tightened = input;
+  if (sample.unmet[0] != 0) {
+    tightened.sampled_minimum_scaled_jacobian = std::min(
+        std::sqrt(2.0), input.sampled_minimum_scaled_jacobian +
+        2 * (input.sampled_minimum_scaled_jacobian - sample.minimum_scaled));
+  }
+  if (sample.unmet[1] != 0) {
+    tightened.sampled_minimum_determinant_ratio = std::min(
+        1.0, input.sampled_minimum_determinant_ratio +
+        2 * (input.sampled_minimum_determinant_ratio - sample.minimum_ratio));
+  }
+  std::vector<std::int64_t> touched, changed;
+  const int32_t retried = polish_cad_quadratic_shape(
+      input, input.length_scale, tightened.sampled_minimum_scaled_jacobian,
+      tightened.sampled_minimum_determinant_ratio, seed, touched, seed.unmet_sampled_shape, &changed);
+  if (retried != PHX_MC_OK && retried != PHX_MC_UNRESOLVED) return retried;
+  if (changed.empty() || !std::includes(touched.begin(), touched.end(),
+                                      sample.failing_cells.begin(), sample.failing_cells.end()))
+    return PHX_MC_UNRESOLVED;
+  return apply_cubic_feedback(input, seed, face_owners, touched, changed, result);
 }
 
 }  // namespace phx::mc

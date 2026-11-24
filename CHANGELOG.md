@@ -21,8 +21,13 @@
   accepted edits or quality evidence.
 - Direct native CAD tetrahedral meshing can target an upper affine dihedral
   angle as well as the lower angle. Compliance counts cells still above the
-  cap separately from acute rim exemptions. An active cap changes plan and
-  mesh identity; the default leaves the cap disabled.
+  cap separately from acute rim exemptions. An active cap changes plan
+  identity and may change the mesh. The default leaves the cap disabled.
+- Direct native CAD P2/P3 can request sampled scaled-Jacobian and
+  determinant-ratio targets without relaxing the size cap or moving the CAD
+  wall. Shaped requests can change mesh identity. Exact validity and
+  deferred source certification remain separate. Rebuild native clients
+  for the CAD volume construction and export ABI changes.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.

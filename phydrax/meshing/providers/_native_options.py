@@ -64,7 +64,12 @@ _ROUTE_SCHEDULE_FIELDS: dict[NativeMeshingRoute, tuple[str, ...]] = {
     "curve_arc_length": ("curve_schedule",),
     "parametric_surface": ("surface_schedule",),
     "plc_tetrahedral": ("volume_schedule",),
-    "cad_tetrahedral": ("volume_schedule", "cad_maximum_dihedral_degrees"),
+    "cad_tetrahedral": (
+        "volume_schedule",
+        "sampled_minimum_scaled_jacobian",
+        "sampled_minimum_determinant_ratio",
+        "cad_maximum_dihedral_degrees",
+    ),
     "periodic_delaunay": (),
     "periodic_power": (),
     "plc_restricted_power": ("polyhedral_schedule",),
@@ -139,10 +144,15 @@ def _resolve_schedules(
 class NativeMeshingOptions(StrictModule, NonTrainableState):
     """Algorithm choices; an omitted route is resolved from source and request.
 
-    ``cad_maximum_dihedral_degrees`` bounds the obtuse tail of the affine
-    tetrahedra on the direct native CAD route. The default of 180 degrees
-    disables it. The volume schedule still controls the acute tail and
-    whether affine shape findings are hard or soft.
+    Nonzero sampled mapped shape targets apply only to direct native CAD
+    P2/P3. They require the given dimensionless scaled Jacobian and
+    determinant ratio on the degree-six simplex lattice. They do not replace
+    exact validity or CAD fidelity proof.
+
+    ``cad_maximum_dihedral_degrees`` targets the obtuse tail of the affine
+    tetrahedra on the direct native CAD route (180 degrees disables it).
+    The volume schedule controls the acute tail and whether affine shape
+    findings are hard or soft.
     """
 
     route: NativeMeshingRoute | None = eqx.field(static=True)
@@ -156,6 +166,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
     structured_schedule: schedules_owner.NativeStructuredSchedule | None
     hex_core_fraction: float | None = eqx.field(static=True)
     grid_schedule: NativeHexGridSchedule | None
+    sampled_minimum_scaled_jacobian: float = eqx.field(static=True)
+    sampled_minimum_determinant_ratio: float = eqx.field(static=True)
     cad_maximum_dihedral_degrees: float = eqx.field(static=True)
     options_id: str = eqx.field(static=True)
 
@@ -175,6 +187,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         structured_schedule: schedules_owner.NativeStructuredSchedule | None = None,
         hex_core_fraction: float | None = None,
         grid_schedule: NativeHexGridSchedule | None = None,
+        sampled_minimum_scaled_jacobian: float = 0.0,
+        sampled_minimum_determinant_ratio: float = 0.0,
         cad_maximum_dihedral_degrees: float = 180.0,
     ) -> None:
         route_ = (
@@ -182,9 +196,19 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
             if route is None
             else parse(route, NativeMeshingRoute, "NativeMeshingOptions.route")
         )
+        scaled = finite_real_scalar(
+            sampled_minimum_scaled_jacobian, "sampled_minimum_scaled_jacobian"
+        )
+        ratio = finite_real_scalar(
+            sampled_minimum_determinant_ratio, "sampled_minimum_determinant_ratio"
+        )
         maximum_dihedral = finite_real_scalar(
             cad_maximum_dihedral_degrees, "cad_maximum_dihedral_degrees"
         )
+        if not 0.0 <= scaled <= 2.0**0.5:
+            raise ValueError("sampled_minimum_scaled_jacobian must lie in [0, sqrt(2)].")
+        if not 0.0 <= ratio <= 1.0:
+            raise ValueError("sampled_minimum_determinant_ratio must lie in [0, 1].")
         if not 90.0 <= maximum_dihedral <= 180.0:
             raise ValueError("cad_maximum_dihedral_degrees must lie in [90, 180].")
         fields = () if route_ is None else _ROUTE_SCHEDULE_FIELDS[route_]
@@ -197,6 +221,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
             ("curve_schedule", curve_schedule),
             ("surface_schedule", surface_schedule),
             ("volume_schedule", volume_schedule),
+            ("sampled_minimum_scaled_jacobian", scaled or None),
+            ("sampled_minimum_determinant_ratio", ratio or None),
             (
                 "cad_maximum_dihedral_degrees",
                 maximum_dihedral if maximum_dihedral < 180.0 else None,
@@ -259,6 +285,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         self.structured_schedule = structured
         self.hex_core_fraction = fraction
         self.grid_schedule = grid
+        self.sampled_minimum_scaled_jacobian = scaled
+        self.sampled_minimum_determinant_ratio = ratio
         self.cad_maximum_dihedral_degrees = maximum_dihedral
         identity: dict[str, object] = {
             "kind": "native-meshing-options",
@@ -272,6 +300,10 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
             "hex_core_fraction": fraction,
             "grid_schedule": None if grid is None else grid.schedule_id,
         }
+        if scaled > 0.0:
+            identity["sampled_minimum_scaled_jacobian"] = scaled
+        if ratio > 0.0:
+            identity["sampled_minimum_determinant_ratio"] = ratio
         if maximum_dihedral < 180.0:
             identity["cad_maximum_dihedral_degrees"] = maximum_dihedral
         self.options_id = canonical_fingerprint(identity)

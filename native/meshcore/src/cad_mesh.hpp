@@ -55,9 +55,8 @@ struct CadSurfaceMesh {
   int64_t face_ns = 0, assembly_ns = 0;
 };
 
-// Volume stage controls: S3 quality targets and the geometry order (1 or 2);
-// proximity (null: none) bounds each surface point's S3 size target by the
-// proximity size field at it (cad_proximity.hpp).
+// Volume stage controls: affine and sampled curved shape targets, geometry
+// order, and the optional proximity field that bounds each surface size.
 struct CadVolumeControls {
   double radius_edge_bound = 2.0;
   double minimum_dihedral_degrees = 15.5;
@@ -65,6 +64,8 @@ struct CadVolumeControls {
   int32_t geometry_order = 1;
   const cad::ProximityField* proximity = nullptr;
   std::uint32_t parallelism = 1;
+  double sampled_minimum_scaled_jacobian = 0.0;
+  double sampled_minimum_determinant_ratio = 0.0;
   double maximum_dihedral_degrees = 180.0;
 };
 

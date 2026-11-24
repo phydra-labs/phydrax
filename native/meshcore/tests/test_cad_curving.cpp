@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "cad_cubic_shape.hpp"
 #include "cad_curving.hpp"
 #include "cad_geometry.hpp"
 #include "floating_point_mode.hpp"
@@ -929,6 +930,38 @@ void bore_repairs() {
   PHX_CHECK(phx_mc_cad_quadratic_nodes(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
+void cubic_shape_is_independent_of_global_size_scale() {
+  constexpr double points[]{0, 0, 0, 1, 0, 0, 0.32, 0.95, 0, 0, 0, 1};
+  constexpr int32_t tetrahedron[]{0, 1, 2, 3};
+  constexpr int edges[][2]{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+  phx::mc::CadQuadraticInput input{};
+  input.point_count = 4;
+  input.points = points;
+  input.tetrahedron_count = 1;
+  input.tetrahedra = tetrahedron;
+  input.length_scale = std::ldexp(0.85, -341);
+  input.sampled_minimum_scaled_jacobian = 1.4;
+  phx::mc::CadCubicMesh mesh;
+  mesh.cell_nodes.resize(1);
+  const auto add = [&](const std::array<int, 3>& corners) {
+    mesh.cell_nodes[0][mesh.nodes.size()] = static_cast<int64_t>(mesh.nodes.size());
+    auto& node = mesh.nodes.emplace_back();
+    for (int axis = 0; axis < 3; ++axis)
+      node[axis] = (points[3 * corners[0] + axis] + points[3 * corners[1] + axis] +
+                    points[3 * corners[2] + axis]) / 3.0;
+  };
+  for (const auto& edge : edges) {
+    add({edge[0], edge[0], edge[1]});
+    add({edge[0], edge[1], edge[1]});
+  }
+  for (int omitted = 0; omitted < 4; ++omitted)
+    add({(omitted + 1) % 4, (omitted + 2) % 4, (omitted + 3) % 4});
+  const auto shape = phx::mc::sample_cad_cubic_shape(input, mesh);
+  const double independent = std::sqrt(2.0) * 0.95 / std::hypot(0.32, 0.95);
+  PHX_CHECK(shape.unmet[0] == 1);
+  PHX_CHECK(std::abs(shape.minimum_scaled - independent) < 1e-13);
+}
+
 }  // namespace
 
 int main() {
@@ -939,5 +972,6 @@ int main() {
   }
   bore_repairs();
   stretched_sphere_places_nodes_in_the_source_chart();
+  cubic_shape_is_independent_of_global_size_scale();
   return phx::mc::test::finish("test_cad_curving");
 }

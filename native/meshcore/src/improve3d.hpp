@@ -58,7 +58,9 @@ struct TetQualityRequest {
   // every such cell meets the score target); set by improve_mesh before each
   // edit is judged, for its residual order.
   double minimum_score = 1.0;
-  // Minimum allowed dihedral cosine bounds the maximum angle; -1 disables it.
+  // A hard size request may not be waived while recovering below-floor cells.
+  bool absolute_size_limit = false;
+  // Cosine of the largest allowed interior dihedral; -1 disables the cap.
   double upper_angle_cosine = -1.0;
 };
 // Assess current cells without changing the mesh or its stored unmet records.

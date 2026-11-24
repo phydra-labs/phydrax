@@ -1308,6 +1308,7 @@ def _cad_volume_plan(
     dihedral: float = 15.5,
     maximum_dihedral: float = 180.0,
     soft_shape: bool = False,
+    sampled_shape: tuple[float, float] = (0.0, 0.0),
     protect_wall: bool = False,
 ) -> phx.meshing.NativeMeshingPlan:
     from phydrax.meshing._contracts import (
@@ -1348,6 +1349,8 @@ def _cad_volume_plan(
                 if soft_shape
                 else SizeControlStrength.HARD,
             ),
+            sampled_minimum_scaled_jacobian=sampled_shape[0],
+            sampled_minimum_determinant_ratio=sampled_shape[1],
         )
     ).plan(model, specification)
 
@@ -1417,6 +1420,8 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
         min_relative_determinant: float,
         geometry_order: int,
         proximity_controls: tuple[CadProximityControl, ...],
+        sampled_minimum_scaled_jacobian: float,
+        sampled_minimum_determinant_ratio: float,
         maximum_dihedral_degrees: float,
     ) -> CadSolidResult:
         assert min_relative_determinant < 0.9
@@ -1430,6 +1435,8 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
             min_relative_determinant=0.9,
             geometry_order=geometry_order,
             proximity_controls=proximity_controls,
+            sampled_minimum_scaled_jacobian=sampled_minimum_scaled_jacobian,
+            sampled_minimum_determinant_ratio=sampled_minimum_determinant_ratio,
             maximum_dihedral_degrees=maximum_dihedral_degrees,
         )
 
@@ -2389,12 +2396,15 @@ def test_quadratic_cad_public_proof_reuses_the_constructed_map(
 def test_cubic_cad_deferred_proof_binds_the_constructed_map() -> None:
     from phydrax.discretization.fem._reference import FiniteElementSpec
 
-    candidate = _cad_volume_plan(_sphere_model(), 0.3, 3).execute(prove=False)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 3, sampled_shape=(0.2, 0.6))
+    candidate = plan.execute(prove=False)
     (element,) = candidate.geometry.elements
     assert isinstance(element, FiniteElementSpec)
     assert element.degree == 3 and element.local_dof_count == 20
     result = candidate.prove()
     result.audit.require_passed()
+    assert dict(result.compliance.achieved)["unmet_scaled_jacobian_cells"] == 0.0
+    assert dict(result.compliance.achieved)["unmet_determinant_ratio_cells"] == 0.0
     assert result.mesh.mesh_id == candidate.mesh.mesh_id
     assert result.certification is not None
     native = result.certification.native_cad

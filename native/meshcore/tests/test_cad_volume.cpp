@@ -159,7 +159,8 @@ struct Solid {
 };
 
 Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
-            double minimum_dihedral = 15.5, double maximum_dihedral = 180.0) {
+            double minimum_dihedral = 15.5, std::array<double, 2> sampled_shape = {},
+            double maximum_dihedral = 180.0) {
   Solid s;
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
@@ -167,10 +168,11 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
                                              std::numeric_limits<double>::infinity());
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
-  const phx_mc_cad_volume_controls volume{2.0, minimum_dihedral, 0.0, order};
+  const phx_mc_cad_volume_controls volume{2.0, minimum_dihedral, 0.0, order,
+                                          0, nullptr, sampled_shape[0], sampled_shape[1],
+                                          maximum_dihedral};
   phx_mc_cad_surface_result* handle = nullptr;
-  s.status = phx_mc_cad_construct_volume(&model, &controls, &volume, &handle, 1,
-                                         maximum_dihedral);
+  s.status = phx_mc_cad_construct_volume(&model, &controls, &volume, &handle, 1);
   PHX_CHECK(handle != nullptr);
   if (!handle) return s;
   int64_t n[9]{}, m[7]{};
@@ -343,6 +345,20 @@ void cubic_sphere_exports_curved_boundary_face_nodes(const phx_mc_cad_model& mod
   }
 }
 
+void sampled_shape_refusal_preserves_sphere_wall(const phx_mc_cad_model& model) {
+  const Solid mesh = solid(model, 0.3, 2, 15.5, {std::sqrt(2.0), 0.0});
+  PHX_CHECK(mesh.status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(!mesh.tetrahedra.empty());
+  PHX_CHECK(mesh.stats.unmet_scaled_jacobian_cells > 0);
+  bool has_wall_node = false;
+  for (std::size_t e = 0; e < mesh.kinds.size(); ++e) {
+    if (mesh.kinds[e] == PHX_MC_CAD_EDGE_INTERIOR) continue;
+    has_wall_node = true;
+    PHX_CHECK(on_sphere(mesh.nodes.data() + 3 * e));
+  }
+  PHX_CHECK(has_wall_node);
+}
+
 // The boundary-split retry: the first recovery is refused as if it needed a
 // boundary Steiner point on (a, b); the edge is split on the source and the
 // second recovery succeeds.
@@ -489,7 +505,7 @@ void strict_schedule() {
 }
 
 void upper_dihedral_schedule() {
-  const Solid strict = solid(quadric_model(), 0.2293, 1, 0.0, 90.0);
+  const Solid strict = solid(quadric_model(), 0.2293, 1, 0.0, {}, 90.0);
   PHX_CHECK(!strict.tetrahedra.empty() && strict.status == PHX_MC_UNRESOLVED);
   PHX_CHECK(strict.stats.unmet_upper_dihedral_cells > 0);
   PHX_CHECK(strict.stats.unmet_upper_dihedral_cells <= strict.stats.unmet_unforced_cells);
@@ -504,18 +520,20 @@ void refusals() {
                                              std::numeric_limits<double>::infinity());
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
-  const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 4};
+  const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 4, 0, nullptr, 0.0, 0.0, 180.0};
   phx_mc_cad_surface_result* handle = reinterpret_cast<phx_mc_cad_surface_result*>(&handle);
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &bad, &handle, 1, 180.0) ==
+  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &bad, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, nullptr, &handle, 1, 180.0) ==
+  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, nullptr, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
-  const phx_mc_cad_volume_controls linear{2.0, 15.5, 0.0, 1};
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &linear, &handle, 0, 180.0) ==
+  const phx_mc_cad_volume_controls linear{2.0, 15.5, 0.0, 1, 0, nullptr, 0.0, 0.0, 180.0};
+  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &linear, &handle, 0) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
-  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &linear, &handle, 1, 89.0) ==
+  auto wrong_cap = linear;
+  wrong_cap.max_dihedral_degrees = 89.0;
+  PHX_CHECK(phx_mc_cad_construct_volume(&model, &controls, &wrong_cap, &handle, 1) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
   int64_t sizes_out[7];
@@ -596,6 +614,7 @@ int main() {
   solid_case("sphere", sphere_model, 0.3, on_sphere);
   solid_case("quadric", quadric, 0.2293, on_quadric);
   cubic_sphere_exports_curved_boundary_face_nodes(sphere_model);
+  sampled_shape_refusal_preserves_sphere_wall(sphere_model);
   forced_split("sphere curve split", sphere_model, 0.3, true, on_sphere);
   forced_split("quadric face split", quadric, 0.2293, false, on_quadric);
   forced_split("quadric curve split", quadric, 0.2293, true, on_quadric);

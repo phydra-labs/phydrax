@@ -889,7 +889,9 @@ bool degenerate_cell(const FlipQuality& quality) noexcept {
 // worst excess it removes, so the mesh's largest excess never grows. An edit
 // that removes a degenerate cell is not size-bound: repairing degeneracy takes
 // precedence. The determinant floor binds every edit (admissible_cell).
-double admissible_size_excess(std::span<const FlipQuality> before) {
+double admissible_size_excess(std::span<const FlipQuality> before,
+                              const TetQualityRequest& request) {
+  if (request.absolute_size_limit) return 1.0;
   double bound = 1.0;
   for (const FlipQuality& quality : before) {
     if (degenerate_cell(quality)) return std::numeric_limits<double>::infinity();
@@ -959,8 +961,10 @@ bool improves_quality_vector(std::span<const FlipQuality> before,
 }
 // Local edits: the gates admissible for the edit (above).
 bool improves_quality_vector(std::span<const FlipQuality> before,
-                             std::span<const FlipQuality> after, double minimum_score) {
-  return improves_quality_vector(before, after, admissible_size_excess(before), minimum_score);
+                             std::span<const FlipQuality> after,
+                             const TetQualityRequest& request) {
+  return improves_quality_vector(before, after, admissible_size_excess(before, request),
+                                 request.minimum_score);
 }
 
 // A relocation is continuous: an arbitrarily small move can carry a score
@@ -1468,7 +1472,7 @@ bool make_face_removal_proposal(
       !quality_vector_for_cells(mesh, replacement_cells, request, after_quality)) {
     return false;
   }
-  return improves_quality_vector(before_quality, after_quality, request.minimum_score);
+  return improves_quality_vector(before_quality, after_quality, request);
 }
 
 TetEditStatus make_edge_removal_proposal(
@@ -1561,7 +1565,7 @@ TetEditStatus make_edge_removal_proposal(
   if (!quality_vector_for_slots(mesh, removed_slots, cell_quality, scratch.before_quality)) {
     return TetEditStatus::kRejectedTopology;
   }
-  const double size_excess_bound = admissible_size_excess(scratch.before_quality);
+  const double size_excess_bound = admissible_size_excess(scratch.before_quality, request);
   // A triangulation holding a cell scoring below the ring's worst cell has a
   // sorted vector below the ring's and is refused. The optimum maximizes the
   // worst score first, so it holds no such cell whenever any triangulation
@@ -1686,7 +1690,7 @@ TetEditStatus make_edge_removal_proposal(
   if (choices[count - 1] < 0) return TetEditStatus::kRejectedTopology;
   const std::span<const FlipQuality> after_quality(
       best_quality.data() + quality_offsets[count - 1], replacement_count);
-  if (!improves_quality_vector(scratch.before_quality, after_quality, request.minimum_score)) {
+  if (!improves_quality_vector(scratch.before_quality, after_quality, request)) {
     return TetEditStatus::kRejectedTopology;
   }
 
@@ -1718,8 +1722,7 @@ TetEditStatus make_edge_removal_proposal(
   if (replacement_cells.size() != replacement_count ||
       !quality_vector_for_cells(mesh, replacement_cells, request,
                                 scratch.reconstructed_quality) ||
-      !improves_quality_vector(scratch.before_quality, scratch.reconstructed_quality,
-                               request.minimum_score)) {
+      !improves_quality_vector(scratch.before_quality, scratch.reconstructed_quality, request)) {
     return TetEditStatus::kRejectedTopology;
   }
   return TetEditStatus::kApplied;
@@ -2657,7 +2660,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!measure_cone(slot, candidate, cells, members, insertion_after)) {
       return TetEditStatus::kRejectedTopology;
     }
-    const double size_excess_bound = admissible_size_excess(insertion_before);
+    const double size_excess_bound = admissible_size_excess(insertion_before, request);
     if (clearing ? !std::all_of(insertion_after.begin(), insertion_after.end(),
                                 [&](const FlipQuality& quality) {
                                   return admissible_cell(quality, size_excess_bound);
@@ -2845,7 +2848,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     // scores are resolved to their quantum anyway; each step length allows
     // at most kMovesPerStep moves, so the search makes at most
     // 26 * kHalvings * (kMovesPerStep + 1) cone measurements.
-    const double size_excess_bound = admissible_size_excess(cavity_before_quality);
+    const double size_excess_bound = admissible_size_excess(cavity_before_quality, request);
     const auto admissible_cone = [&](const QualityVector& cone) {
       return std::all_of(cone.begin(), cone.end(), [&](const FlipQuality& quality) {
         return admissible_cell(quality, size_excess_bound);
@@ -3288,7 +3291,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     for (std::int32_t survivor : neighbors) {
       if (!collapsed_quality(mesh, star.cells(), removed, survivor, request,
                              after_quality, replacement_cells) ||
-          !improves_quality_vector(before_quality, after_quality, request.minimum_score) ||
+          !improves_quality_vector(before_quality, after_quality, request) ||
           mesh.next_cell_id_ > std::numeric_limits<std::uint64_t>::max() -
                                    replacement_cells.size()) {
         continue;
@@ -3332,7 +3335,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     // it makes sufficient progress (relocation_makes_progress). A star whose
     // scores are all 1 cannot make any and is not searched.
     if (before_quality.front().primary >= 1.0) return PHX_MC_OK;
-    const double size_excess_bound = admissible_size_excess(before_quality);
+    const double size_excess_bound = admissible_size_excess(before_quality, request);
     std::vector<std::array<double, 3>> targets(1, std::array<double, 3>{});
     for (std::int32_t neighbor : neighbors) {
       const double* point = mesh.point(neighbor);
@@ -3462,7 +3465,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!prepare_relocation_plan(mesh, star.cells(), vertex, first_probe, request, shape_plan)) {
       return PHX_MC_INTERNAL_ERROR;
     }
-    const double size_excess_bound = admissible_size_excess(shape_before);
+    const double size_excess_bound = admissible_size_excess(shape_before, request);
     const double* original = mesh.point(vertex);
     std::array<double, 3> candidate{original[0], original[1], original[2]};
     if (!relocated_quality(mesh, shape_plan, candidate.data(), request, 0.0,

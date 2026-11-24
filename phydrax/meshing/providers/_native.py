@@ -541,6 +541,16 @@ def _options_for_route(
                 }
                 else None
             ),
+            sampled_minimum_scaled_jacobian=(
+                options.sampled_minimum_scaled_jacobian
+                if route == "cad_tetrahedral"
+                else 0.0
+            ),
+            sampled_minimum_determinant_ratio=(
+                options.sampled_minimum_determinant_ratio
+                if route == "cad_tetrahedral"
+                else 0.0
+            ),
             cad_maximum_dihedral_degrees=(
                 options.cad_maximum_dihedral_degrees
                 if route == "cad_tetrahedral"
@@ -1661,6 +1671,21 @@ class NativeMeshingProvider:
             _unsupported(
                 route, source, specification, "a CAD angle cap requires direct CAD"
             )
+        sampled_shape = (
+            self.options.sampled_minimum_scaled_jacobian > 0.0
+            or self.options.sampled_minimum_determinant_ratio > 0.0
+        )
+        if sampled_shape and (
+            route != "cad_tetrahedral"
+            or not isinstance(specification, VolumeMeshingSpec)
+            or specification.target.geometry_order not in (2, 3)
+        ):
+            _unsupported(
+                route,
+                source,
+                specification,
+                "sampled mapped shape requires direct CAD P2/P3",
+            )
         if (
             isinstance(specification, SurfaceMeshingSpec)
             and specification.cross_field is not None
@@ -1682,7 +1707,9 @@ class NativeMeshingProvider:
                 self.options,
                 contract,
             )
-            if cap_dihedral and isinstance(prepared, _PreparedDirectBRepCadVolume):
+            if (sampled_shape or cap_dihedral) and isinstance(
+                prepared, _PreparedDirectBRepCadVolume
+            ):
                 from ._native_cad_mesh import cad_solid_support_issues
 
                 issues = cad_solid_support_issues(prepared)

@@ -4117,6 +4117,9 @@ typedef struct phx_mc_cad_volume_controls {
   int32_t geometry_order;          /* 1, 2, or 3; cubic maps require a separate proof. */
   int64_t proximity_count;         /* 0: no proximity controls */
   const phx_mc_cad_proximity_control* proximity_controls;
+  double sampled_minimum_scaled_jacobian;   /* 0: not requested */
+  double sampled_minimum_determinant_ratio; /* 0: not requested */
+  double max_dihedral_degrees;              /* [90, 180]; 180 disables the target */
 } phx_mc_cad_volume_controls;
 typedef struct phx_mc_cad_volume_stats {
   /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
@@ -4145,6 +4148,8 @@ typedef struct phx_mc_cad_volume_stats {
    * shape). unmet_cells counts cells with any row. */
   int64_t unmet_shape_rows, unmet_hard_cells;
   int64_t cubic_ns;  /* Direct cubic node preparation; excludes geometry proof. */
+  /* Geometry cells that miss the respective requested sampled target. */
+  int64_t unmet_scaled_jacobian_cells, unmet_determinant_ratio_cells;
   int64_t unmet_upper_dihedral_cells; /* Never exempted as a forced acute rim. */
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
@@ -4181,16 +4186,15 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t* cubic_cell_nodes; /* (M, 16), indices into cubic_nodes; null when N3 = 0. */
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_construct_volume(const phx_mc_cad_model* model,
-                                          const phx_mc_cad_surface_controls* controls,
-                                          const phx_mc_cad_volume_controls* volume,
-                                          phx_mc_cad_surface_result** result,
-                                          int32_t parallelism,
-                                          double maximum_dihedral_degrees);
+                                              const phx_mc_cad_surface_controls* controls,
+                                              const phx_mc_cad_volume_controls* volume,
+                                              phx_mc_cad_surface_result** result,
+                                              int32_t parallelism);
 /* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits, P3 nodes. */
 PHX_MC_API int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result* result,
                                                int64_t sizes[7]);
 PHX_MC_API int32_t phx_mc_cad_export_volume(const phx_mc_cad_surface_result* result,
-                                               const phx_mc_cad_volume_arrays* arrays);
+                                           const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }

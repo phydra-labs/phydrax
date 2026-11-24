@@ -1432,7 +1432,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_refinement": (_I32, (_P, _I64, _P, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
-    "phx_mc_cad_construct_volume": (_I32, (_P, _P, _P, _P, _I32, ctypes.c_double)),
+    "phx_mc_cad_construct_volume": (_I32, (_P, _P, _P, _P, _I32)),
     "phx_mc_cad_volume_bank_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_export_volume": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
@@ -15197,6 +15197,9 @@ class _CadVolumeControls(ctypes.Structure):
         ("geometry_order", _I32),
         ("proximity_count", _I64),
         ("proximity_controls", ctypes.c_void_p),
+        ("sampled_minimum_scaled_jacobian", ctypes.c_double),
+        ("sampled_minimum_determinant_ratio", ctypes.c_double),
+        ("max_dihedral_degrees", ctypes.c_double),
     )
 
 
@@ -15264,6 +15267,8 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
         ("unmet_shape_rows", np.int64),
         ("unmet_hard_cells", np.int64),
         ("cubic_ns", np.int64),
+        ("unmet_scaled_jacobian_cells", np.int64),
+        ("unmet_determinant_ratio_cells", np.int64),
         ("unmet_upper_dihedral_cells", np.int64),
     ],
     align=True,
@@ -15405,6 +15410,8 @@ def cad_mesh_solid(
     min_relative_determinant: float = 0.0,
     geometry_order: int = 1,
     proximity_controls: tuple[CadProximityControl, ...] = (),
+    sampled_minimum_scaled_jacobian: float = 0.0,
+    sampled_minimum_determinant_ratio: float = 0.0,
     maximum_dihedral_degrees: float = 180.0,
 ) -> CadSolidResult:
     """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
@@ -15414,6 +15421,8 @@ def cad_mesh_solid(
     surface pass at h is their distance proxy). UNRESOLVED returns the result
     with unmet quality targets, unresolved P2 cells, or no cells when recovery
     still refused after the one boundary split (``volume.stats``).
+    The sampled curved targets are claims about the degree-six simplex
+    sample sites, not exact map validity or a global shape certificate.
     """
     faces = [
         (
@@ -15444,6 +15453,9 @@ def cad_mesh_solid(
         geometry_order,
         len(faces),
         ctypes.addressof(rows),
+        sampled_minimum_scaled_jacobian,
+        sampled_minimum_determinant_ratio,
+        maximum_dihedral_degrees,
     )
     surface, volume = _cad_mesh(
         model,
@@ -15454,7 +15466,6 @@ def cad_mesh_solid(
         grading,
         minimum_size,
         controls,
-        maximum_dihedral_degrees,
     )
     if volume is None:
         raise MeshcoreError(surface.status, "cad_mesh_solid: no volume")
@@ -15548,7 +15559,6 @@ def _cad_mesh(
     grading: float,
     minimum_size: float,
     volume: _CadVolumeControls | None,
-    maximum_dihedral_degrees: float = 180.0,
     /,
 ) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
     from ._exact_kernels import exact_kernel_parallelism
@@ -15586,7 +15596,6 @@ def _cad_mesh(
             ctypes.addressof(volume),
             ctypes.addressof(handle),
             parallelism,
-            maximum_dihedral_degrees,
         )
     )
     del retained
