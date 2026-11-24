@@ -743,3 +743,10 @@ or evidence IDs. Removing a redundant input eigensolve also improves
 the one-worker path. At eight requests, paired Phydrax times fall from
 11.36 / 81.70 / 842.25 ms to 7.59 / 44.87 / 428.73 ms. These internal
 pairs still do not meet the previously measured OpenMP Omega_h times.
+
+On `cb2ea20c5b`, the physical growth evidence scan handles one direction
+per edge with bounded scratch. The original Box-55 evidence phase drops
+from 37.89 ms to 3.77 ms and from 152.6 MB to 2.1 MB of measured scratch;
+all original metric and adaptation evidence IDs still match. A separate
+prepared-clock diagnostic takes 400.24 ms at eight requests, still
+above the 144.78 ms matched-count reference already recorded.
