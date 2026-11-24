@@ -19,9 +19,12 @@ import equinox as eqx
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .._exact_kernels import exact_kernel_parallelism
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
+    _raise_for_call,
+    exact_orient3d,
     interval_program_execute,
     IntervalBoxProgram,
     IntervalBranchProgram,
@@ -46,6 +49,7 @@ from .._meshcore import (
     MetricRelocationStar,
     MetricSearchEnd,
     MetricSource,
+    parallel_for,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
     TetMesh3D,
@@ -1779,6 +1783,30 @@ def _plain_tetra_source_is_current(source: CellMeshingResult, /) -> bool:
     return True
 
 
+def _minimum_tetra_metric_quality(
+    points: np.ndarray, metric: np.ndarray, cells: np.ndarray, /
+) -> float:
+    """Minimum row quality, or NaN if any row is nonfinite."""
+    chunk_size = 16_384
+    count = cells.shape[0]
+    workers = exact_kernel_parallelism()
+
+    def minimum(rows: np.ndarray, /) -> float:
+        quality = metric_tetra_quality(points, metric, rows)
+        return float(np.min(quality)) if np.all(np.isfinite(quality)) else np.nan
+
+    if workers == 1 or count <= chunk_size:
+        return minimum(cells)
+    minima = np.empty(((count + chunk_size - 1) // chunk_size,), dtype=np.float64)
+
+    def measure(begin: int, end: int, chunk: int, /) -> None:
+        minima[chunk] = minimum(cells[begin:end])
+
+    status = parallel_for(count, measure, chunk_size=chunk_size, parallelism=workers)
+    _raise_for_call(status, "minimum tetrahedral metric quality")
+    return float(np.min(minima))
+
+
 def strict_plain_tetra_metric_noop(
     source: CellMeshingResult, metric_values: np.ndarray, /
 ) -> TetraMetricEvidence | None:
@@ -1803,7 +1831,10 @@ def strict_plain_tetra_metric_noop(
         (magnitude == 0.0) | ((magnitude >= 2.0**minimum) & (magnitude <= 2.0**maximum))
     ):
         return None
-    if not np.all(_tetra_orientation(points, cells, PredicateMode.EXACT) == 1):
+    # The source bank is already within the native exact predicate domain.
+    # Pack each corner column once rather than gather and repack whole cells.
+    a, b, c, d = cells.T
+    if not np.all(exact_orient3d(points[a], points[b], points[c], points[d]) == 1):
         return None
     metric = _admit_metric_bank(metric_values, points.shape[0])
     edges = np.asarray(connectivity.edges)
@@ -1820,9 +1851,8 @@ def strict_plain_tetra_metric_noop(
     maximum_length = float(np.max(lengths))
     if not _LOWER <= minimum_length <= maximum_length <= _UPPER:
         return None
-    quality = metric_tetra_quality(points, metric, cells)
-    minimum_quality = float(np.min(quality))
-    if minimum_quality <= 0.0 or not np.all(np.isfinite(quality)):
+    minimum_quality = _minimum_tetra_metric_quality(points, metric, cells)
+    if not minimum_quality > 0.0:
         return None
     # Admission measured every edge; there is no protected or unmet subset.
     return TetraMetricEvidence(

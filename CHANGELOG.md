@@ -34,6 +34,10 @@
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.
+- Native tetrahedral no-op admission checks exact orientation without a
+  floating filter pass and measures cell quality in bounded worker chunks.
+  Metric gradation avoids a redundant input eigensolve on admitted fields.
+  The strict band, output metric, and evidence identities are unchanged.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned

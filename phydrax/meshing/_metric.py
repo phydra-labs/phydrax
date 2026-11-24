@@ -206,12 +206,19 @@ def _tensor_array(values: ArrayLike, rows: int, /) -> np.ndarray:
 
 
 @jax.jit
+def _project_admitted_metric(values: Array, /) -> Array:
+    # The field has already passed the SPD check. Only the rounded
+    # Hermitian projection is needed, not another property eigensolve.
+    return verify_dense_properties(values, policy=_SYMMETRY_POLICY).matrix
+
+
+@jax.jit
 def _symmetric_spectrum(values: Array, /) -> tuple[Array, Array, Array]:
     spectrum = HermitianSpectrum(values)
     return spectrum.eigenvalues, spectrum.eigenvectors, spectrum.valid
 
 
-def _host_spectrum(values: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def _host_spectrum(values: np.ndarray | Array, /) -> tuple[np.ndarray, np.ndarray]:
     """Host eigenpairs of exactly symmetric tensors, ascending eigenvalues."""
     eigenvalues, eigenvectors, valid = _symmetric_spectrum(
         jnp.asarray(values, dtype=jnp.float64)
@@ -1333,7 +1340,8 @@ def grade_mesh_metric(
     rows, dimension = values.shape[0], values.shape[-1]
     edges = _edges(adjacency, rows)
     points = _points(coordinates, rows, dimension)
-    eigenvalues, eigenvectors = _host_spectrum(_tensor_properties(values).symmetric)
+    projected = _project_admitted_metric(jnp.asarray(values))
+    eigenvalues, eigenvectors = _host_spectrum(projected)
     graded, evidence = _grade_eigenpairs(
         (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
         eigenvalues,
