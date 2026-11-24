@@ -982,6 +982,37 @@ def _grade_scalar_sizes(
     return np.asarray(values, dtype=np.float64), pops, updates
 
 
+def _physical_scalar_violation(
+    sizes: np.ndarray,
+    edges: np.ndarray,
+    lengths: np.ndarray,
+    growth: np.ndarray,
+    /,
+) -> float:
+    """Certify physical growth with bounded host scratch."""
+    maximum = np.float64(0.0)
+    block_size = 65_536
+    for begin in range(0, edges.shape[0], block_size):
+        end = min(begin + block_size, edges.shape[0])
+        block = edges[begin:end]
+        first = sizes[block[:, 0]]
+        target = sizes[block[:, 1]]
+        limit = growth[begin:end] - 1.0
+        limit *= lengths[begin:end]
+        limit += np.minimum(first, target)
+        np.maximum(first, target, out=target)
+        # Nonnegative growth makes the larger-to-smaller direction
+        # nonpositive. Exact equality in the rounded bound needs no logs.
+        if np.all(target <= limit):
+            continue
+        np.log(limit, out=limit)
+        np.log(target, out=target)
+        target -= limit
+        np.expm1(target, out=target)
+        maximum = np.maximum(maximum, np.max(target))
+    return float(max(0.0, maximum))
+
+
 def _scalar_violation(
     sizes: np.ndarray,
     edges: np.ndarray,
@@ -992,15 +1023,14 @@ def _scalar_violation(
 ) -> float:
     if edges.shape[0] == 0:
         return 0.0
+    if kind is MetricGradationKind.PHYSICAL:
+        return _physical_scalar_violation(sizes, edges, lengths, growth)
     first = np.concatenate((edges[:, 0], edges[:, 1]))
     second = np.concatenate((edges[:, 1], edges[:, 0]))
     lengths_ = np.concatenate((lengths, lengths))
     rates = np.concatenate((growth, growth))
     source = sizes[first]
-    if kind is MetricGradationKind.PHYSICAL:
-        log_bound = np.log(source + (rates - 1.0) * lengths_)
-    else:
-        log_bound = np.log(source) + np.log(rates) * lengths_ / source
+    log_bound = np.log(source) + np.log(rates) * lengths_ / source
     excess = np.expm1(np.log(sizes[second]) - log_bound)
     return float(max(0.0, np.max(excess)))
 

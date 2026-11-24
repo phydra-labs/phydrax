@@ -43,6 +43,8 @@
 - Native adaptation skips uniform organization sorting and already aligned
   metric row joins. Scalar physical gradation skips queue construction when
   all edge growth bounds already hold, while retaining final evidence.
+- Physical scalar gradation measures each undirected edge once with
+  bounded scratch, retaining the same rounded violation evidence.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once
