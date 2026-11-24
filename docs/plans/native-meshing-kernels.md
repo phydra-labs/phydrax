@@ -756,3 +756,13 @@ worker OpenMP build in four interleaved pairs: 135.06 ms versus 143.35 ms.
 Box-12 (5.06 ms versus 3.26 ms) and Box-25 (16.77 ms versus 16.29 ms)
 still miss. Exact metric and evidence IDs stay unchanged. This qualifies
 only the largest eight-worker row, not the complete thread matrix.
+
+On `a4d8109eae`, indexed exact orientation and the native quality
+minimum preserve all no-op results and evidence. The original
+Box-12/25/55 cases pass **12 of 12** live OpenMP comparisons at 1, 2, 4,
+and 8 workers. At eight workers the paired Phydrax/Omega_h minima are
+2.45/3.19, 13.51/16.42, and 117.99/144.55 ms. Actual teams were
+attested; metric, source, and evidence IDs are invariant. The rebuilt
+native image passes scoped Apple Clang, GCC, and MSVC checks. This
+qualifies F6b, not the separate edited F6 cases or quiet integrated
+acceptance.
