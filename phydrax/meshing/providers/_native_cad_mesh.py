@@ -52,7 +52,10 @@ from ...discretization.fem._reference import (
 from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingFailureEvidence
-from .._native_cad_certificate import NativeCadSurfaceWitness
+from .._native_cad_certificate import (
+    native_cad_wall_feature_supported,
+    NativeCadSurfaceWitness,
+)
 from .._native_cad_records import _native_cad_regional_surface, native_cad_records
 from .._native_cad_shell import source_shell
 from .._native_construction import (
@@ -99,10 +102,14 @@ def cad_solid_support_issues(
     specification = prepared.specification
     if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
-    # The native call has one deviation on every face and curve: protected
-    # features (their own deviation bounds and feature evidence) are honored
-    # by the existing route.
-    if specification.protected_features:
+    tolerance = specification.maximum_deviation
+    if specification.protected_features and (
+        tolerance is None
+        or any(
+            not native_cad_wall_feature_supported(prepared.domain, feature, tolerance)
+            for feature in specification.protected_features
+        )
+    ):
         issues.append("protected features need their own deviation and evidence")
     issues.extend(cad_bundle_support_issues(prepared.domain))
     if len(prepared.domain.regions) > 1 and not issues:
@@ -1013,6 +1020,12 @@ def execute_cad_solid(
     if proximity:
         assert deviations is not None
         _proximity_compliance(solid, proximity, deviations, requested, achieved)
+    # The achieved protected bounds are published by acceptance after V3,
+    # never inferred from the numeric construction controls.
+    requested.extend(
+        (f"protected:{feature.feature_id}:maximum_deviation", feature.maximum_deviation)
+        for feature in specification.protected_features
+    )
     compliance = MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),

@@ -6,6 +6,7 @@ from __future__ import annotations
 import ctypes
 import re
 from collections.abc import Callable
+from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple, TYPE_CHECKING
 
@@ -1306,6 +1307,7 @@ def _cad_volume_plan(
     radius_edge: float = 2.0,
     dihedral: float = 15.5,
     soft_shape: bool = False,
+    protect_wall: bool = False,
 ) -> phx.meshing.NativeMeshingPlan:
     from phydrax.meshing._contracts import (
         CellFamilyPolicy,
@@ -1313,6 +1315,7 @@ def _cad_volume_plan(
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
     from phydrax.meshing._scope import MeshingScope
     from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
@@ -1326,6 +1329,11 @@ def _cad_volume_plan(
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, size),),
+        protected_features=(
+            (ProtectedFeature(boundary, FeatureKind.SURFACE, maximum_deviation=0.05),)
+            if protect_wall
+            else ()
+        ),
         maximum_deviation=0.05,
     )
     return phx.meshing.NativeMeshingProvider(
@@ -1835,9 +1843,8 @@ def test_reversed_source_shell_is_refused() -> None:
 def test_native_cad_certificate_refuses_requests_without_native_owner(
     request_field: str,
 ) -> None:
-    # Neither request reaches the native route today (protected features keep
-    # the existing construction; volume specifications have no normal bound);
-    # given one, the native certificate refuses it rather than dropping it.
+    # A tighter protected bound and a normal bound remain unsupported by
+    # the native whole-wall certificate; neither may be dropped.
     from phydrax.meshing._controls import FeatureKind, ProtectedFeature
     from phydrax.meshing._native_cad_certificate import NativeCadCertificate
     from phydrax.meshing._scope import MeshingScope
@@ -2016,6 +2023,70 @@ def _quadratic_mesh_edge_dofs(
             edge = (min(int(v), int(w)), max(int(v), int(w)))
             assert edge_dofs.setdefault(edge, int(dof)) == dof
     return edge_dofs
+
+
+@pytest.mark.parametrize("corner", (False, True), ids=("edge-midpoint", "corner"))
+def test_native_quadratic_cad_binds_exact_nodal_source(
+    quadratic_cad_sphere: CellMeshingCandidate, corner: bool
+) -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+    from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+
+    candidate = quadratic_cad_sphere
+    geometry = candidate.geometry
+    mesh = candidate.mesh
+    coordinates = np.asarray(geometry.coordinates)
+    if corner:
+        (element,) = geometry.elements
+        assert isinstance(element, FiniteElementSpec)
+        (origin,) = np.flatnonzero(
+            np.all(np.asarray(element.reference_nodes) == 0.0, axis=1)
+        )
+        row = int(np.asarray(geometry.geometry_dofs[0])[0, origin])
+    else:
+        witness = candidate._construction.certification.native_cad_surface
+        assert witness is not None
+        first, second = sorted(map(int, witness.surface_triangles[0, :2]))
+        row = _quadratic_mesh_edge_dofs(candidate)[first, second]
+    axis = int(np.argmax(np.abs(coordinates[row])))
+    point = [Fraction(float(value)) for value in coordinates[row]]
+    assert point[axis]
+    point[axis] *= 1 + Fraction(1, 1 << 56)
+    exact = ExactCoordinateBank.from_binary64(coordinates).replace_rows(
+        np.asarray([row], dtype=np.int64),
+        ExactCoordinateBank.from_rows((tuple(point),)),
+    )
+    np.testing.assert_array_equal(exact.binary64(), coordinates)
+    source_map = _exact_coordinate_bank_source_map(
+        mesh,
+        mesh.mesh_id,
+        mesh.numeric_version,
+        ("sub-ulp-nodal-source",),
+        exact,
+        coordinates,
+    )
+    sourced = CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        coordinates,
+        source_map=source_map,
+        source_mesh=mesh,
+    )
+    proof = _quadratic_cad_certificate(
+        candidate, sourced, _quadratic_cad_embedding(mesh, sourced)
+    )
+    assert proof.geometry_id == cell_geometry_id(sourced)
+    if corner:
+        assert proof.status == "unresolved"
+        assert proof.maximum_deviation is None
+        assert "corners must exactly equal" in proof.findings[0].detail
+    else:
+        assert proof.status == "certified", proof.findings
+        assert proof.maximum_deviation is not None
+        assert 0.0 < proof.maximum_deviation <= 0.05
 
 
 class _QuadraticTraceInputs(NamedTuple):
@@ -2338,12 +2409,17 @@ def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
 
 
 @pytest.mark.parametrize(
-    ("order", "radius_edge", "dihedral"),
-    [(1, 8.0, 0.0), (2, 2.0, 15.5), (3, 2.0, 15.5)],
-    ids=["affine", "quadratic", "cubic"],
+    ("order", "radius_edge", "dihedral", "protect_wall"),
+    [
+        (1, 8.0, 0.0, False),
+        (1, 8.0, 0.0, True),
+        (2, 2.0, 15.5, False),
+        (3, 2.0, 15.5, False),
+    ],
+    ids=["affine", "affine-protected", "quadratic", "cubic"],
 )
 def test_native_cad_certificate_survives_the_archive(
-    tmp_path: Path, order: int, radius_edge: float, dihedral: float
+    tmp_path: Path, order: int, radius_edge: float, dihedral: float, protect_wall: bool
 ) -> None:
     import subprocess
     import sys
@@ -2355,7 +2431,12 @@ def test_native_cad_certificate_survives_the_archive(
     )
 
     result = _cad_volume_plan(
-        _sphere_model(), 0.3, order, radius_edge=radius_edge, dihedral=dihedral
+        _sphere_model(),
+        0.3,
+        order,
+        radius_edge=radius_edge,
+        dihedral=dihedral,
+        protect_wall=protect_wall,
     ).execute(prove=True)
     path = tmp_path / "native-cad-result.phx"
     write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
@@ -2381,6 +2462,12 @@ assert r.certification.native_cad.certificate_id == sys.argv[4]
 assert r.certification.inputs.native_cad_records.records_id == sys.argv[5]
 assert r.certification.native_cad.records_id == sys.argv[5]
 assert ",".join(item.association_id for item in r.associations) == sys.argv[6]
+assert r.compliance.report_id == sys.argv[7]
+assert len(r.certification.inputs.protected_features or ()) == int(sys.argv[8])
+if r.certification.inputs.protected_features:
+    feature, = r.certification.inputs.protected_features
+    key = f"protected:{feature.feature_id}:maximum_deviation"
+    assert dict(r.compliance.achieved)[key] == r.certification.native_cad.maximum_deviation
 """,
             str(path),
             content_id,
@@ -2388,6 +2475,8 @@ assert ",".join(item.association_id for item in r.associations) == sys.argv[6]
             native.certificate_id,
             records.records_id,
             associations,
+            result.compliance.report_id,
+            str(int(protect_wall)),
         ],
         check=True,
         capture_output=True,
@@ -2892,7 +2981,7 @@ def _field_specification(
 
 
 _FIELD_OUTCOMES = (
-    ("protected_features", "existing"),
+    ("protected_features", "native"),
     ("region_seeds", "native"),
     ("hole_seeds", "Native CAD hole seed"),
     ("size_maximum", "native"),
@@ -2960,7 +3049,18 @@ def test_unproved_cad_solid_honors_or_refuses_every_field(
         (feature,) = specification.protected_features
         key = f"protected:{feature.feature_id}:maximum_deviation"
         assert dict(report.requested)[key] == 0.05
-        assert key in dict(report.achieved)
+        assert key not in dict(report.achieved)
+        result = candidate.prove()
+        assert result.mesh.mesh_id == candidate.mesh.mesh_id
+        certificate = result.certification
+        assert certificate is not None and certificate.passed
+        native_certificate = certificate.native_cad
+        assert native_certificate is not None
+        assert native_certificate.maximum_deviation is not None
+        assert (
+            dict(result.compliance.achieved)[key] == native_certificate.maximum_deviation
+        )
+        assert native_certificate.maximum_deviation <= feature.maximum_deviation
     if not native:
         return
     (control,) = specification.size_controls

@@ -145,7 +145,8 @@ struct Verdict {
 // can be checked.
 constexpr double kSentinel = -7.0;
 
-Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t depth) {
+Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t depth,
+               const double* quadratic_nodes = nullptr) {
   const phx_mc_cad_model view = model.view();
   const auto rows = mesh.face_rows.size();
   Verdict verdict{0, std::vector<double>(rows, kSentinel), std::vector<int32_t>(rows, -7),
@@ -164,7 +165,7 @@ Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t d
       static_cast<int64_t>(rows), verdict.upper.data(), verdict.item_status.data(),
       verdict.reasons.data(), verdict.subdivisions.data(), &verdict.maximum,
       static_cast<int64_t>(verdict.findings.size()), verdict.findings.data(), &evidence_count,
-      nullptr, nullptr);
+      quadratic_nodes, nullptr);
   verdict.findings.resize(static_cast<std::size_t>(std::max<int64_t>(evidence_count, 0)));
   return verdict;
 }
@@ -2332,6 +2333,54 @@ void strip_lens_inward_bump() {
               verdict.status, certified, outside, below, min_ratio);
   PHX_CHECK(outside > 0 && below == 0);
 }
+void quadratic_correspondence_preserves_the_square(double diagonal, double height, bool passes) {
+  Model model;
+  model.surface(model.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0}));
+  constexpr double points[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+  Mesh mesh;
+  for (const auto& point : points) {
+    model.corner(point[0], point[1], 0.0);
+    mesh.points.insert(mesh.points.end(), {point[0], point[1], 0.0});
+  }
+  for (int i = 0; i < 4; ++i) {
+    const int j = (i + 1) % 4;
+    const auto& a = points[i];
+    const auto& b = points[j];
+    const auto curve = model.add_template(
+        "line3", {a[0], a[1], 0, b[0] - a[0], b[1] - a[1], 0});
+    model.curve(curve, i, j);
+    const auto pcurve =
+        model.add_template("line2", {a[0], a[1], b[0] - a[0], b[1] - a[1]});
+    model.use(0, i, 0.0, 1.0, pcurve);
+    mesh.chord_uv.insert(mesh.chord_uv.end(), {a[0], a[1], b[0], b[1]});
+    mesh.chord_range.insert(mesh.chord_range.end(), {0.0, 1.0});
+  }
+  model.close_loop(0);
+  mesh.triangles = mesh.mesh_triangles = {0, 1, 2, 0, 2, 3};
+  mesh.face_rows = {0, 0};
+  mesh.chart_to_mesh = {0, 1};
+  mesh.edge_chord = {0, 1, -1, -1, 2, 3};
+  mesh.uv = {0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1};
+  mesh.loop_count = 1;
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = model.use_ranges;
+  mesh.chord_use = {0, 1, 2, 3};
+  mesh.chord_loop.assign(4, 0);
+  const double nodes[18] = {.5, 0, 0, 1, .5, 0, diagonal, diagonal, height,
+                            diagonal, diagonal, height, .5, 1, 0, 0, .5, 0};
+  // At the old pairing's midpoint the positive case misses by sqrt(2)/8.
+  // Moving only the chart pairing can prove the whole unchanged plane.
+  const auto result = verify(model, mesh, 0.06, 8, nodes);
+  PHX_CHECK(result.findings.empty());
+  if (passes) {
+    PHX_CHECK(result.status == PHX_MC_OK && result.maximum <= 0.06);
+    PHX_CHECK(result.item_status == std::vector<int32_t>({PHX_MC_OK, PHX_MC_OK}));
+  } else {
+    PHX_CHECK(result.status == PHX_MC_UNRESOLVED && std::isinf(result.maximum));
+  }
+}
+
+
 }  // namespace
 
 int main() {
@@ -2362,6 +2411,9 @@ int main() {
   bumped_ring_chords();
   pole_region_checks();
   strip_lens_inward_bump();
+  quadratic_correspondence_preserves_the_square(0.625, 0.0, true);
+  quadratic_correspondence_preserves_the_square(0.625, 0.125, false);
+  quadratic_correspondence_preserves_the_square(1.125, 0.0, false);
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,

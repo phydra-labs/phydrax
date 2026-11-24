@@ -28,6 +28,7 @@ from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._measure import brep_mass_properties
 from phydrax.meshing._association import GeometryAssociationArchiveRecipe
+from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._model_codec import (
     model_archive_content_id,
     MODEL_ARCHIVE_LIMITS,
@@ -1458,6 +1459,34 @@ def _construction_vertex_association(
     return recorded[0]
 
 
+def _volume_fidelity(
+    certification: MeshCertificationReport | None, /
+) -> tuple[str, float, float, float] | None:
+    if certification is None:
+        return None
+    cad = certification.native_cad
+    if (
+        cad is not None
+        and cad.status == "certified"
+        and cad.maximum_deviation is not None
+    ):
+        return (
+            cad.certificate_id,
+            cad.tolerance,
+            cad.maximum_deviation,
+            cad.maximum_deviation,
+        )
+    fidelity = certification.fidelity
+    if fidelity is None or fidelity.status != "certified":
+        return None
+    return (
+        fidelity.certificate_id,
+        fidelity.tolerance,
+        fidelity.mesh_to_source_upper,
+        fidelity.source_to_mesh_upper,
+    )
+
+
 def _curve_cad_result(
     model: phx.geometry.brep.BRepModel,
     straight: phx.meshing.CellMeshingResult,
@@ -1511,11 +1540,24 @@ def _curve_cad_result(
         else curved.cell_result.result_id,
     }
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:
+        rejected = curved.candidate
+        source_failure = None if rejected is None else rejected.source_failure
+        rejection_proof = None if rejected is None else rejected.source_certification
+        if rejection_proof is not None:
+            record["candidate_source_findings"] = [
+                {
+                    "check": finding.check,
+                    "status": finding.status,
+                    "entity_ids": list(finding.entity_ids),
+                    "detail": finding.detail,
+                }
+                for finding in rejection_proof.findings
+            ]
         failures.append(
             {
                 "stage": "native_p2_curving",
                 "type": "RuntimeError",
-                "detail": f"Native CAD P2 curving returned {curved.status.value}: source_failure={curved.evidence.source_failure!r}.",
+                "detail": f"Native CAD P2 curving returned {curved.status.value}: source_failure={source_failure!r}.",
             }
         )
     if curved.cell_result is None:
@@ -1556,9 +1598,7 @@ def _curve_cad_result(
     curved_certification = (
         None if curved.cell_result is None else curved.cell_result.certification
     )
-    curved_fidelity = (
-        None if curved_certification is None else curved_certification.fidelity
-    )
+    curved_fidelity = _volume_fidelity(curved_certification)
     if curved_fidelity is None:
         failures.append(
             {
@@ -1567,11 +1607,7 @@ def _curve_cad_result(
                 "detail": "Native CAD P2 result omitted its continuous B-Rep source-fidelity certificate.",
             }
         )
-    elif (
-        curved_fidelity.tolerance > maximum_deviation
-        or curved_fidelity.mesh_to_source_upper > maximum_deviation
-        or curved_fidelity.source_to_mesh_upper > maximum_deviation
-    ):
+    elif max(curved_fidelity[1:]) > maximum_deviation:
         failures.append(
             {
                 "stage": "curved_source_fidelity",
@@ -1583,10 +1619,10 @@ def _curve_cad_result(
         None
         if curved_fidelity is None
         else {
-            "certificate_id": curved_fidelity.certificate_id,
-            "tolerance_m": curved_fidelity.tolerance,
-            "mesh_to_source_upper_m": curved_fidelity.mesh_to_source_upper,
-            "source_to_mesh_upper_m": curved_fidelity.source_to_mesh_upper,
+            "certificate_id": curved_fidelity[0],
+            "tolerance_m": curved_fidelity[1],
+            "mesh_to_source_upper_m": curved_fidelity[2],
+            "source_to_mesh_upper_m": curved_fidelity[3],
         }
     )
     record["passed"] = not failures
@@ -1602,24 +1638,37 @@ def _require_cad_source_associations(
     from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 
     certification = result.certification
-    if certification is None or certification.fidelity is None:
+    if certification is None:
         raise ValueError(
             "CAD source association proof requires certified source fidelity."
         )
     certification.require_passed()
     inputs = certification.inputs
     domain, query = inputs.domain, inputs.source
-    witness = certification.fidelity.witness
     if (
         not isinstance(domain, MeshingDomain)
         or query is None
-        or not isinstance(witness, SourceBoundaryChartWitness)
         or inputs.cell_regions is None
         or (domain.source_id, domain.source_revision)
         != (model.source_id, model.source_revision)
     ):
         raise ValueError("CAD source association proof lost its source-bound premises.")
     inputs.require_current(result.mesh, result.geometry, domain=domain, source=query)
+    native = certification.native_cad
+    if native is not None:
+        records = inputs.native_cad_records
+        if records is None or native.source_shell is None:
+            raise ValueError("Native CAD source association proof lost its records.")
+        associations = tuple(
+            GeometryAssociationArchiveRecipe.from_association(stored).restore()
+            for stored in result.associations
+        )
+        records.require_associations(result.mesh, associations)
+        return
+    fidelity = certification.fidelity
+    if fidelity is None or not isinstance(fidelity.witness, SourceBoundaryChartWitness):
+        raise ValueError("CAD source association proof lost its chart witness.")
+    witness = fidelity.witness
     banks = [
         set(zip(domain.source_indices[dim], domain.source_occurrences[dim], strict=True))
         for dim in range(3)
@@ -1744,7 +1793,7 @@ def _volume_run(
             }
         )
     certification = straight.certification
-    fidelity = None if certification is None else certification.fidelity
+    fidelity = _volume_fidelity(certification)
     if fidelity is None:
         acceptance_failures.append(
             {
@@ -1753,11 +1802,7 @@ def _volume_run(
                 "detail": "Native CAD tetrahedral result omitted its continuous source-fidelity certificate.",
             }
         )
-    elif (
-        fidelity.tolerance > maximum_deviation
-        or fidelity.mesh_to_source_upper > maximum_deviation
-        or fidelity.source_to_mesh_upper > maximum_deviation
-    ):
+    elif max(fidelity[1:]) > maximum_deviation:
         acceptance_failures.append(
             {
                 "stage": "source_fidelity",
@@ -1794,10 +1839,10 @@ def _volume_run(
         None
         if fidelity is None
         else {
-            "certificate_id": fidelity.certificate_id,
-            "tolerance_m": fidelity.tolerance,
-            "mesh_to_source_upper_m": fidelity.mesh_to_source_upper,
-            "source_to_mesh_upper_m": fidelity.source_to_mesh_upper,
+            "certificate_id": fidelity[0],
+            "tolerance_m": fidelity[1],
+            "mesh_to_source_upper_m": fidelity[2],
+            "source_to_mesh_upper_m": fidelity[3],
             "migration_maximum_deviation_m": _SOURCE_DEVIATION_TOLERANCE_M,
         }
     )

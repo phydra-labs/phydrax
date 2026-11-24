@@ -713,8 +713,35 @@ def _require_native_target(
         )
 
 
+def _accepted_native_compliance(
+    compliance: MeshingComplianceReport, certification: MeshCertificationReport, /
+) -> MeshingComplianceReport:
+    cad = certification.native_cad
+    features = certification.inputs.protected_features
+    if cad is None or not features:
+        return compliance
+    bound = cad.maximum_deviation
+    if bound is None:
+        raise ValueError("Native CAD wall protection has no certified bound.")
+    return MeshingComplianceReport(
+        compliance.specification_id,
+        issues=compliance.issues,
+        requested=compliance.requested,
+        achieved=(
+            *compliance.achieved,
+            *(
+                (f"protected:{feature.feature_id}:maximum_deviation", bound)
+                for feature in features
+            ),
+        ),
+    )
+
+
 def _native_acceptance_trace(
-    construction: NativeMeshConstruction, certification: MeshCertificationReport, /
+    construction: NativeMeshConstruction,
+    certification: MeshCertificationReport,
+    compliance: MeshingComplianceReport,
+    /,
 ) -> MeshingTrace:
     diagnostics = tuple(
         MeshingDiagnostic(
@@ -738,8 +765,8 @@ def _native_acceptance_trace(
             MeshingStageReport(
                 MeshingStageKind.SPECIFICATION_COMPLIANCE,
                 MeshingStageStatus.PASSED,
-                input_ids=(construction.compliance.specification_id,),
-                output_ids=(construction.compliance.report_id,),
+                input_ids=(compliance.specification_id,),
+                output_ids=(compliance.report_id,),
             ),
         )
     )
@@ -936,14 +963,15 @@ def _accept_native_construction(
             "surface_quad_field_event": None if event is None else event.event_id,
         }
     )
+    compliance = _accepted_native_compliance(construction.compliance, certification)
     result = CellMeshingResult(
         mesh,
         geometry,
         construction.coordinate_contract,
         certification.audit,
         certification.audit.quality,
-        construction.compliance,
-        _native_acceptance_trace(construction, certification),
+        compliance,
+        _native_acceptance_trace(construction, certification, compliance),
         provider,
         runtime,
         MeshingDerivativeMode.NONDIFFERENTIABLE,

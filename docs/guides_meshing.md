@@ -1127,6 +1127,14 @@ of incident cells at each vertex, certifies embedding on the actual map, and
 includes the maximum vertex-rounding displacement in the deviation bound.
 Replay re-proves the original labeled CAD mesh and the current map.
 
+For a single-material CAD solid, the same native wall certificate can also
+discharge hard protection of the entire unqualified source face set when
+the feature's deviation is no tighter than the global one. The requested
+protection remains attached to the candidate; its achieved deviation is
+reported only after proof, using the certified two-sided wall bound. Sided,
+partial, tighter, and soft feature requests retain their scoped route.
+Newly admitted requests can produce different meshes and result identities.
+
 For a single-material native CAD solid with `geometry_order=2` or
 `geometry_order=3`, eager or deferred proof certifies the actual nonperiodic
 nodal tetrahedral map. Cubic geometry uses two shared edge nodes and one
@@ -1137,6 +1145,15 @@ directed distance bounds. A closed cubic shell can use an exact radial
 degree-one proof of embedding when its charts meet the radial tests.
 Unsupported maps or unresolved bounds are refused. Archive restore
 re-proves the same map and source.
+Canonical quadratic maps with an exact nodal source bank retain that bank.
+The native trace proof requires exact affine corners and reserves an outward
+bound for the difference between the exact map and the binary64 trace used
+by the native verifier. Global embedding is proved on the exact map.
+If ordinary chart pairing cannot prove a quadratic trace, the verifier can
+change the correspondence at shared interior chart midpoints. It proves
+positive child triangles, unchanged oriented trim boundaries, and outward
+two-sided bounds on the same physical map. This changes neither the
+constructed mesh nor the requested tolerance.
 
 The native quadratic validity screen packs nonzero derivative weights once
 per cell bank, preserving each coordinate's summation order. Uncertain

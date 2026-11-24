@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <numeric>
 #include <tuple>
 #include <variant>
 #include <vector>
@@ -25,6 +27,31 @@ namespace di = phx::mc::remesh;
 
 struct Vertex { double weight[3]; };
 struct Leaf { Vertex vertices[3]; int32_t depth; };
+using ChartPoint = std::array<di::Interval, 2>;
+
+struct PairedChart {
+  std::array<ChartPoint, 3> corners;
+  std::array<Vertex, 3> physical_reference;
+
+  void enclose(const Vertex& vertex, di::Interval* point) const {
+    for (int axis = 0; axis < 2; ++axis) {
+      point[axis] = di::point(0.0);
+      for (int j = 0; j < 3; ++j)
+        point[axis] = di::add(point[axis], di::multiply(di::point(vertex.weight[j]),
+                                                       corners[j][axis]));
+    }
+  }
+
+  Vertex physical(const Vertex& vertex) const {
+    // All weights are dyadic of depth at most 24. The root child corners
+    // have weights in {0, 1/2, 1}; the nonnegative sums are exact.
+    Vertex result{};
+    for (int j = 0; j < 3; ++j)
+      for (int k = 0; k < 3; ++k)
+        result.weight[k] += vertex.weight[j] * physical_reference[j].weight[k];
+    return result;
+  }
+};
 
 Vertex midpoint(const Vertex& a, const Vertex& b) {
   Vertex value{};
@@ -268,7 +295,7 @@ class Trace {
     return cubic == nullptr || std::isfinite(cubic->remainder);
   }
 
-  double paired_bound(double source_bound, const Leaf& leaf) const {
+  double paired_bound(double source_bound, int32_t depth) const {
     double root;
     if (const auto* quadratic = std::get_if<QuadraticTrace>(&trace_))
       root = quadratic->remainder;
@@ -279,7 +306,7 @@ class Trace {
     // Red children halve both reference coordinate spans. The Hessian
     // bounds still hold globally, so the remainder shrinks by four.
     const auto remainder =
-        di::multiply(di::point(root), di::point(std::ldexp(1.0, -2 * leaf.depth)));
+        di::multiply(di::point(root), di::point(std::ldexp(1.0, -2 * depth)));
     return di::add(di::point(source_bound), remainder).upper;
   }
 
@@ -1524,7 +1551,8 @@ int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vert
 int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& leaf,
                    const double* vertices, const double* uv, const double* corner_error,
                    double tolerance, IntervalEvaluationWorkspace& workspace,
-                   double& vertex_term, double& upper, const Trace& trace) {
+                   double& vertex_term, double& upper, const Trace& trace,
+                   const PairedChart* pairing) {
   const int32_t node = kernel.node;
   double box_lower[2] = {std::numeric_limits<double>::infinity(),
                          std::numeric_limits<double>::infinity()};
@@ -1533,7 +1561,8 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
   double mismatch = 0.0;
   for (const Vertex& vertex : leaf.vertices) {
     di::Interval point[2];
-    exact_chart_point(vertex, uv, point);
+    if (pairing == nullptr) exact_chart_point(vertex, uv, point);
+    else pairing->enclose(vertex, point);
     for (int axis = 0; axis < 2; ++axis) {
       box_lower[axis] = std::min(box_lower[axis], point[axis].lower);
       box_upper[axis] = std::max(box_upper[axis], point[axis].upper);
@@ -1545,7 +1574,8 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
     if (corner >= 0 && corner_error != nullptr) {
       error = corner_error[corner];
     } else {
-      const int32_t status = vertex_error(geometry, kernel, vertex, point, vertices, workspace,
+      const Vertex physical = pairing == nullptr ? vertex : pairing->physical(vertex);
+      const int32_t status = vertex_error(geometry, kernel, physical, point, vertices, workspace,
                                           error, trace);
       if (status != PHX_MC_OK) return status;
     }
@@ -2237,7 +2267,9 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
                                         const double* corner_error, double tolerance,
                                         int32_t max_depth, bool tight, const LensIndex* lens,
                                         int32_t face, IntervalEvaluationWorkspace& workspace,
-                                        const Trace& trace = {}) {
+                                        const Trace& trace = {},
+                                        const PairedChart* pairing = nullptr,
+                                        int32_t max_splits = 1000000) {
   FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
                                 PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
   if (!trace.valid()) return result;
@@ -2255,7 +2287,8 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
                        -std::numeric_limits<double>::infinity()};
       for (const Vertex& vertex : leaf.vertices) {
         di::Interval point[2];
-        exact_chart_point(vertex, uv, point);
+        if (pairing == nullptr) exact_chart_point(vertex, uv, point);
+        else pairing->enclose(vertex, point);
         for (int axis = 0; axis < 2; ++axis) {
           box[axis] = std::min(box[axis], point[axis].lower);
           box[2 + axis] = std::max(box[2 + axis], point[axis].upper);
@@ -2268,13 +2301,14 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
     bool fits = false;
     if (charge < tolerance) {
       result.status = leaf_bound(geometry, kernel, leaf, vertices, uv, corner_error,
-                                 tight ? 0.0 : budget, workspace, vertex_term, bound, trace);
+                                 tight ? 0.0 : budget, workspace, vertex_term, bound, trace,
+                                 pairing);
       if (result.status != PHX_MC_OK) {
         if (result.status == PHX_MC_INVALID_ARGUMENT || result.status == PHX_MC_INVALID_INPUT)
           result.status = PHX_MC_UNRESOLVED;
         return result;
       }
-      bound = trace.paired_bound(bound, leaf);
+      bound = trace.paired_bound(bound, leaf.depth + (pairing != nullptr));
       observed = std::max(observed, vertex_term);
       fits = bound <= budget;
     }
@@ -2286,7 +2320,7 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
                                       : bound);
       continue;
     }
-    if (!fits && (leaf.depth >= max_depth || result.subdivisions >= 1000000)) {
+    if (!fits && (leaf.depth >= max_depth || result.subdivisions >= max_splits)) {
       result.status = PHX_MC_UNRESOLVED;
       result.reason = PHX_MC_FIDELITY_RESOLUTION;
       return result;
@@ -2594,7 +2628,7 @@ FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int
     double bound = 0.0, vertex_term = 0.0;
     result.status = pole_leaf_bound(frame, sigma, leaf, vertices, xy, vertex_term, bound, trace);
     if (result.status != PHX_MC_OK) return result;
-    bound = trace.paired_bound(bound, leaf);
+    bound = trace.paired_bound(bound, leaf.depth);
     observed = std::max(observed, vertex_term);
     const bool fits = bound <= tolerance;
     if (fits && (!tight || bound <= kTightRatio * observed || leaf.depth >= kTightDepth ||
@@ -3265,6 +3299,214 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
   }
 }
 
+struct QuadraticPairingRequest {
+  int64_t count;
+  const int64_t* triangles;
+  const int32_t* faces;
+  const double* uv;
+  const int64_t* chords;
+  const double* points;
+  const double* nodes;
+  const std::vector<int32_t>& pole_edges;
+};
+
+struct ChartEdgeUse {
+  int64_t row = -1;
+  int slot = -1;
+};
+
+using ChartEdge = std::array<int64_t, 2>;
+using ChartMidpoints = std::map<int64_t, std::array<ChartPoint, 6>>;
+
+ChartEdge chart_edge(const QuadraticPairingRequest& request, int64_t row, int slot) {
+  const auto* tri = request.triangles + 3 * row;
+  return {std::min(tri[slot], tri[(slot + 1) % 3]),
+          std::max(tri[slot], tri[(slot + 1) % 3])};
+}
+
+bool matching_interior_chart_edge(const QuadraticPairingRequest& request,
+                                  ChartEdgeUse first, ChartEdgeUse second) {
+  if (first.row == second.row || request.faces[first.row] != request.faces[second.row] ||
+      request.pole_edges[first.row] >= 0 || request.pole_edges[second.row] >= 0 ||
+      request.chords[3 * first.row + first.slot] != -1 ||
+      request.chords[3 * second.row + second.slot] != -1)
+    return false;
+  const int a = first.slot, b = (a + 1) % 3;
+  const int c = second.slot, d = (c + 1) % 3;
+  if (request.triangles[3 * first.row + a] != request.triangles[3 * second.row + d] ||
+      request.triangles[3 * first.row + b] != request.triangles[3 * second.row + c])
+    return false;
+  const double* left = request.uv + 6 * first.row;
+  const double* right = request.uv + 6 * second.row;
+  return std::equal(left + 2 * a, left + 2 * a + 2, right + 2 * d) &&
+         std::equal(left + 2 * b, left + 2 * b + 2, right + 2 * c);
+}
+
+bool propose_chart_midpoint(const CadGeometry& geometry, int32_t surface,
+                            const double* node, EvaluationWorkspace& workspace,
+                            std::array<double, 2>& site) {
+  // The tangent least-squares step only proposes a binary64 chart point.
+  // All map and distance decisions below use outward arithmetic instead.
+  for (int iteration = 0; iteration < 3; ++iteration) {
+    double jet[18];
+    if (!geometry.jets(geometry.surface_node(surface), site.data(), 1, jet, workspace))
+      return false;
+    double uu = 0.0, uv = 0.0, vv = 0.0, u = 0.0, v = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double delta = node[axis] - jet[axis];
+      const double du = jet[3 + axis], dv = jet[6 + axis];
+      uu += du * du;
+      uv += du * dv;
+      vv += dv * dv;
+      u += du * delta;
+      v += dv * delta;
+    }
+    const double determinant = uu * vv - uv * uv;
+    if (!(determinant > 0.0) || !std::isfinite(determinant)) return false;
+    site[0] += (vv * u - uv * v) / determinant;
+    site[1] += (uu * v - uv * u) / determinant;
+    if (!std::isfinite(site[0]) || !std::isfinite(site[1])) return false;
+  }
+  return true;
+}
+
+std::array<ChartPoint, 6> original_chart_midpoints(const double* uv) {
+  std::array<ChartPoint, 6> chart;
+  for (int corner = 0; corner < 3; ++corner)
+    for (int axis = 0; axis < 2; ++axis) {
+      chart[corner][axis] = di::point(uv[2 * corner + axis]);
+      // Unchanged edges have exact rational midpoints, not rounded
+      // replacements. Thus even a trim edge retains its exact image.
+      chart[3 + corner][axis] = di::multiply(
+          di::point(0.5),
+          di::add(chart[corner][axis], di::point(uv[2 * ((corner + 1) % 3) + axis])));
+    }
+  return chart;
+}
+
+ChartMidpoints prepare_chart_midpoints(const CadGeometry& geometry,
+                                      const QuadraticPairingRequest& request,
+                                      const std::vector<int32_t>& reasons) {
+  struct EdgeUses {
+    std::array<ChartEdgeUse, 2> pair;
+    int count = 0;
+  };
+  std::map<ChartEdge, EdgeUses> uses;
+  for (int64_t row = 0; row < request.count; ++row) {
+    if (reasons[row] != PHX_MC_FIDELITY_RESOLUTION || request.pole_edges[row] >= 0)
+      continue;
+    for (int slot = 0; slot < 3; ++slot)
+      uses.try_emplace(chart_edge(request, row, slot));
+  }
+  if (uses.empty()) return {};
+  for (int64_t row = 0; row < request.count; ++row)
+    for (int slot = 0; slot < 3; ++slot) {
+      const auto it = uses.find(chart_edge(request, row, slot));
+      if (it == uses.end()) continue;
+      auto& entry = it->second;
+      if (entry.count < 2) entry.pair[entry.count] = {row, slot};
+      entry.count = std::min(3, entry.count + 1);
+    }
+  EvaluationWorkspace workspace;
+  ChartMidpoints result;
+  for (const auto& [key, entry] : uses) {
+    if (key[0] == key[1] || entry.count != 2) continue;
+    const auto [first, second] = entry.pair;
+    if (!matching_interior_chart_edge(request, first, second)) continue;
+    const double* a = request.uv + 6 * first.row + 2 * first.slot;
+    const double* b = request.uv + 6 * first.row + 2 * ((first.slot + 1) % 3);
+    std::array<double, 2> site{std::midpoint(a[0], b[0]), std::midpoint(a[1], b[1])};
+    if (!propose_chart_midpoint(geometry, request.faces[first.row],
+                               request.nodes + 9 * first.row + 3 * first.slot, workspace, site))
+      continue;
+    for (const ChartEdgeUse use : entry.pair) {
+      auto it = result.find(use.row);
+      if (it == result.end())
+        it = result.emplace(use.row, original_chart_midpoints(request.uv + 6 * use.row)).first;
+      it->second[3 + use.slot] = {di::point(site[0]), di::point(site[1])};
+    }
+  }
+  return result;
+}
+
+int certified_chart_orientation(const std::array<ChartPoint, 3>& chart) {
+  const auto x = di::subtract(chart[1][0], chart[0][0]);
+  const auto y = di::subtract(chart[1][1], chart[0][1]);
+  const auto u = di::subtract(chart[2][0], chart[0][0]);
+  const auto v = di::subtract(chart[2][1], chart[0][1]);
+  const auto determinant = di::subtract(di::multiply(x, v), di::multiply(y, u));
+  if (!di::finite(determinant)) return 0;
+  return determinant.lower > 0.0 ? 1 : determinant.upper < 0.0 ? -1 : 0;
+}
+
+FidelityTriangleResult paired_chart_row(
+    const CadGeometry& geometry, FaceKernel& kernel, const QuadraticPairingRequest& request,
+    int64_t row, const std::array<ChartPoint, 6>& chart, const LensIndex& lens, double tolerance,
+    int32_t max_depth, int32_t split_budget, IntervalEvaluationWorkspace& workspace) {
+  // The new shared sites cancel in the oriented chart chain. Unchanged
+  // sides are subdivided at their exact midpoints, so the authored
+  // boundary chain is unchanged. With all child signs preserved,
+  // winding counts the same coverage once, without requiring a new fit.
+  constexpr int children[4][3] = {{0, 3, 5}, {3, 1, 4}, {5, 4, 2}, {3, 4, 5}};
+  constexpr Vertex references[6] = {{{1, 0, 0}}, {{0, 1, 0}}, {{0, 0, 1}},
+                                    {{.5, .5, 0}}, {{0, .5, .5}}, {{.5, 0, .5}}};
+  FidelityTriangleResult result{0.0, PHX_MC_OK, PHX_MC_FIDELITY_CERTIFIED, 1};
+  const int orientation = certified_chart_orientation({chart[0], chart[1], chart[2]});
+  double vertices[9];
+  for (int local = 0; local < 3; ++local)
+    std::copy_n(request.points + 3 * request.triangles[3 * row + local], 3,
+                vertices + 3 * local);
+  const Trace trace(vertices, {request.nodes + 9 * row, nullptr}, false);
+  for (const auto& child : children) {
+    const PairedChart paired{{chart[child[0]], chart[child[1]], chart[child[2]]},
+                            {references[child[0]], references[child[1]], references[child[2]]}};
+    if (orientation == 0 || certified_chart_orientation(paired.corners) != orientation)
+      return {std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+              PHX_MC_FIDELITY_RESOLUTION, 0};
+    const auto bound =
+        subdivided_bound(geometry, kernel, vertices, request.uv + 6 * row, nullptr,
+                         tolerance, max_depth - 1, false, &lens, request.faces[row],
+                         workspace, trace, &paired, split_budget - result.subdivisions);
+    if (bound.status != PHX_MC_OK) return bound;
+    result.upper = std::max(result.upper, bound.upper);
+    result.subdivisions += bound.subdivisions;
+  }
+  return result;
+}
+
+void refine_quadratic_correspondence(
+    const CadGeometry& geometry, const QuadraticPairingRequest& request,
+    std::vector<FaceKernel>& kernels, const LensIndex& lens, double tolerance,
+    int32_t max_depth, IntervalEvaluationWorkspace& workspace, std::vector<double>& upper,
+    std::vector<int32_t>& statuses, std::vector<int32_t>& reasons,
+    std::vector<int32_t>& splits) {
+  if (max_depth == 0 || request.nodes == nullptr) return;
+  const auto candidates = prepare_chart_midpoints(geometry, request, reasons);
+  std::vector<std::pair<int64_t, FidelityTriangleResult>> accepted;
+  accepted.reserve(candidates.size());
+  for (const auto& [row, chart] : candidates) {
+    if (reasons[row] != PHX_MC_FIDELITY_CERTIFIED && reasons[row] != PHX_MC_FIDELITY_RESOLUTION)
+      return;
+    const int32_t remaining = 1000000 - splits[row];
+    if (remaining <= 0) return;
+    FaceKernel& kernel = kernels[request.faces[row]];
+    if (!kernel.prepared) return;
+    const auto fitted =
+        paired_chart_row(geometry, kernel, request, row, chart, lens, tolerance,
+                         max_depth, remaining, workspace);
+    if (fitted.status != PHX_MC_OK) return;
+    accepted.emplace_back(row, fitted);
+  }
+  // Accept the entire shared chart change, never just some incident rows.
+  for (const auto& [row, fitted] : accepted) {
+    upper[row] = fitted.upper;
+    statuses[row] = fitted.status;
+    reasons[row] = fitted.reason;
+    splits[row] += fitted.subdivisions;
+  }
+}
+
+
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -3710,6 +3952,14 @@ extern "C" int32_t phx_mc_verify_cad_trace_fidelity(
                                      triangles, face_rows, uv, points, trace_nodes,
                                      row_region, lens_index, tolerance, max_depth,
                                      row_upper, row_status, row_reason, row_splits);
+    // A pole chart can separately charge its neighboring ordinary rows.
+    // Its seam proof is not part of this correspondence refinement.
+    if (regions.empty())
+      phx::mc::cad::refine_quadratic_correspondence(
+          geometry, {triangle_count, triangles, face_rows, uv, edge_chord, points,
+                     triangle_edge_nodes, pole_edges},
+          kernels, lens_index, tolerance, max_depth, workspace, row_upper,
+          row_status, row_reason, row_splits);
     int32_t aggregate = PHX_MC_OK;
     double maximum = 0.0;
     for (int64_t i = 0; i < triangle_count; ++i) {
