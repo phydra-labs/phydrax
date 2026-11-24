@@ -149,16 +149,17 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
                        short_)) {
     return Verdict::kUnmeasured;
   }
+  if (mode_.closed_band_shape && (!long_.empty() || !short_.empty())) return Verdict::kRejected;
   const bool equal = long_ == before_long_ && short_ == before_short_;
   const bool decreased = smaller(long_, before_long_) ||
                          (long_ == before_long_ && smaller(short_, before_short_));
   if (equal ? mode_.band_only : !decreased) return Verdict::kRejected;
   if (!floor_oriented(position)) return Verdict::kRejected;
 
-  // The smallest cell quality, a NaN when any quality is one.
+  // The usual merit is the minimum; the closed-band shape sweep uses the mean.
   double corners[12];
   double tensors[36];
-  double smallest = 0.0;
+  double measure = 0.0;
   bool undefined = false;
   for (std::int64_t cell = 0; cell < cell_count_; ++cell) {
     for (std::size_t slot = 0; slot < 4; ++slot) {
@@ -170,10 +171,16 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
       for (std::size_t entry = 0; entry < 9; ++entry) tensors[9 * slot + entry] = tensor[entry];
     }
     const double value = tetra_quality(corners, tensors);
-    if (value != value) undefined = true;
-    if (cell == 0 || value < smallest) smallest = value;
+    if (mode_.closed_band_shape) {
+      if (!std::isfinite(value)) return Verdict::kRejected;
+      measure += value;
+    } else {
+      if (value != value) undefined = true;
+      if (cell == 0 || value < measure) measure = value;
+    }
   }
-  quality = undefined ? std::numeric_limits<double>::quiet_NaN() : smallest;
+  if (mode_.closed_band_shape) measure /= static_cast<double>(cell_count_);
+  quality = undefined ? std::numeric_limits<double>::quiet_NaN() : measure;
   if (equal && !(quality > before_quality_ + improvement_)) return Verdict::kRejected;
   return Verdict::kAdmitted;
 }

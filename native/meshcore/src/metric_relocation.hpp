@@ -72,10 +72,12 @@ struct RelocationMode {
   bool band_only = false;
   // The field is one tensor: goals are screened by the full evaluation.
   bool constant_field = false;
+  // Started in the strict band: keep it and improve the star's mean quality.
+  bool closed_band_shape = false;
 };
 
-// One candidate: the carrier, its interpolated tensor and the smallest cell
-// quality of the star with the vertex at it.
+// One candidate: the carrier, its interpolated tensor and the selected star
+// quality with the vertex at it.
 struct RelocationCandidate {
   Carrier carrier;
   std::array<double, 9> metric{};

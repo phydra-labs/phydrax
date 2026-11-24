@@ -38,10 +38,13 @@
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.
-- Stalled native tetrahedral adaptation can improve metric shape through
+- Native tetrahedral adaptation can improve metric shape through
   closed-cavity reconnections with in-band new edges. The shape sweep leaves
   vertices and constrained facets unchanged and retains source-cell
   ancestry. Newly reconnected meshes can have new cell and evidence IDs.
+- After reaching the metric band through edits, interior relocation can
+  improve mean shape by retransporting the exact source metric without
+  moving boundary or protected vertices or introducing violations.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned

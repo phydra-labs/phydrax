@@ -131,9 +131,8 @@ bool objective_decreases(const Violations& removed, const Violations& added, boo
   return order != 0 ? order < 0 : gain;
 }
 
-// Use one reference for the entire shape stage. A committed cavity increases
-// the sum of these scores on the fixed vertex bank, even when its cell count
-// changes. The reference is the mean of the mesh entering the stage.
+// A committed cavity increases the sum of these scores at a fixed
+// reference, even when the cavity changes its cell count.
 double shape_score(double total, std::size_t cells, double reference) {
   return total - static_cast<double>(cells) * reference;
 }
@@ -343,8 +342,9 @@ class Adapter {
                               bool& applied);
 
   // Relocations of interior vertices to exact source carriers (in place).
-  std::int64_t relocate_sweep();
-  TetEditStatus relocate(std::int32_t vertex, bool& applied);
+  std::int64_t relocate_sweep(bool closed_band_shape = false);
+  std::int64_t smooth_shape();
+  TetEditStatus relocate(std::int32_t vertex, bool& applied, bool closed_band_shape);
   struct RelocationAttempt {
     std::vector<std::uint64_t> cells;
     std::span<const CarrierSimplex> chart;
@@ -2309,9 +2309,8 @@ std::int64_t Adapter::swap_sweep() {
 
 std::int64_t Adapter::shape_sweeps() {
   // The ordinary frontier contains only residual edges and poor cells.
-  // After it is exhausted, admit changes to any closed cavity, once per
-  // adapter run. Fixing the reference and moving no vertices gives a finite
-  // strictly improving topology search, without a sweep cap.
+  // A full closed-cavity sweep can improve their neighbors too. Fixing the
+  // reference and vertex bank gives a finite improving topology search.
   const auto& cells = mesh_.complex().tets;
   std::size_t count = 0;
   double total = 0.0;
@@ -2759,20 +2758,21 @@ Adapter::RelocationAttempt& Adapter::bind_relocation_attempt(
   return attempt;
 }
 
-TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
+TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_band_shape) {
   applied = false;
   if (!carriers_ || mesh_.protected_vertex(vertex) || mesh_.protection_radius(vertex) > 0.0) {
     return TetEditStatus::kApplied;
   }
+  if (closed_band_shape && mesh_.vertex_dimension(vertex) != 3) return TetEditStatus::kApplied;
   const LocalIncidence::Star star = incidence_.vertex_star(vertex);
   if (star.empty()) return TetEditStatus::kApplied;
   const auto chart = carrier_chart(vertex, star, true);
   if (!chart) return TetEditStatus::kApplied;
   const bool interior = chart->simplices.empty();
-  const bool tangents = relocation_stage_ == 5;
+  const bool tangents = !closed_band_shape && relocation_stage_ == 5;
   if (tangents && interior) return TetEditStatus::kApplied;
   if (!interior && !boundary_moves_) return TetEditStatus::kApplied;
-  const bool deep_stage = relocation_stage_ == 1 || relocation_stage_ == 2;
+  const bool deep_stage = !closed_band_shape && (relocation_stage_ == 1 || relocation_stage_ == 2);
   RelocationAttempt* attempt = nullptr;
   unsigned mode_bit = 0;
   if (deep_stage && !mesh_.implicit_source() && star.size() <= kRelocationCacheStarCells) {
@@ -2783,10 +2783,11 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   // Star rows: the vertex, then its link in first-seen order.
   std::vector<std::int32_t> rows{vertex};
   std::vector<std::int64_t> cells;
-  double before_quality = std::numeric_limits<double>::infinity();
+  double before_quality = closed_band_shape ? 0.0 : std::numeric_limits<double>::infinity();
   for (std::int32_t slot : star) {
     const Tetrahedron& cell = mesh_.tet(slot);
-    before_quality = std::min(before_quality, cell_quality(slot));
+    const double value = cell_quality(slot);
+    before_quality = closed_band_shape ? before_quality + value : std::min(before_quality, value);
     for (int corner = 0; corner < 4; ++corner) {
       const auto row = static_cast<std::int64_t>(
           std::find(rows.begin(), rows.end(), cell.v[corner]) - rows.begin());
@@ -2806,6 +2807,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
     std::copy_n(metric(rows[row]), 9, tensors.data() + 9 * row);
     if (row == 0) continue;
     measured[row - 1] = protected_edge(vertex, rows[row]) ? 0 : 1;
+    if (closed_band_shape && measured[row - 1] == 0) return TetEditStatus::kApplied;
     neighbor_first[row - 1] = mesh_.vertex_id(rows[row]) < mesh_.vertex_id(vertex);
     lengths[row - 1] = edge_length(vertex, rows[row]);
     if (measured[row - 1] != 0 && !(lengths[row - 1] > 0.0 && std::isfinite(lengths[row - 1]))) {
@@ -2815,8 +2817,10 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
                           !(lengths[row - 1] >= kLowerLength && lengths[row - 1] <= kUpperLength));
   }
   // Stages 3 and 4 can improve quality before the terminal band-only search.
-  if (!outside && (relocation_stage_ < 3 || tangents)) return TetEditStatus::kApplied;
-  const bool deep = outside && (relocation_stage_ == 1 || relocation_stage_ == 2);
+  if (closed_band_shape ? outside : !outside && (relocation_stage_ < 3 || tangents)) {
+    return TetEditStatus::kApplied;
+  }
+  const bool deep = outside && deep_stage;
   // A boundary vertex is pulled within the hull of its first carrier simplex.
   std::array<double, 9> basis{};
   std::array<double, 9> projector{};
@@ -2856,6 +2860,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   mode.deep = deep;
   mode.refine = tangents || (deep && relocation_stage_ == 2);
   mode.band_only = tangents || deep;
+  mode.closed_band_shape = closed_band_shape;
   RelocationStar relocation_star;
   relocation_star.point_count = static_cast<std::int64_t>(rows.size());
   relocation_star.points = points.data();
@@ -2863,7 +2868,8 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   relocation_star.measured = measured.data();
   relocation_star.before_lengths = lengths.data();
   relocation_star.neighbor_first = neighbor_first;
-  relocation_star.before_quality = before_quality;
+  relocation_star.before_quality =
+      closed_band_shape ? before_quality / static_cast<double>(star.size()) : before_quality;
   relocation_star.cell_count = static_cast<std::int64_t>(cells.size() / 4);
   relocation_star.cells = cells.data();
   relocation_star.determinant_floor = kDeterminantFloor;
@@ -2967,7 +2973,28 @@ void Adapter::assign_carrier(std::int32_t vertex, const Carrier& carrier, const 
   if (source_targets_.contains(target)) relocated_sources_.insert(target);
 }
 
-std::int64_t Adapter::relocate_sweep() {
+std::int64_t Adapter::smooth_shape() {
+  // Seed the interior frontier once. Local commits requeue the changed
+  // star; its mean shape must increase with all spokes still in band.
+  // Protected and boundary vertices are never moved here.
+  for (std::size_t row = 0; row < mesh_.vertex_slot_count(); ++row) {
+    const auto vertex = static_cast<std::int32_t>(row);
+    if (!mesh_.live_vertex(vertex) || mesh_.vertex_dimension(vertex) != 3 ||
+        dirty_flags_[kRelocatePhase][row] != 0) {
+      continue;
+    }
+    dirty_flags_[kRelocatePhase][row] = 1;
+    dirty_[kRelocatePhase].push_back(vertex);
+  }
+  std::int64_t sweeps = 0;
+  for (;;) {
+    const auto applied = relocate_sweep(true);
+    if (fatal_ != TetEditStatus::kApplied || applied == 0) return sweeps;
+    ++sweeps;
+  }
+}
+
+std::int64_t Adapter::relocate_sweep(bool closed_band_shape) {
   std::vector<std::int32_t> vertices(dirty_[kRelocatePhase].begin(), dirty_[kRelocatePhase].end());
   for (std::int32_t vertex : vertices) dirty_flags_[kRelocatePhase][static_cast<std::size_t>(vertex)] = 0;
   dirty_[kRelocatePhase].clear();
@@ -2976,14 +3003,14 @@ std::int64_t Adapter::relocate_sweep() {
   for (std::int32_t vertex : vertices) {
     if (!mesh_.live_vertex(vertex)) continue;
     bool done = false;
-    const TetEditStatus status = relocate(vertex, done);
+    const TetEditStatus status = relocate(vertex, done, closed_band_shape);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
     }
     applied += done ? 1 : 0;
   }
-  if (relocation_stage_ == 4) applied += pair_sweep(vertices);
+  if (!closed_band_shape && relocation_stage_ == 4) applied += pair_sweep(vertices);
   return applied;
 }
 
@@ -3275,6 +3302,18 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // Splits are exhausted at the changed vertices: the band may hold.
     const bool done = complete(input_.lower);
     if (done) {
+      // An edited mesh can reach the band before the shape search. This
+      // pass leaves every retained edge unchanged and requires every new
+      // edge in the strict band, so it cannot invalidate completion.
+      if (input_.topology_operations && !shape_searched) {
+        const auto shaped = shape_sweeps();
+        if (fatal_ != TetEditStatus::kApplied) return fatal_;
+        passes += shaped;
+      }
+      if (input_.relocation && carriers_) {
+        passes += smooth_shape();
+        if (fatal_ != TetEditStatus::kApplied) return fatal_;
+      }
       status = AdaptStatus::kComplete;
       break;
     }

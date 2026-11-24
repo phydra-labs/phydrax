@@ -3058,11 +3058,16 @@ tangents. With relocation enabled, the native loop reports STALLED only
 after exhausting the enabled searches on one unchanged mesh generation.
 If an edit invalidates an earlier sweep, the loop requeues the live mesh
 before reporting residual edges.
-If the ordinary searches exhaust, a final closed-cavity search improves
-aggregate metric shape without changing vertex coordinates, constrained
-facets, or protected edges. Every new edge in this search must meet the
-strict unit band. Admitted replacements retain source-cell ancestry and
-reopen the ordinary searches; they do not confer completion on their own.
+After the ordinary searches exhaust or an edited mesh first meets the
+requested band, a closed-cavity search improves aggregate metric shape
+without changing vertex coordinates, constrained facets, or protected
+edges. Every new edge in this search must meet the strict unit band.
+Admitted replacements retain source-cell ancestry. If the band is not yet
+met, they reopen the ordinary searches rather than confer completion.
+When an edited mesh meets the band and relocation is enabled, a separate
+interior sweep improves mean cell shape using exact source carriers. It
+revisits changed stars until no improving in-band move is admitted. It does
+not move boundary vertices or vertices incident to a protected edge.
 The route returns the exact dyadic source stencils, source-cell lineage, and
 `TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
 by the host phase schedule until native periodic local commits exist.
