@@ -1121,6 +1121,13 @@ the same constructed mesh and labels. Sources or requests outside this scope
 take their existing CAD route before construction; a failed native candidate
 is not remeshed by a different route.
 
+On the direct native CAD route, `NativeMeshingOptions` accepts
+`cad_maximum_dihedral_degrees` in `[90, 180]` (180 disables the target).
+The existing volume schedule controls the minimum angle and whether shape
+targets are hard or soft. Compliance reports the number of affine cells
+exceeding the cap; an acute CAD rim does not exempt an upper-angle violation.
+The cap is not a bound on the curved Jacobian or a geometry certificate.
+
 The proof binds the actual coordinate map, not just the mesh vertices. For
 an affine restriction produced by adaptation, proof checks exact agreement
 of incident cells at each vertex, certifies embedding on the actual map, and

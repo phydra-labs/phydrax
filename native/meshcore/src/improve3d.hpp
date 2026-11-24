@@ -58,6 +58,8 @@ struct TetQualityRequest {
   // every such cell meets the score target); set by improve_mesh before each
   // edit is judged, for its residual order.
   double minimum_score = 1.0;
+  // Minimum allowed dihedral cosine bounds the maximum angle; -1 disables it.
+  double upper_angle_cosine = -1.0;
 };
 // Assess current cells without changing the mesh or its stored unmet records.
 std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest& request,
@@ -120,10 +122,12 @@ bool relocation_tetrahedron_shape(const double* const points[4],
                                   const RelocationMetricCache& cache,
                                   TetrahedronShape& shape) noexcept;
 double relocation_minimum_dihedral_degrees(
-    const double* const points[4], const RelocationMetricCache& cache) noexcept;
+    const double* const points[4], const RelocationMetricCache& cache,
+    double* minimum_cosine = nullptr) noexcept;
 double relocation_relative_determinant(
     const double* const points[4], const RelocationMetricCache& cache) noexcept;
-double minimum_dihedral_degrees(const double* const points[4]) noexcept;
+double minimum_dihedral_degrees(const double* const points[4],
+                                double* minimum_cosine = nullptr) noexcept;
 double relative_determinant(const double* const points[4]) noexcept;
 }  // namespace geometry
 

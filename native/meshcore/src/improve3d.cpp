@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "angle.hpp"
 #include "dyadic.hpp"
 #include "exact_scalar.hpp"
 #include "intersections.hpp"
@@ -511,6 +512,7 @@ namespace {
 
 struct CellMeasure {
   double minimum_angle = 0.0;
+  double minimum_cosine = 1.0;
   double radius_edge_ratio = 0.0;
   double relative_determinant = 0.0;
   double circumradius = std::numeric_limits<double>::infinity();
@@ -575,7 +577,10 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
               measure.radius_edge_ratio <= request.radius_edge_bound
           ? 1.0
           : request.radius_edge_bound / measure.radius_edge_ratio;
-  const double unresolved = std::min(angle_score, radius_score);
+  // cos decreases with the interior angle; the shift keeps the deficit in [0, 1].
+  const double upper_score = measure.minimum_cosine >= request.upper_angle_cosine
+      ? 1.0 : (1.0 + measure.minimum_cosine) / (1.0 + request.upper_angle_cosine);
+  const double unresolved = std::min({angle_score, radius_score, upper_score});
   const std::int8_t validity =
       !(measure.relative_determinant > request.minimum_relative_determinant) ||
               (request.radius_edge_bound == 0.0 &&
@@ -612,7 +617,7 @@ double slots_size_target(const TetQualityRequest& request, const std::int32_t* s
 // representable bound, so it is measured as +inf (score 0) rather than refused;
 // the exact orientation keeps its validity beyond doubt.
 bool measure_cell(const TetMesh& mesh, const std::array<const double*, 4>& points,
-                  double size_target, CellMeasure& result) {
+                  double size_target, CellMeasure& result, double upper_cosine = -1.0) {
   if (orient3d(points[0], points[1], points[2], points[3]) <= 0) return false;
   std::array<std::array<double, 3>, 4> physical{};
   std::array<const double*, 4> measured = points;
@@ -634,14 +639,15 @@ bool measure_cell(const TetMesh& mesh, const std::array<const double*, 4>& point
     result.circumradius = std::numeric_limits<double>::infinity();
   }
   result.size_target = size_target;
-  result.minimum_angle = geometry::minimum_dihedral_degrees(measured.data());
+  result.minimum_angle = geometry::minimum_dihedral_degrees(
+      measured.data(), upper_cosine > -1.0 ? &result.minimum_cosine : nullptr);
   result.relative_determinant = geometry::relative_determinant(measured.data());
   return std::isfinite(result.minimum_angle) &&
          std::isfinite(result.relative_determinant);
 }
 bool measure_relocated_cell(const std::array<const double*, 4>& points,
                             const geometry::RelocationMetricCache& metric_cache,
-                            double size_target, CellMeasure& result) {
+                            double size_target, CellMeasure& result, double upper_cosine) {
   if (orient3d(points[0], points[1], points[2], points[3]) <= 0) return false;
   geometry::TetrahedronShape shape;
   if (geometry::relocation_tetrahedron_shape(points.data(), metric_cache, shape)) {
@@ -652,8 +658,8 @@ bool measure_relocated_cell(const std::array<const double*, 4>& points,
     result.circumradius = std::numeric_limits<double>::infinity();
   }
   result.size_target = size_target;
-  result.minimum_angle =
-      geometry::relocation_minimum_dihedral_degrees(points.data(), metric_cache);
+  result.minimum_angle = geometry::relocation_minimum_dihedral_degrees(
+      points.data(), metric_cache, upper_cosine > -1.0 ? &result.minimum_cosine : nullptr);
   result.relative_determinant =
       geometry::relocation_relative_determinant(points.data(), metric_cache);
   return std::isfinite(result.minimum_angle) &&
@@ -667,7 +673,8 @@ bool cell_measure(const TetMesh& mesh, const Tetrahedron& tet,
     points[corner] = mesh.point(tet.v[corner]);
     if (points[corner] == nullptr) return false;
   }
-  return measure_cell(mesh, points, slots_size_target(request, tet.v), result);
+  return measure_cell(mesh, points, slots_size_target(request, tet.v), result,
+                      request.upper_angle_cosine);
 }
 
 bool interior_quality(const TetMesh& mesh, std::span<const std::int32_t> star,
@@ -725,7 +732,8 @@ bool collapsed_quality(const TetMesh& mesh, std::span<const std::int32_t> star,
       if (points[corner] == nullptr) return false;
     }
     CellMeasure measure;
-    if (!measure_cell(mesh, points, slots_size_target(request, local.data()), measure)) {
+    if (!measure_cell(mesh, points, slots_size_target(request, local.data()), measure,
+                      request.upper_angle_cosine)) {
       return false;
     }
     quality.push_back(quality_from_measure(measure, request));
@@ -789,8 +797,10 @@ bool relocated_quality(const TetMesh& mesh, std::span<const PreparedRelocationCe
     std::array<const double*, 4> points = cell.fixed_points;
     points[static_cast<std::size_t>(cell.moved_corner)] = candidate;
     CellMeasure measure;
-    if (!(mesh.metric_active() ? measure_cell(mesh, points, cell.size_target, measure)
-                              : measure_relocated_cell(points, cell.metric_cache, cell.size_target, measure))) {
+    if (!(mesh.metric_active()
+              ? measure_cell(mesh, points, cell.size_target, measure, request.upper_angle_cosine)
+              : measure_relocated_cell(points, cell.metric_cache, cell.size_target,
+                                       measure, request.upper_angle_cosine))) {
       return false;
     }
     const FlipQuality quality_of_cell = quality_from_measure(measure, request);
@@ -829,7 +839,8 @@ FlipQuality local_flip_quality(const TetMesh& mesh, const LocalCell& vertices,
         mesh.point(vertices[static_cast<std::size_t>(corner)]);
   }
   CellMeasure measure;
-  if (!measure_cell(mesh, points, slots_size_target(request, vertices.data()), measure) ||
+  if (!measure_cell(mesh, points, slots_size_target(request, vertices.data()), measure,
+                    request.upper_angle_cosine) ||
       measure.relative_determinant < 0.0) {
     return {};
   }
@@ -1101,7 +1112,9 @@ bool clearly_meets_targets(const std::array<const double*, 4>& p,
     largest_product = std::max(largest_product, product);
   }
   if (!(det_squared * kMargin > floor * floor * largest_product)) return false;
-  if (request.minimum_dihedral_degrees == 0.0) return true;
+  const double upper_cosine = request.upper_angle_cosine;
+  if (request.minimum_dihedral_degrees == 0.0 && upper_cosine == -1.0) return true;
+  double normals[4][3];
   double normal_squared[4];
   for (int opposite = 0; opposite < 4; ++opposite) {
     const double* m = p[static_cast<std::size_t>((opposite + 1) & 3)];
@@ -1109,7 +1122,7 @@ bool clearly_meets_targets(const std::array<const double*, 4>& p,
     const double* n = p[static_cast<std::size_t>((opposite + 3) & 3)];
     const double u[3]{l[0] - m[0], l[1] - m[1], l[2] - m[2]};
     const double v[3]{n[0] - m[0], n[1] - m[1], n[2] - m[2]};
-    double normal[3];
+    double* normal = normals[opposite];
     cross(u, v, normal);
     normal_squared[opposite] = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
   }
@@ -1119,9 +1132,19 @@ bool clearly_meets_targets(const std::array<const double*, 4>& p,
       for (int corner = 0, count = 0; corner < 4; ++corner) {
         if (corner != first && corner != second) others[count++] = corner;
       }
-      if (!(det_squared * squared[first][second] * kMargin >
-            sine_squared * normal_squared[others[0]] * normal_squared[others[1]])) {
+      const double normal_product = normal_squared[others[0]] * normal_squared[others[1]];
+      if (!(det_squared * squared[first][second] * kMargin > sine_squared * normal_product)) {
         return false;
+      }
+      if (upper_cosine > -1.0) {
+        // Cyclic face normals have alternate orientation. For outward normals,
+        // a positive dot denotes an obtuse interior angle.
+        const auto* a = normals[others[0]];
+        const auto* b = normals[others[1]];
+        const double dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) *
+                           ((others[0] + others[1]) % 2 ? -1.0 : 1.0);
+        if (dot > 0.0 && !(dot * dot < upper_cosine * upper_cosine * normal_product * kMargin))
+          return false;
       }
     }
   }
@@ -2282,7 +2305,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       points[3] = operation.changed_vertices.front().carrier.data();
       sizes[3] = center_size;
       CellMeasure measure;
-      if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return PHX_MC_INVALID_INPUT;
+      if (!measure_cell(mesh, points, cell_size_target(sizes), measure,
+                        request.upper_angle_cosine)) return PHX_MC_INVALID_INPUT;
       after_cavity_quality.push_back(quality_from_measure(measure, request));
     }
     sort_quality_vector(after_cavity_quality);
@@ -2596,7 +2620,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
               corner == face ? candidate_size : vertex_size(request, tetrahedron.v[corner]);
         }
         CellMeasure measure;
-        if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return false;
+        if (!measure_cell(mesh, points, cell_size_target(sizes), measure,
+                          request.upper_angle_cosine)) return false;
         quality.push_back(quality_from_measure(measure, request));
       }
     }
@@ -2732,7 +2757,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
               corner == face ? candidate : mesh.point(mesh.tet(cell).v[corner]);
         }
         CellMeasure measure;
-        if (measure_cell(mesh, points, std::numeric_limits<double>::infinity(), measure) &&
+        if (measure_cell(mesh, points, std::numeric_limits<double>::infinity(), measure,
+                         request.upper_angle_cosine) &&
             quality_from_measure(measure, request).validity_class == kAboveDeterminantFloor) {
           continue;
         }
@@ -3496,7 +3522,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
             slot == vertex ? candidate.data() : mesh.point(slot);
       }
       CellMeasure measure;
-      if (!measure_cell(mesh, points, slots_size_target(request, mesh.tet(cell).v), measure)) {
+      if (!measure_cell(mesh, points, slots_size_target(request, mesh.tet(cell).v), measure,
+                        request.upper_angle_cosine)) {
         return PHX_MC_OK;
       }
       const FlipQuality quality = quality_from_measure(measure, request);
@@ -3806,7 +3833,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       records.push_back(record);
       cell_unmet = true;
     }
-    const double angle = geometry::minimum_dihedral_degrees(points.data());
+    double minimum_cosine = 1.0;
+    const double angle = geometry::minimum_dihedral_degrees(
+        points.data(), request.upper_angle_cosine > -1.0 ? &minimum_cosine : nullptr);
     if (!std::isfinite(angle)) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_CONSTRUCTION,
                          PHX_MC_TET_UNMET_NONREPRESENTABLE, angle});
@@ -3814,6 +3843,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     } else if (angle < request.minimum_dihedral_degrees) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_DIHEDRAL,
                          PHX_MC_TET_UNMET_NO_IMPROVEMENT, angle});
+      cell_unmet = true;
+    }
+    if (std::isfinite(angle) && minimum_cosine < request.upper_angle_cosine) {
+      const double upper_angle = angle::arccosine(minimum_cosine) * (180.0 / angle::kPi);
+      records.push_back({cell.id, PHX_MC_TET_UNMET_UPPER_DIHEDRAL,
+                         PHX_MC_TET_UNMET_NO_IMPROVEMENT, upper_angle});
       cell_unmet = true;
     }
     const double determinant = geometry::relative_determinant(points.data());

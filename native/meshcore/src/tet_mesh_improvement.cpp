@@ -116,7 +116,9 @@ bool prepare_relocation_metric_cache(
 
 
 double relocation_minimum_dihedral_degrees(
-    const double* const points[4], const RelocationMetricCache& cache) noexcept {
+    const double* const points[4], const RelocationMetricCache& cache,
+    double* minimum_cosine) noexcept {
+  if (minimum_cosine != nullptr) *minimum_cosine = -1.0;
   if (!cache.prepared || points == nullptr || !cache.opposite_face_valid) return 0.0;
   constexpr int faces[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
   std::array<Vector3, 4> normals{};
@@ -139,6 +141,7 @@ double relocation_minimum_dihedral_degrees(
   }
 
   double maximum_cosine = -1.0;
+  double lowest = 1.0;
   constexpr double kRadiansToDegrees = 57.295779513082320876798154814105;
   for (int first = 0; first < 4; ++first) {
     for (int second = first + 1; second < 4; ++second) {
@@ -147,8 +150,10 @@ double relocation_minimum_dihedral_degrees(
                normals[static_cast<std::size_t>(second)]),
           -1.0, 1.0);
       maximum_cosine = std::max(maximum_cosine, cosine);
+      if (minimum_cosine != nullptr) lowest = std::min(lowest, cosine);
     }
   }
+  if (minimum_cosine != nullptr) *minimum_cosine = lowest;
   const double minimum = angle::arccosine(maximum_cosine) * kRadiansToDegrees;
   return std::isfinite(minimum) ? minimum : 0.0;
 }
@@ -189,7 +194,8 @@ double relocation_relative_determinant(
   return determinant / maximum_product;
 }
 
-double minimum_dihedral_degrees(const double* const points[4]) noexcept {
+double minimum_dihedral_degrees(const double* const points[4], double* minimum_cosine) noexcept {
+  if (minimum_cosine != nullptr) *minimum_cosine = -1.0;
   constexpr int faces[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
   std::array<Vector3, 4> normals{};
   for (int face = 0; face < 4; ++face) {
@@ -204,13 +210,16 @@ double minimum_dihedral_degrees(const double* const points[4]) noexcept {
   }
 
   double maximum_cosine = -1.0;
+  double lowest = 1.0;
   constexpr double kRadiansToDegrees = 57.295779513082320876798154814105;
   for (int first = 0; first < 4; ++first) {
     for (int second = first + 1; second < 4; ++second) {
       const double cosine = std::clamp(-dot(normals[first], normals[second]), -1.0, 1.0);
       maximum_cosine = std::max(maximum_cosine, cosine);
+      if (minimum_cosine != nullptr) lowest = std::min(lowest, cosine);
     }
   }
+  if (minimum_cosine != nullptr) *minimum_cosine = lowest;
   // acos is monotone decreasing over the clamped domain; the extremal angle
   // therefore needs one transcendental evaluation instead of one per face pair.
   const double minimum = angle::arccosine(maximum_cosine) * kRadiansToDegrees;

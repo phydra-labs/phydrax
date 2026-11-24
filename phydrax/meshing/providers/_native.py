@@ -541,6 +541,11 @@ def _options_for_route(
                 }
                 else None
             ),
+            cad_maximum_dihedral_degrees=(
+                options.cad_maximum_dihedral_degrees
+                if route == "cad_tetrahedral"
+                else 180.0
+            ),
         )
     except (TypeError, ValueError) as error:
         raise _failure(
@@ -1651,6 +1656,11 @@ class NativeMeshingProvider:
         contract = _resolve_coordinate_contract(source, coordinate_contract)
         _validate_scope_binding(source, specification)
         route = _resolve_route(source, specification, self.options)
+        cap_dihedral = self.options.cad_maximum_dihedral_degrees < 180.0
+        if cap_dihedral and route != "cad_tetrahedral":
+            _unsupported(
+                route, source, specification, "a CAD angle cap requires direct CAD"
+            )
         if (
             isinstance(specification, SurfaceMeshingSpec)
             and specification.cross_field is not None
@@ -1672,6 +1682,12 @@ class NativeMeshingProvider:
                 self.options,
                 contract,
             )
+            if cap_dihedral and isinstance(prepared, _PreparedDirectBRepCadVolume):
+                from ._native_cad_mesh import cad_solid_support_issues
+
+                issues = cad_solid_support_issues(prepared)
+                if issues:
+                    _unsupported(route, source, specification, "; ".join(issues))
             preparation_id = (
                 prepared.preparation_id
                 if isinstance(prepared, _PreparedDirectBRepCadVolume)

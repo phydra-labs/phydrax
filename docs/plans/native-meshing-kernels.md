@@ -190,7 +190,7 @@ tetrahedra, then implicit volumes, then the CAD solid.
   21 / 34 ms with 3,990 / 6,695 cells, minimum dihedral 15.5 degrees or better, all four certify;
   quiet back-to-back run against CGAL opt=0 (sphere) and Gmsh (torus) pending.
 - S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
-  one native call `phx_mc_cad_mesh_surface` or `phx_mc_cad_mesh_volume` on a flat geometry bundle;
+  one native call `phx_mc_cad_mesh_surface` or `phx_mc_cad_construct_volume` on a flat geometry bundle;
   curves split once by integrating the size field and shared by every use; faces are meshed in their
   native parameter chart by metric Delaunay
   refinement that never splits a curve, then physical flips and smoothing; seams as two chart copies

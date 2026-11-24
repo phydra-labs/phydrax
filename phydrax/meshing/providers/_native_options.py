@@ -14,6 +14,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import finite_real_scalar
 from ...geometry.implicit._policy import (
     AdaptiveImplicitSurfacePolicy,
     ImplicitSurfacePolicy,
@@ -63,7 +64,7 @@ _ROUTE_SCHEDULE_FIELDS: dict[NativeMeshingRoute, tuple[str, ...]] = {
     "curve_arc_length": ("curve_schedule",),
     "parametric_surface": ("surface_schedule",),
     "plc_tetrahedral": ("volume_schedule",),
-    "cad_tetrahedral": ("volume_schedule",),
+    "cad_tetrahedral": ("volume_schedule", "cad_maximum_dihedral_degrees"),
     "periodic_delaunay": (),
     "periodic_power": (),
     "plc_restricted_power": ("polyhedral_schedule",),
@@ -136,7 +137,13 @@ def _resolve_schedules(
 
 @final
 class NativeMeshingOptions(StrictModule, NonTrainableState):
-    """Algorithm choices; an omitted route is resolved from source and request."""
+    """Algorithm choices; an omitted route is resolved from source and request.
+
+    ``cad_maximum_dihedral_degrees`` bounds the obtuse tail of the affine
+    tetrahedra on the direct native CAD route. The default of 180 degrees
+    disables it. The volume schedule still controls the acute tail and
+    whether affine shape findings are hard or soft.
+    """
 
     route: NativeMeshingRoute | None = eqx.field(static=True)
     implicit_policy: AdaptiveImplicitSurfacePolicy | ImplicitSurfacePolicy | None = (
@@ -149,6 +156,7 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
     structured_schedule: schedules_owner.NativeStructuredSchedule | None
     hex_core_fraction: float | None = eqx.field(static=True)
     grid_schedule: NativeHexGridSchedule | None
+    cad_maximum_dihedral_degrees: float = eqx.field(static=True)
     options_id: str = eqx.field(static=True)
 
     @checked
@@ -167,12 +175,18 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         structured_schedule: schedules_owner.NativeStructuredSchedule | None = None,
         hex_core_fraction: float | None = None,
         grid_schedule: NativeHexGridSchedule | None = None,
+        cad_maximum_dihedral_degrees: float = 180.0,
     ) -> None:
         route_ = (
             None
             if route is None
             else parse(route, NativeMeshingRoute, "NativeMeshingOptions.route")
         )
+        maximum_dihedral = finite_real_scalar(
+            cad_maximum_dihedral_degrees, "cad_maximum_dihedral_degrees"
+        )
+        if not 90.0 <= maximum_dihedral <= 180.0:
+            raise ValueError("cad_maximum_dihedral_degrees must lie in [90, 180].")
         fields = () if route_ is None else _ROUTE_SCHEDULE_FIELDS[route_]
         supplied = (
             ("grid_schedule", grid_schedule),
@@ -183,6 +197,10 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
             ("curve_schedule", curve_schedule),
             ("surface_schedule", surface_schedule),
             ("volume_schedule", volume_schedule),
+            (
+                "cad_maximum_dihedral_degrees",
+                maximum_dihedral if maximum_dihedral < 180.0 else None,
+            ),
         )
         for name, value in supplied:
             if route_ is not None and value is not None and name not in fields:
@@ -241,24 +259,22 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         self.structured_schedule = structured
         self.hex_core_fraction = fraction
         self.grid_schedule = grid
-        self.options_id = canonical_fingerprint(
-            {
-                "kind": "native-meshing-options",
-                "route": route_,
-                "implicit_policy": None if policy is None else repr(policy),
-                "curve_schedule": None if curve is None else curve.schedule_id,
-                "surface_schedule": None if surface is None else surface.schedule_id,
-                "volume_schedule": None if volume is None else volume.schedule_id,
-                "polyhedral_schedule": None
-                if polyhedral is None
-                else polyhedral.schedule_id,
-                "structured_schedule": None
-                if structured is None
-                else structured.schedule_id,
-                "hex_core_fraction": fraction,
-                "grid_schedule": None if grid is None else grid.schedule_id,
-            }
-        )
+        self.cad_maximum_dihedral_degrees = maximum_dihedral
+        identity: dict[str, object] = {
+            "kind": "native-meshing-options",
+            "route": route_,
+            "implicit_policy": None if policy is None else repr(policy),
+            "curve_schedule": None if curve is None else curve.schedule_id,
+            "surface_schedule": None if surface is None else surface.schedule_id,
+            "volume_schedule": None if volume is None else volume.schedule_id,
+            "polyhedral_schedule": None if polyhedral is None else polyhedral.schedule_id,
+            "structured_schedule": None if structured is None else structured.schedule_id,
+            "hex_core_fraction": fraction,
+            "grid_schedule": None if grid is None else grid.schedule_id,
+        }
+        if maximum_dihedral < 180.0:
+            identity["cad_maximum_dihedral_degrees"] = maximum_dihedral
+        self.options_id = canonical_fingerprint(identity)
 
 
 __all__ = ["NativeMeshingOptions", "NativeMeshingRoute"]

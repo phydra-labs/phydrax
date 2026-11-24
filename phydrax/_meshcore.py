@@ -1432,9 +1432,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_refinement": (_I32, (_P, _I64, _P, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
-    "phx_mc_cad_mesh_volume": (_I32, (_P, _P, _P, _P, _I32)),
+    "phx_mc_cad_construct_volume": (_I32, (_P, _P, _P, _P, _I32, ctypes.c_double)),
     "phx_mc_cad_volume_bank_sizes": (_I32, (_P, _P)),
-    "phx_mc_cad_volume_copy_banks": (_I32, (_P, _P)),
+    "phx_mc_cad_export_volume": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
         (
@@ -15264,6 +15264,7 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
         ("unmet_shape_rows", np.int64),
         ("unmet_hard_cells", np.int64),
         ("cubic_ns", np.int64),
+        ("unmet_upper_dihedral_cells", np.int64),
     ],
     align=True,
 )
@@ -15404,6 +15405,7 @@ def cad_mesh_solid(
     min_relative_determinant: float = 0.0,
     geometry_order: int = 1,
     proximity_controls: tuple[CadProximityControl, ...] = (),
+    maximum_dihedral_degrees: float = 180.0,
 ) -> CadSolidResult:
     """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
 
@@ -15452,6 +15454,7 @@ def cad_mesh_solid(
         grading,
         minimum_size,
         controls,
+        maximum_dihedral_degrees,
     )
     if volume is None:
         raise MeshcoreError(surface.status, "cad_mesh_solid: no volume")
@@ -15501,8 +15504,8 @@ def _cad_volume_export(
         cubic_cell_nodes.ctypes.data,
     )
     _raise_for_call(
-        library["phx_mc_cad_volume_copy_banks"](handle, ctypes.addressof(outputs)),
-        "cad_volume_copy_banks",
+        library["phx_mc_cad_export_volume"](handle, ctypes.addressof(outputs)),
+        "cad_export_volume",
     )
     return CadVolumeResult(*banks, wedges, cubic_nodes, cubic_cell_nodes)
 
@@ -15545,6 +15548,7 @@ def _cad_mesh(
     grading: float,
     minimum_size: float,
     volume: _CadVolumeControls | None,
+    maximum_dihedral_degrees: float = 180.0,
     /,
 ) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
     from ._exact_kernels import exact_kernel_parallelism
@@ -15576,12 +15580,13 @@ def _cad_mesh(
             parallelism,
         )
         if volume is None
-        else library["phx_mc_cad_mesh_volume"](
+        else library["phx_mc_cad_construct_volume"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
             ctypes.addressof(volume),
             ctypes.addressof(handle),
             parallelism,
+            maximum_dihedral_degrees,
         )
     )
     del retained

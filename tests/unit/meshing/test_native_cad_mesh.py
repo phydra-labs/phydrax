@@ -1306,6 +1306,7 @@ def _cad_volume_plan(
     *,
     radius_edge: float = 2.0,
     dihedral: float = 15.5,
+    maximum_dihedral: float = 180.0,
     soft_shape: bool = False,
     protect_wall: bool = False,
 ) -> phx.meshing.NativeMeshingPlan:
@@ -1339,6 +1340,7 @@ def _cad_volume_plan(
     return phx.meshing.NativeMeshingProvider(
         NativeMeshingOptions(
             "cad_tetrahedral",
+            cad_maximum_dihedral_degrees=maximum_dihedral,
             volume_schedule=NativeVolumeSchedule(
                 radius_edge_bound=radius_edge,
                 minimum_dihedral_degrees=dihedral,
@@ -1374,6 +1376,26 @@ def test_shape_strength_decides_whether_unmet_shape_cells_are_issues() -> None:
             assert "soft_shape_target_unmet_count" not in achieved
 
 
+def test_direct_cad_reports_unmet_upper_dihedral_target() -> None:
+    box = phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    candidate = _cad_volume_plan(
+        box, 0.5, 1, dihedral=0.0, maximum_dihedral=90.0
+    ).execute(prove=False)
+    report = candidate._construction.compliance
+    assert dict(report.requested)["maximum_dihedral_degrees"] == 90.0
+    achieved = dict(report.achieved)
+    assert (
+        0
+        < achieved["unmet_upper_dihedral_cells"]
+        <= achieved["unmet_unforced_quality_cells"]
+    )
+    assert any(issue.startswith("native_unmet_quality_cells:") for issue in report.issues)
+
+
 def test_soft_shape_keeps_a_determinant_failure_hard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1395,6 +1417,7 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
         min_relative_determinant: float,
         geometry_order: int,
         proximity_controls: tuple[CadProximityControl, ...],
+        maximum_dihedral_degrees: float,
     ) -> CadSolidResult:
         assert min_relative_determinant < 0.9
         return construct(
@@ -1407,6 +1430,7 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
             min_relative_determinant=0.9,
             geometry_order=geometry_order,
             proximity_controls=proximity_controls,
+            maximum_dihedral_degrees=maximum_dihedral_degrees,
         )
 
     monkeypatch.setattr(native_cad_mesh, "cad_mesh_solid", strict)

@@ -19,6 +19,10 @@
 - Tetrahedral quality improvement probes a known violating cell first
   during relocation, rejecting failed trials sooner without changing
   accepted edits or quality evidence.
+- Direct native CAD tetrahedral meshing can target an upper affine dihedral
+  angle as well as the lower angle. Compliance counts cells still above the
+  cap separately from acute rim exemptions. An active cap changes plan and
+  mesh identity; the default leaves the cap disabled.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.

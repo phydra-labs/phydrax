@@ -65,6 +65,7 @@ struct CadVolumeControls {
   int32_t geometry_order = 1;
   const cad::ProximityField* proximity = nullptr;
   std::uint32_t parallelism = 1;
+  double maximum_dihedral_degrees = 180.0;
 };
 
 // The fixed-boundary tetrahedralization of the assembled surface. Points

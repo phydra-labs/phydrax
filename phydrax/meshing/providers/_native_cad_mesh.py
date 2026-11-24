@@ -632,6 +632,7 @@ def construct_cad_solid(prepared: _PreparedDirectBRepCadVolume, /) -> CadSolidRe
             min_relative_determinant=schedule.minimum_relative_determinant,
             geometry_order=order,
             proximity_controls=tuple(native for _, native in proximity),
+            maximum_dihedral_degrees=prepared.options.cad_maximum_dihedral_degrees,
         )
     except ValueError as error:
         if not proximity:
@@ -959,6 +960,12 @@ def execute_cad_solid(
         ("unmet_forced_quality_cells", float(forced)),
         ("unmet_unforced_quality_cells", float(unforced)),
     ]
+    maximum_dihedral = prepared.options.cad_maximum_dihedral_degrees
+    if maximum_dihedral < 180.0:
+        requested.append(("maximum_dihedral_degrees", maximum_dihedral))
+        achieved.append(
+            ("unmet_upper_dihedral_cells", float(stats["unmet_upper_dihedral_cells"]))
+        )
     if solid.surface.surface_refinement_retries:
         achieved.extend(
             (

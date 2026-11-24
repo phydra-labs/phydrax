@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "angle.hpp"
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "parallel.hpp"
@@ -964,8 +965,14 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                                       stats.refine_inserted, stats.refine_unmet,
                                       controls.parallelism);
   if (refined != PHX_MC_OK && refined != PHX_MC_UNRESOLVED) return refined;
-  const TetQualityRequest quality{controls.radius_edge_bound, controls.minimum_dihedral_degrees,
-                                  controls.minimum_relative_determinant};
+  TetQualityRequest quality{controls.radius_edge_bound, controls.minimum_dihedral_degrees,
+                            controls.minimum_relative_determinant};
+  if (controls.maximum_dihedral_degrees == 90.0) {
+    quality.upper_angle_cosine = 0.0;
+  } else if (controls.maximum_dihedral_degrees < 180.0) {
+    quality.upper_angle_cosine =
+        std::max(-1.0, angle::cosine(controls.maximum_dihedral_degrees * (angle::kPi / 180.0)));
+  }
   const int32_t improved = improve_mesh(state, quality, {}, stats.improve_inserted,
                                         stats.improve_collapsed, stats.improve_relocated,
                                         stats.unmet_cells);
@@ -991,8 +998,11 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     std::vector<uint64_t> hard;
     for (const TetUnmetRecord& record : state.unmet_records()) {
       if (record.criterion == PHX_MC_TET_UNMET_SIZE) continue;
+      if (record.criterion == PHX_MC_TET_UNMET_UPPER_DIHEDRAL)
+        ++stats.unmet_upper_dihedral_cells;
       const bool shape = (record.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE ||
-                          record.criterion == PHX_MC_TET_UNMET_DIHEDRAL) &&
+                          record.criterion == PHX_MC_TET_UNMET_DIHEDRAL ||
+                          record.criterion == PHX_MC_TET_UNMET_UPPER_DIHEDRAL) &&
                          record.reason != PHX_MC_TET_UNMET_NONREPRESENTABLE;
       if (shape)
         ++stats.unmet_shape_rows;

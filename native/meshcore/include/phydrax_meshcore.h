@@ -337,7 +337,8 @@ enum phx_mc_tet_unmet_criterion {
   PHX_MC_TET_UNMET_SIZE = 1,
   PHX_MC_TET_UNMET_DIHEDRAL = 2,
   PHX_MC_TET_UNMET_CONSTRUCTION = 3,
-  PHX_MC_TET_UNMET_VALIDITY = 4
+  PHX_MC_TET_UNMET_VALIDITY = 4,
+  PHX_MC_TET_UNMET_UPPER_DIHEDRAL = 5
 };
 /* FIXED_BOUNDARY: refinement's circumcenter lies beyond a fixed face, or an
  * improvement radius-edge residual lies on a constrained face whose own
@@ -4138,12 +4139,13 @@ typedef struct phx_mc_cad_volume_stats {
   int64_t unmet_unforced_cells;
   /* The final unmet quality rows (phx_mc_tet_mesh_unmet criteria) after
    * improvement, split for a soft shape schedule: shape rows are RADIUS_EDGE
-   * or DIHEDRAL rows whose reason is not NONREPRESENTABLE (the schedule's
+   * or lower/upper DIHEDRAL rows whose reason is not NONREPRESENTABLE (the schedule's
    * shape targets); hard cells are unforced cells with any other non-SIZE
    * row (validity, relative determinant, construction or a nonrepresentable
    * shape). unmet_cells counts cells with any row. */
   int64_t unmet_shape_rows, unmet_hard_cells;
   int64_t cubic_ns;  /* Direct cubic node preparation; excludes geometry proof. */
+  int64_t unmet_upper_dihedral_cells; /* Never exempted as a forced acute rim. */
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
@@ -4178,15 +4180,16 @@ typedef struct phx_mc_cad_volume_arrays {
   double* cubic_nodes;      /* (N3, 3), coordinates not in points. */
   int64_t* cubic_cell_nodes; /* (M, 16), indices into cubic_nodes; null when N3 = 0. */
 } phx_mc_cad_volume_arrays;
-PHX_MC_API int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
-                                         const phx_mc_cad_surface_controls* controls,
-                                         const phx_mc_cad_volume_controls* volume,
-                                         phx_mc_cad_surface_result** result,
-                                         int32_t parallelism);
+PHX_MC_API int32_t phx_mc_cad_construct_volume(const phx_mc_cad_model* model,
+                                          const phx_mc_cad_surface_controls* controls,
+                                          const phx_mc_cad_volume_controls* volume,
+                                          phx_mc_cad_surface_result** result,
+                                          int32_t parallelism,
+                                          double maximum_dihedral_degrees);
 /* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits, P3 nodes. */
 PHX_MC_API int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result* result,
                                                int64_t sizes[7]);
-PHX_MC_API int32_t phx_mc_cad_volume_copy_banks(const phx_mc_cad_surface_result* result,
+PHX_MC_API int32_t phx_mc_cad_export_volume(const phx_mc_cad_surface_result* result,
                                                const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
