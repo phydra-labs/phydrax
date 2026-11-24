@@ -139,13 +139,17 @@ struct Run {
   TetEditStatus status = TetEditStatus::kApplied;
 };
 
-enum class CubeBoundary { kUnbound, kFacetWitness, kSourceOnlySeam };
+enum class CubeBoundary { kUnbound, kFacetWitness, kSourceOnlySeam, kTiltedSourceOnlySeam };
 
 // Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
 Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
                double lower = kLower) {
   Cube cube = kuhn_cube(n);
-  const bool seam = boundary == CubeBoundary::kSourceOnlySeam;
+  const bool tilted = boundary == CubeBoundary::kTiltedSourceOnlySeam;
+  const bool seam = boundary == CubeBoundary::kSourceOnlySeam || tilted;
+  if (tilted) {
+    for (std::size_t row = 0; row < cube.points.size(); row += 3) cube.points[row] += 1.0;
+  }
   const bool witnessed = boundary != CubeBoundary::kUnbound;
   const std::int32_t moved = seam ? 1 : n + 2;
   if (witnessed) cube.points[3 * moved + (seam ? 2 : 1)] *= 0.625;
@@ -166,6 +170,12 @@ Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
       for (std::size_t axis = 0; axis < 3; ++axis) {
         planes[9 * row + 3 * corner + axis] = corner == 0 ? a[axis] : p[axis] - a[axis];
       }
+    }
+    if (tilted && cube.sides[row] == 0) {
+      // The declaration is oblique, but its x displacement fits inside
+      // the rounding boxes of all source corners stored at x = 1.
+      planes[9 * row + 3] = 0x1p-56 * planes[9 * row + 5];
+      planes[9 * row + 6] = 0x1p-56 * planes[9 * row + 8];
     }
   }
   const std::vector<std::int64_t> face_ids(cube.sides.begin(), cube.sides.end());
@@ -391,6 +401,20 @@ void check_source_only_seam_relocates_across_a_primitive() {
   }
 }
 
+void check_source_only_seam_refuses_a_tilted_declaration() {
+  const Run run = adapt_cube(3, 5.76, CubeBoundary::kTiltedSourceOnlySeam);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.counters.relocations == 0);
+  if (run.before.vertices.size() < 2 || run.after.vertices.size() < 2) {
+    PHX_CHECK(false);
+    return;
+  }
+  const auto& before = run.before.vertices[1];
+  const auto& after = run.after.vertices[1];
+  PHX_CHECK(before.id == after.id && before.carrier == after.carrier);
+  PHX_CHECK(after.witness.stratum == SourceStratum::kSegment && after.witness.entity == 0);
+}
+
 Run adapt_direction_sensitive_edge(bool permuted, std::uint64_t next_target_cell = 800) {
   // Only the logical body diagonal is editable. Its two evaluation
   // directions straddle the exact binary64 completion threshold.
@@ -519,6 +543,7 @@ int main() {
   check_completion_tolerance_does_not_skip_eligible_collapses();
   check_witnessed_boundary_relocation();
   check_source_only_seam_relocates_across_a_primitive();
+  check_source_only_seam_refuses_a_tilted_declaration();
   metric_worksets_ignore_physical_vertex_order();
   metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");

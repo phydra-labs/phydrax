@@ -4,7 +4,6 @@
 #include "metric_adapt3d.hpp"
 
 #include <algorithm>
-#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -404,7 +403,7 @@ class Adapter {
   std::vector<std::int32_t> witness_face_groups_;
   std::vector<std::int32_t> witness_faces_;
   std::unordered_set<std::int32_t> declared_groups_;
-  std::unordered_set<std::int32_t> exact_plane_groups_;
+  std::unordered_map<std::int32_t, std::size_t> exact_plane_axes_;
   // Source-only primitives use the source segment row, not a live edge ID.
   std::vector<std::array<std::int32_t, 2>> source_only_segments_;
   std::unordered_map<std::uint64_t, std::int32_t> source_only_segment_rows_;
@@ -674,12 +673,25 @@ void Adapter::bind_rounded_sources(const TetMeshSnapshot& snapshot) {
                      !mesh_.implicit_source() && !snapshot.periodic_identity.bound &&
                      snapshot.periodic_orbits.empty() && snapshot.periodic_entity_maps.empty();
   if (!rounded_sources_) return;
-  for (std::size_t row = 0; row < snapshot.source_face_plane_tolerances.size(); ++row) {
-    const auto group = snapshot.source_face_groups[row];
-    if (snapshot.source_face_plane_tolerances[row] == 0.0 && declared_groups_.contains(group)) {
-      exact_plane_groups_.insert(group);
+  // Rounded triangle coordinates do not identify the declared plane: an
+  // oblique declaration can intersect every corner's binary64 rounding box.
+  constexpr std::size_t no_axis = 3;
+  for (std::size_t row = 0; row < snapshot.source_face_groups.size(); ++row) {
+    const double* plane = snapshot.source_face_planes.data() + 9 * row;
+    std::size_t axis = no_axis;
+    if (snapshot.source_face_plane_tolerances[row] == 0.0 && std::isfinite(plane[0])) {
+      axis = 0;
+      while (axis < no_axis && (plane[3 + axis] != 0.0 || plane[6 + axis] != 0.0)) ++axis;
+      for (std::size_t corner = 0; axis < no_axis && corner < 3; ++corner) {
+        const auto point = static_cast<std::size_t>(snapshot.source_faces[3 * row + corner]);
+        if (snapshot.source_points[3 * point + axis] != plane[axis]) axis = no_axis;
+      }
     }
+    const auto [entry, inserted] = exact_plane_axes_.try_emplace(snapshot.source_face_groups[row], axis);
+    if (!inserted && entry->second != axis) entry->second = no_axis;
   }
+  std::erase_if(exact_plane_axes_, [](const auto& entry) { return entry.second == no_axis; });
+  if (exact_plane_axes_.empty()) return;
   std::unordered_set<std::int32_t> live_groups;
   for (const TetSnapshotSegment& segment : snapshot.constrained_segments) {
     live_groups.insert(segment.source);
@@ -2484,15 +2496,11 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   }
   const auto first = group_triangles_.find(first_group);
   if (first == group_triangles_.end()) return std::nullopt;
-  const auto cartesian_axes = [&](std::int32_t group, const CarrierChart& chart) {
-    const auto axes = static_cast<unsigned>(chart.simplices.front().projected_axes);
-    return exact_plane_groups_.contains(group) && std::popcount(axes) == 2 ? axes : 0U;
-  };
   const SourceWitness& witness = mesh_.witness(vertex);
   if (second_group == kNoConstraint) {
     CarrierChartView chart = first->second.view();
     chart.allow_rounded_images = exterior_rounding && witness.stratum == SourceStratum::kNone &&
-                                 cartesian_axes(first_group, first->second) != 0;
+                                 exact_plane_axes_.contains(first_group);
     return chart;
   }
   const auto second = group_triangles_.find(second_group);
@@ -2507,10 +2515,12 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   const CarrierChart& seam = cached->second;
   if (seam.simplices.empty()) return std::nullopt;
   CarrierChartView chart = seam.view();
-  chart.allow_rounded_images =
-      exterior_rounding && source_seam_chart(witness, chart) &&
-      std::popcount(cartesian_axes(first_group, first->second) &
-                    cartesian_axes(second_group, second->second)) == 1;
+  if (exterior_rounding) {
+    const auto a = exact_plane_axes_.find(first_group);
+    const auto b = exact_plane_axes_.find(second_group);
+    chart.allow_rounded_images = a != exact_plane_axes_.end() && b != exact_plane_axes_.end() &&
+                                 a->second != b->second && source_seam_chart(witness, chart);
+  }
   return chart;
 }
 
