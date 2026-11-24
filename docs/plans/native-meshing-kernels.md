@@ -580,3 +580,14 @@ queries only.
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
   fixed-boundary volume refinement against threaded HXT.
+
+### Sequential adaptation worker invariance
+
+F6 native metric edits remain sequential: committing a cavity changes the
+stars and source stencils used to admit the next edit. Exact verification can
+use its own worker cap. On the original coarsen input at `b86af13ec9`, requests
+of 1, 2, 3, 4, and 8 workers produce identical mesh, geometry, metric, stencil,
+transition, lineage, and evidence IDs. Each run completes the strict band with
+no residuals and mean shape 0.8295888232. This qualifies native output
+invariance for that input, not parallel adaptation or the separate MMG3D
+construction ceiling.
