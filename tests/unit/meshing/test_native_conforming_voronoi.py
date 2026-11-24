@@ -139,6 +139,29 @@ def test_kernel_cells_are_convex_and_deterministic() -> None:
         assert np.max(heights) <= 1e-12, face
 
 
+def test_kernel_places_a_generator_at_the_translated_box_center() -> None:
+    lower = np.asarray([2.0, -1.5, 0.25], dtype=np.float64)
+    spans = np.asarray([1.0, 1.25, 0.875], dtype=np.float64)
+    size = 0.25
+    triangles, regions, facets = _cube_triangles()
+    cells = meshcore.conforming_voronoi(
+        lower + _cube_vertices() * spans,
+        triangles,
+        regions,
+        facets,
+        size=size,
+        feature_angle_degrees=20.0,
+        prove=False,
+    )
+
+    assert cells.status is meshcore.MeshcoreStatus.OK
+    center = lower + 0.5 * spans
+    generators = cells.seeds[cells.cell_seeds]
+    # Allow small exact-geometry repair moves, not a shift in lattice phase.
+    nearest = np.max(np.abs(generators - center), axis=1).min()
+    assert nearest <= 0.005 * size
+
+
 def _rotation() -> np.ndarray:
     rotation = np.eye(3)
     for axis, angle in enumerate((0.3, 0.5, 0.7)):
