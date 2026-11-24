@@ -209,6 +209,12 @@ tetrahedra, then implicit volumes, then the CAD solid.
   do not include the separate proof; sampling alone does not certify fidelity.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
 - S5 STEP import and remaining exchange formats. S7 threads and devices at scale.
+  `OMP_NUM_THREADS=1 python -m benchmarks.native_meshing --rows cad-step-washer`
+  times construction on the literal NIST STEP washer at h=.39663 mm and a
+  40 µm wall target. It checks positive tetrahedra and the 18.5°–151.5°
+  affine dihedral and 1.62 radius-edge targets outside the clock. Its output
+  digest binds the mesh to the independent two-directed wall comparison.
+  Import/repair, proof, and on-disk export are excluded.
 - S6 layers, hex-dominant, overset, Voronoi (MAC, planned Nov 20; ledger `cad.md` F8/F9 and
   `providers.md` F13/F14, all run on this Mac; references installed: TIOGA `tioga_drv`, VoroCrust
   `vc_mesh`, OpenFOAM v2606 with snappyHexMesh and cfMesh, Gmsh, Netgen, NekMesh). Today none of the

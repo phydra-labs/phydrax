@@ -105,6 +105,7 @@ class _Row:
     # call by the kernel's own stage clock; None times the whole call.
     stage_seconds: Callable[[object], float] | None = None
     input_sha256: tuple[tuple[str, str], ...] = ()
+    output_sha256: Callable[[object], str] | None = None
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -361,6 +362,7 @@ def _rows(
         ),
         (frozenset({"cad-quadric", "cad-quadric-p2", "cad-quadric-p3"}), _cad_rows),
         (frozenset({"cad-sphere-p2", "cad-sphere-p3"}), _cad_sphere_rows),
+        (frozenset({"cad-step-washer"}), _cad_step_washer_rows),
         (frozenset({"improve-sphere"}), lambda: _improve_rows(improve_inputs)),
         (
             frozenset({"overset-hex", "overset-tet"}),
@@ -752,6 +754,75 @@ def _cad_rows() -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _cad_step_washer_rows() -> tuple[_Row, ...]:
+    from tempfile import TemporaryDirectory
+
+    import phydrax as phx
+    from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
+    from phydrax.meshing.providers._native_cad_mesh import construct_cad_solid
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _external_case,
+        _NIST_STEP_SHA256,
+    )
+
+    with TemporaryDirectory() as directory:
+        model, _, _, _ = _external_case("external-routine", "step", Path(directory))
+    # The fixture loader verifies the literal NIST STEP digest before admission.
+    h = 0.39663 * 0.001
+    deviation = 40e-6
+    minimum_dihedral, maximum_dihedral, radius_edge = 18.5, 151.5, 1.62
+    meshing = phx.meshing
+    scope = meshing.MeshingScope.whole(model, 2)
+    specification = meshing.VolumeMeshingSpec(
+        meshing.CellMeshingTarget(
+            3, 3, meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        scope,
+        meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(
+            meshing.UniformSizeControl(
+                scope, h, strength=meshing.SizeControlStrength.SOFT
+            ),
+        ),
+        maximum_deviation=deviation,
+    )
+    options = meshing.NativeMeshingOptions(
+        "cad_tetrahedral",
+        volume_schedule=meshing.NativeVolumeSchedule(
+            shape_strength=meshing.SizeControlStrength.SOFT,
+            minimum_dihedral_degrees=minimum_dihedral,
+            radius_edge_bound=radius_edge,
+        ),
+        cad_maximum_dihedral_degrees=maximum_dihedral,
+    )
+    prepared = (
+        meshing.NativeMeshingProvider(options)
+        .plan(model, specification, coordinate_contract=model.coordinate_contract)
+        .prepared
+    )
+    if not isinstance(prepared, _PreparedDirectBRepCadVolume):
+        raise RuntimeError("The STEP washer row requires direct native CAD construction.")
+    return (
+        _Row(
+            "cad-step-washer",
+            39663,  # Requested h in units of 10 nm.
+            partial(construct_cad_solid, prepared),
+            _cad_cells,
+            _cad_unmet,
+            quality=partial(
+                _cad_step_washer_quality,
+                h,
+                deviation,
+                minimum_dihedral,
+                maximum_dihedral,
+                radius_edge,
+            ),
+            input_sha256=(("step", _NIST_STEP_SHA256),),
+            output_sha256=_cad_step_washer_digest,
+        ),
+    )
+
+
 def _cad_sphere_rows() -> tuple[_Row, ...]:
     import phydrax as phx
     from phydrax.geometry._meshing_domain import MeshingDomain
@@ -833,6 +904,68 @@ def _cad_unmet(result: object, /) -> int:
         unmet += int(quadratic["final_invalid"] + quadratic["final_unresolved"])
     # Cubic validity is checked on the actual exported map, outside the clock.
     return unmet
+
+
+def _cad_step_washer_quality(
+    h: float,
+    deviation: float,
+    minimum_dihedral: float,
+    maximum_dihedral: float,
+    radius_edge: float,
+    result: object,
+    /,
+) -> tuple[int, dict[str, float]]:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    if (
+        result.status is not _meshcore.MeshcoreStatus.OK
+        or not result.volume.tetrahedra.size
+    ):
+        return 1, {"native_status": float(result.status)}
+    points, cells = result.volume.points, result.volume.tetrahedra
+    corners = points[cells]
+    a, b, c = (corners[:, j] - corners[:, 0] for j in (1, 2, 3))
+    nonpositive = int(np.count_nonzero(np.sum(a * np.cross(b, c), axis=1) <= 0.0))
+    if nonpositive:
+        return nonpositive, {"nonpositive_tets": float(nonpositive)}
+    dihedral = _dihedral_degrees(points, cells)
+    minimum = dihedral.min(axis=1)
+    maximum = dihedral.max(axis=1)
+    ratios = _radius_edge(points, cells)
+    missed = (
+        (minimum < minimum_dihedral)
+        | (maximum > maximum_dihedral)
+        | (ratios > radius_edge)
+    )
+    stats = _cad_stats(result)
+    return int(np.count_nonzero(missed)), {
+        "requested_h": h,
+        "requested_maximum_deviation": deviation,
+        "minimum_dihedral_degrees": float(minimum.min()),
+        "minimum_dihedral_p1_degrees": float(np.quantile(minimum, 0.01)),
+        "maximum_dihedral_degrees": float(maximum.max()),
+        "maximum_radius_edge": float(ratios.max()),
+        "unmet_upper_dihedral_cells": float(stats["unmet_upper_dihedral_cells"]),
+        **{
+            f"{stage}_seconds": float(stats[f"{stage}_ns"]) * 1e-9
+            for stage in ("curve", "face", "assembly", "volume")
+        },
+    }
+
+
+def _cad_step_washer_digest(result: object, /) -> str:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    # Match the independent HXT comparison's NPZ banks (coordinates in mm).
+    digest = sha256()
+    for name, array in (
+        ("X", result.volume.points * 1000.0),
+        ("F", result.surface.triangles),
+        ("T", result.volume.tetrahedra),
+    ):
+        digest.update(repr((name, array.shape, array.dtype.str)).encode())
+        digest.update(memoryview(np.ascontiguousarray(array)).cast("B"))
+    return digest.hexdigest()
 
 
 def _dihedral_degrees(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
@@ -3947,6 +4080,7 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
         "seconds": samples,
         "minimum_seconds": min(samples),
         **adaptation,
+        **({"output_sha256": row.output_sha256(result)} if row.output_sha256 else {}),
     }
 
 

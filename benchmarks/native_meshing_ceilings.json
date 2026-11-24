@@ -114,6 +114,9 @@
       "4925": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 0.303, "allowed_ratio": 1.0},
       "2286": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 2.0, "allowed_ratio": 1.0}
     },
+    "cad-step-washer": {
+      "39663": {"tool": "gmsh 4.15.2 OCC NIST FTC-11 AP203 literal STEP washer, Algorithm 6 / HXT 10, Mesh.Optimize 1, generate(2)+generate(3), h=.39663 mm, one thread", "seconds": 1.931871209293604, "allowed_ratio": 1.0}
+    },
     "improve-sphere": {
       "17274": {"tool": "mmg3d", "seconds": 0.26, "minimum_dihedral_degrees": 22.0, "allowed_ratio": 1.0},
       "142911": {"tool": "mmg3d", "seconds": 0.84, "minimum_dihedral_degrees": 19.3, "allowed_ratio": 1.0},
