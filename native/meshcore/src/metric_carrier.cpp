@@ -693,6 +693,38 @@ bool within_projection_box(const Geometry& geometry, const CarrierSimplex& simpl
   return true;
 }
 
+struct FixedProjection {
+  std::array<double, 3> point{};
+  unsigned axes = 0;
+  bool exact = true;
+};
+
+// Every resolution's weights sum to its scale. A common exact support
+// numerator on an omitted projection axis therefore needs rounding only once.
+template <class View>
+FixedProjection fixed_projection(const View& view, unsigned projected_axes,
+                                 const typename View::Value (&numerators)[4][3],
+                                 int support_size) {
+  using Z = typename View::Value;
+  FixedProjection result;
+  if (projected_axes == 0) return result;
+  for (int axis = 0; axis < 3; ++axis) {
+    const unsigned bit = 1U << axis;
+    if ((projected_axes & bit) != 0) continue;
+    bool constant = true;
+    for (int slot = 1; slot < support_size && constant; ++slot) {
+      constant = Integer<Z>::order(numerators[slot][axis], numerators[0][axis]) == 0;
+    }
+    if (!constant) continue;
+    bool whole = false;
+    result.point[static_cast<std::size_t>(axis)] =
+        view.round_coordinate(numerators[0][axis], 0, whole);
+    result.exact = result.exact && whole;
+    result.axes |= bit;
+  }
+  return result;
+}
+
 template <class View>
 std::vector<Carrier> search(const View& view, const Geometry& geometry, const double* target,
                             const double* current, CarrierChartView chart,
@@ -797,6 +829,11 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
   }
   const int first = exponent - 1 < 1 ? 1 : (exponent - 1 > 53 ? 53 : exponent - 1);
 
+  const bool require_exact = on_simplex && !located.declared;
+  const FixedProjection fixed = fixed_projection(view, located.projected_axes,
+                                                  numerators, support_size);
+  if (require_exact && !fixed.exact) return found;
+
   // The partial sums of the weights in located order, all but the last, as
   // floor(sum 2^54) with whether the floor is the value: every coarser
   // rounding follows from these 55 bits and that flag.
@@ -836,8 +873,10 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
         scale - previous;
     Carrier carrier;
     carrier.bits = bits;
-    carrier.exact = true;
+    carrier.point = fixed.point;
+    carrier.exact = fixed.exact;
     for (int axis = 0; axis < 3; ++axis) {
+      if ((fixed.axes & (1U << axis)) != 0) continue;
       Z value;
       for (int slot = 0; slot < support_size; ++slot) {
         const std::size_t index = static_cast<std::size_t>(slot);
@@ -847,13 +886,15 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
       }
       bool whole = false;
       carrier.point[static_cast<std::size_t>(axis)] = view.round_coordinate(value, bits, whole);
-      if (!whole) carrier.exact = false;
+      if (!whole) {
+        if (require_exact) return false;
+        carrier.exact = false;
+      }
     }
     const double dx = carrier.point[0] - goal[0];
     const double dy = carrier.point[1] - goal[1];
     const double dz = carrier.point[2] - goal[2];
     if (!((dx * dx + dy * dy) + dz * dz < distance)) return false;
-    if (on_simplex && !carrier.exact && !located.declared) return false;
     // The support in ascending row order: one stencil has one spelling.
     for (int slot = 0; slot < support_size; ++slot) {
       const std::size_t index = static_cast<std::size_t>(slot);
