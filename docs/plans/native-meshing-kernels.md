@@ -503,6 +503,30 @@ independent quality misses. The maximum tetrahedron radius-edge ratio was
 1.999924, the maximum tetrahedron circumradius divided by h was 0.999987,
 and the maximum boundary circumradius divided by its bound was 0.972409.
 
+### Matched medium 3D point-set qualification
+
+The medium parallel path gives each column exclusive access to its wholly
+owned cavity cells and to nonconflicting finite neighbors across owned faces.
+Each such neighbor shares three vertices with the cavity, so it cannot be
+adjacent to wholly owned cells in two regions. Conflicting mixed cells and
+ghost neighbors defer. Walk addresses come from the ordered region, not the
+worker that runs it. The existing serial and large-grid paths are unchanged.
+
+On the original 10,000-point banks, all eight ordinary/regular comparisons
+at 1, 2, 4, and 8 workers passed. Each reports the minimum of three interleaved
+calls, with the reference ceiling the faster of serial or matching-worker
+CGAL. The two formerly failing four-worker rows were:
+
+| Triangulation | Phydrax (ms) | Live CGAL ceiling (ms) | Previous CGAL ceiling (ms) |
+|:---|---:|---:|---:|
+| Ordinary | 17.815 | 27.323 | 20.820 |
+| Regular | 18.644 | 28.552 | 20.173 |
+
+The original cells and visible-vertex maps were byte-identical at 1, 2, 3,
+4, and 8 workers. The campaign started at one-minute load 3.21; load was
+4.24 before the regular arm, so this is not the final quiet integrated
+matrix. Both rows also beat their earlier, lower ceilings at matched inputs.
+
 ### Matched affine point-location qualification
 
 All eight F10 affine location comparisons passed against libigl 2.6.3 on the
