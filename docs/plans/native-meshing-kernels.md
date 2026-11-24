@@ -365,13 +365,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
     semantics (a non-planar face is the fan from its exact vertex average; the certifier's
     `polytope_face_triangles`), target `CellFamilyPolicy(required=("polyhedron",))`, hex fraction
     by shape from the `cell_shape` marker (0 six quadrilaterals, 1 step prism, 2 other).
-    Certification (prove): every cell by exact orient3d of its fan decomposition tetrahedra about
-    both its centroid (OpenFOAM's decomposition) and its exact distinct-vertex average (the
-    certifier's local map); smoothing and repair keep both stars, so prove=False publishes only
-    cells prove=True can certify; plus a closed genus-0 boundary, hence star-shaped and embedded;
-    anything failing is UNRESOLVED. The boundary distance (vertices on the surface,
-    sampled face points) is reported; the route requests `volume_plc_fidelity` (the Voronoi
-    route's contract, over the exact fan wall) against `maximum_deviation` or the boundary size.
+    Certification (`prove=True` or `candidate.prove()`): exact `orient3d` checks the fan
+    decomposition tetrahedra of every cell about both its centroid (OpenFOAM's decomposition)
+    and its distinct-vertex average (the published local map). The canonical acceptance schedule
+    separately requires global embedding, topology, and quality, and certifies the two-sided
+    distance between the mesh's exterior fan and the PLC exterior against `maximum_deviation`
+    or the boundary size (`volume_plc_fidelity`, not exact PLC material coverage). The default
+    `prove=False` returns an uncertified candidate; construction screens are not acceptance,
+    and a failed proof refuses publication as a certified result.
     Route: `plc_octree_hex_dominant` for `HEX_DOMINANT_POLYHEDRAL_TRANSITION` (sizes from a volume
     and a boundary uniform size control, layers from a PROVIDER `BoundaryLayerControl`). The
     tet-to-hex split (`plc_hex_dominant`, `HEX_DOMINANT_SIMPLEX_TRANSITION`) stays: it is the
