@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Native metric adaptation batches fixed-width entity keys and skips
+  unused source-face lookup tables, preserving entity order and identities.
 - Native CAD face sizing shares the nearest-chord traversal between its
   size floor and fidelity budget. Boundary grading visits the lower-bound
   child first; size and fidelity criteria are unchanged.
