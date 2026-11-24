@@ -680,6 +680,10 @@
 - Native 3D boundary relocation reuses exact source-facet coverage and rim
   indexes across edits of the same mesh. Witness, orientation, coverage,
   and rollback checks are unchanged.
+- Stencil-based native 3D facet relocation can use exact corner containment
+  when the declared Cartesian group's oriented source triangles cover a
+  certified convex rim exactly once. Uncertified groups and witness-only
+  moves keep the full facet proof.
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
   Where supported, `candidate.prove()` certifies that mesh later. Certified
   octree hex-dominant meshes and owner-local execution require

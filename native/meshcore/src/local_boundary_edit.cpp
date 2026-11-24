@@ -1238,7 +1238,11 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
         return TetEditStatus::kRejectedTopology;
       }
       const TetEditFacet check{facet.id, facet.vertices, facet.source, facet.orientation, false};
-      if (!mesh.source_face_valid(check, &overlay, prepared_declared_group(mesh, facet.source))) {
+      // The stencil route names the ordinary exact binary64 source bank.
+      // Witness-only moves (including authored rational geometry) keep the
+      // full proof even when the rounded source appears Cartesian.
+      if (!mesh.source_face_valid(check, &overlay, prepared_declared_group(mesh, facet.source),
+                                  moved_stencil != nullptr)) {
         return mesh.source_face_refusal_status();
       }
     }

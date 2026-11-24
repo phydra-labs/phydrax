@@ -953,6 +953,10 @@ class TetMesh {
   struct DeclaredGroup {
     std::vector<std::int32_t> rows;
     std::vector<std::array<std::int32_t, 2>> boundary_edges;
+    // Counterclockwise corners, with collinear subdivisions removed only
+    // after proving the complete oriented boundary of the source chain.
+    std::vector<std::array<double, 2>> convex_rim;
+    int convex_axis = -1;
     std::int8_t orientation = 0;
   };
   // Installs the declared planes (empty: none) and derives declared_groups_;
@@ -961,11 +965,13 @@ class TetMesh {
   // manifold triangulation in projection.
   int32_t install_declared_planes(std::span<const double> planes,
                                   std::span<const double> tolerances);
+  int exact_cartesian_axis(const DeclaredGroup& group) const;
   struct PreparedFacetGroup;
   // Subfacet validity on a declared group (see source_face_valid).
   bool declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
                            const SourceWitness* const* witness_records,
-                           std::int8_t orientation, const PreparedFacetGroup* prepared) const;
+                           std::int8_t orientation, const PreparedFacetGroup* prepared,
+                           bool allow_convex_rim) const;
   struct PreparedFacetGroup {
     PreparedFacetGroup() = default;
     PreparedFacetGroup(const TetMesh& mesh, const DeclaredGroup& declared);
@@ -988,7 +994,8 @@ class TetMesh {
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
                          const RelocationOverlay* overlay = nullptr,
-                         const PreparedFacetGroup* group = nullptr) const;
+                         const PreparedFacetGroup* group = nullptr,
+                         bool allow_convex_rim = false) const;
   TetEditStatus source_face_refusal_status() const noexcept {
     return implicit_source_ && implicit_source_->last_inconclusive
                ? TetEditStatus::kUncertainPredicate : TetEditStatus::kInvalidGeometry;

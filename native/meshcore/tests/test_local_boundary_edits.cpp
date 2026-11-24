@@ -2739,6 +2739,75 @@ void prepared_relocation_rebinds_to_new_source() {
   }
 }
 
+void relocation_rejects_a_hole_or_notch_in_declared_source(int patch_x) {
+  Box box = make_box({4, 4, 4}, false);
+  box.source_points = box.points;
+  box.source_faces = box.faces;
+  box.segments.clear();
+  box.segment_sources.clear();
+  box.source_segments.clear();
+  box.segment_groups.clear();
+  box.segment_ids.clear();
+  box.segment_tolerances.clear();
+  box.witnesses.assign(box.points.size() / 3, SourceWitness{});
+  box.face_ids.resize(box.face_sources.size());
+  for (std::size_t row = 0; row < box.face_ids.size(); ++row) {
+    box.face_ids[row] = static_cast<std::int64_t>(row);
+  }
+  box.face_tolerances.assign(box.face_sources.size(), 0.0);
+  box.face_plane_tolerances.assign(box.face_sources.size(), 0.0);
+  box.orientations.assign(box.face_sources.size(), 1);
+  int patch_faces = 0;
+  for (std::size_t row = 0; row < box.face_sources.size(); ++row) {
+    const auto& piece = box.pieces.at(box.face_sources[row]);
+    const auto axis = static_cast<std::size_t>(piece.axis);
+    std::array<double, 9> plane{};
+    plane[axis] = piece.value;
+    plane[3 + (axis + 1) % 3] = 1.0;
+    plane[6 + (axis + 2) % 3] = 1.0;
+    box.face_planes.insert(box.face_planes.end(), plane.begin(), plane.end());
+    const auto triangle = std::span(box.faces).subspan(3 * row, 3);
+    if (axis == 2 && piece.value == 0.0 &&
+        std::ranges::all_of(triangle, [&](std::int32_t vertex) {
+          const double* p = box.points.data() + 3 * vertex;
+          return p[0] >= patch_x && p[0] <= patch_x + 1 && p[1] >= 2.0 && p[1] <= 3.0;
+        })) {
+      box.face_sources[row] = 6;
+      ++patch_faces;
+    }
+  }
+  PHX_CHECK(patch_faces == 2);
+  box.face_groups = box.face_sources;
+  TetMesh local(BoundaryPolicy::kConforming);
+  TetMesh batch(BoundaryPolicy::kConforming);
+  if (!build(local, box, {}) || !build(batch, box, {})) return;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local));
+  const std::int32_t vertex = patch_x + 2 * 5;
+  const TetEditVertex moved{local.vertex_id(vertex), {patch_x + 0.25, 2.25, 0.0}};
+  const auto star = incidence.vertex_star(vertex);
+  for (std::int32_t cell : star) {
+    const auto& tetrahedron = local.tet(cell);
+    const double* p[4];
+    for (int k = 0; k < 4; ++k) {
+      const auto slot = tetrahedron.v[k];
+      p[k] = slot == vertex ? moved.carrier.data() : local.point(slot);
+    }
+    PHX_CHECK(orient3d(p[0], p[1], p[2], p[3]) > 0);
+  }
+  const std::array<std::int32_t, 3> rows{vertex, vertex + 1, vertex + 5};
+  const std::array<double, 3> weights{0.5, 0.25, 0.25};
+  const SourceStencil stencil{rows, weights};
+  const TetEditStatus current = incidence.relocate(local, std::span(&moved, 1), star, &stencil);
+  const MovePlan plan{incidence.vertex_star(vertex), moved};
+  TetEditStatus reference = TetEditStatus::kApplied;
+  PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, plan), reference));
+  // Inside the hull, but live facets assigned to the outer group would
+  // enter the patch that belongs to the other source.
+  PHX_CHECK(current == TetEditStatus::kInvalidGeometry && current == reference);
+  PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+}
+
 void stencil_relocations_respect_incident_segments() {
   for (bool split_faces : {false, true}) {
     Box box = witness_free_box({4, 4, 4}, split_faces);
@@ -2793,6 +2862,8 @@ int main() {
   boundary_lookups_require_bound_mesh();
   stencil_relocations_verify_the_candidate();
   prepared_relocation_rebinds_to_new_source();
+  relocation_rejects_a_hole_or_notch_in_declared_source(2);  // bounded hole
+  relocation_rejects_a_hole_or_notch_in_declared_source(3);  // open notch
   stencil_relocations_respect_incident_segments();
   return phx::mc::test::finish("test_local_boundary_edits");
 }

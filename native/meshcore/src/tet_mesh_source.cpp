@@ -104,6 +104,103 @@ int projected_orientation(const Normal* n, const Expansion* a, const Expansion* 
   return triple_sign(n, ab, ac);
 }
 
+using DeclaredEdge = std::array<std::int32_t, 2>;
+using DeclaredEdges = std::map<DeclaredEdge, std::vector<DeclaredEdge>>;
+using PlanarPoint = std::array<double, 2>;
+
+struct RimPoint {
+  PlanarPoint point;
+  std::int32_t row;
+};
+
+// Both monotone chains retain collinear boundary subdivisions. These are
+// needed for the exact oriented-edge comparison, not for containment.
+std::vector<std::size_t> hull_with_subdivisions(std::span<const RimPoint> points) {
+  std::vector<std::size_t> hull;
+  hull.reserve(points.size());
+  const auto append = [&](std::size_t row, std::size_t start) {
+    while (hull.size() >= start + 2 &&
+           orient2d(points[hull[hull.size() - 2]].point.data(), points[hull.back()].point.data(),
+                    points[row].point.data()) < 0) {
+      hull.pop_back();
+    }
+    hull.push_back(row);
+  };
+  for (std::size_t row = 0; row < points.size(); ++row) append(row, 0);
+  hull.pop_back();
+  const std::size_t upper = hull.size();
+  for (std::size_t row = points.size(); row-- > 0;) append(row, upper);
+  hull.pop_back();
+  return hull;
+}
+
+std::vector<PlanarPoint> certified_convex_rim(const DeclaredEdges& edges, std::size_t rim_count,
+                                              std::span<const double> source_points,
+                                              int axis, int winding) {
+  if (rim_count < 3) return {};
+  std::vector<RimPoint> points;
+  points.reserve(2 * edges.size());
+  for (const auto& entry : edges) {
+    for (const std::int32_t row : entry.first) {
+      const double* point = source_points.data() + 3 * static_cast<std::size_t>(row);
+      points.push_back({{point[(axis + 1) % 3], point[(axis + 2) % 3]}, row});
+    }
+  }
+  std::ranges::sort(points, [](const RimPoint& a, const RimPoint& b) {
+    return a.point < b.point || (a.point == b.point && a.row < b.row);
+  });
+  points.erase(std::ranges::unique(points, {}, &RimPoint::row).begin(), points.end());
+  if (points.size() < 3 ||
+      std::ranges::adjacent_find(points, {}, &RimPoint::point) != points.end()) return {};
+  const auto hull = hull_with_subdivisions(points);
+  if (hull.size() != rim_count) return {};
+  std::vector<PlanarPoint> rim;
+  for (std::size_t row = 0; row < hull.size(); ++row) {
+    const auto& a = points[hull[row]];
+    const auto& b = points[hull[(row + 1) % hull.size()]];
+    const auto edge = edges.find({std::min(a.row, b.row), std::max(a.row, b.row)});
+    const DeclaredEdge directed = winding > 0 ? DeclaredEdge{a.row, b.row}
+                                               : DeclaredEdge{b.row, a.row};
+    if (edge == edges.end() || edge->second.size() != 1 || edge->second.front() != directed) {
+      return {};
+    }
+    const auto& c = points[hull[(row + 2) % hull.size()]];
+    if (orient2d(a.point.data(), b.point.data(), c.point.data()) > 0) rim.push_back(b.point);
+  }
+  // The positive source 2-chain has exactly the oriented hull as boundary.
+  // Winding number gives multiplicity one inside and zero outside, hence no
+  // holes or overlaps of positive area. Closure follows from finite rows.
+  if (rim.size() < 3) return {};
+  return rim;
+}
+
+bool convex_rim_contains(std::span<const PlanarPoint> rim, int axis, const Expansion* normal,
+                         const double* const* carriers, const SourceWitness* const* witnesses,
+                         const Expansion (&corners)[3][3]) {
+  const int u = (axis + 1) % 3;
+  const int v = (axis + 2) % 3;
+  const int sign = normal[axis].sign();
+  for (int corner = 0; corner < 3; ++corner) {
+    const bool exact_carrier = witnesses[corner]->stratum == SourceStratum::kNone;
+    const PlanarPoint point{carriers[corner][u], carriers[corner][v]};
+    for (std::size_t row = 0; row < rim.size(); ++row) {
+      const auto& a = rim[row];
+      const auto& b = rim[(row + 1) % rim.size()];
+      if (exact_carrier) {
+        if (orient2d(a.data(), b.data(), point.data()) < 0) return false;
+      } else {
+        Expansion first[3], second[3];
+        first[u] = Expansion(a[0]);
+        first[v] = Expansion(a[1]);
+        second[u] = Expansion(b[0]);
+        second[v] = Expansion(b[1]);
+        if (sign * projected_orientation(normal, first, second, corners[corner]) < 0) return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Whether the projected closed segment pq meets the open interior of the
 // positively oriented projected triangle t (separating-axis test over the
 // triangle's edges and the segment's line, all exact).
@@ -769,8 +866,7 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
       return PHX_MC_INVALID_INPUT;
     }
   }
-  using Edge = std::array<std::int32_t, 2>;
-  std::map<std::int32_t, std::map<Edge, std::vector<Edge>>> group_edges;
+  std::map<std::int32_t, DeclaredEdges> group_edges;
   for (std::size_t row = 0; row < face_count; ++row) {
     const std::int32_t plane_row = static_cast<std::int32_t>(row);
     const double* plane = face_plane(plane_row);
@@ -797,7 +893,7 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
     for (std::size_t corner = 0; corner < 3; ++corner) {
       const std::int32_t a = source_faces_[3 * row + corner];
       const std::int32_t b = source_faces_[3 * row + (corner + 1) % 3];
-      edges[Edge{std::min(a, b), std::max(a, b)}].push_back(Edge{a, b});
+      edges[{std::min(a, b), std::max(a, b)}].push_back({a, b});
     }
   }
   // The rows of a declared group triangulate their union as an oriented
@@ -812,8 +908,32 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
         return PHX_MC_INVALID_INPUT;
       }
     }
+    if (const int axis = exact_cartesian_axis(declared); axis >= 0) {
+      Expansion normal[3];
+      plane_normal(face_plane(declared.rows.front()), normal);
+      declared.convex_rim = certified_convex_rim(edges, declared.boundary_edges.size(), source_points_,
+                                                   axis, normal[axis].sign() * declared.orientation);
+      if (!declared.convex_rim.empty()) declared.convex_axis = axis;
+    }
   }
   return PHX_MC_OK;
+}
+
+int TetMesh::exact_cartesian_axis(const DeclaredGroup& group) const {
+  if (metric_active_) return -1;
+  const double* plane = face_plane(group.rows.front());
+  int axis = 0;
+  while (axis < 3 && (plane[3 + axis] != 0.0 || plane[6 + axis] != 0.0)) ++axis;
+  if (axis == 3) return -1;
+  for (const auto source_row : group.rows) {
+    const auto row = static_cast<std::size_t>(source_row);
+    if (source_face_plane_tolerances_[row] != 0.0 || source_face_tolerances_[row] != 0.0) return -1;
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const auto point = static_cast<std::size_t>(source_faces_[3 * row + corner]);
+      if (source_points_[3 * point + axis] != plane[axis]) return -1;
+    }
+  }
+  return axis;
 }
 
 TetMesh::PreparedFacetGroup::PreparedFacetGroup(const TetMesh& mesh, const DeclaredGroup& declared) {
@@ -896,7 +1016,7 @@ void TetMesh::prepare_declared_group(const DeclaredGroup& declared,
 bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
                                   const SourceWitness* const* witness_records,
                                   std::int8_t orientation,
-                                  const PreparedFacetGroup* prepared) const {
+                                  const PreparedFacetGroup* prepared, bool allow_convex_rim) const {
   // Every corner has an admitted record on the plane; the exact positions,
   // projected onto the plane, form a triangle of the facet's orientation that
   // the union of the group's rows covers: no edge of the union's boundary
@@ -919,6 +1039,15 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
       ? projected_orientation(physical_normal, corners[0], corners[1], corners[2])
       : projected_orientation(normal, corners[0], corners[1], corners[2]);
   if (side == 0 || side != orientation * group.orientation) return false;
+  if (allow_convex_rim && group.convex_axis >= 0) {
+    const int axis = group.convex_axis;
+    const Expansion level(plane[axis]);
+    if (std::ranges::all_of(corners, [&](const auto& point) {
+          return (point[axis] - level).is_zero();
+        })) {
+      return convex_rim_contains(group.convex_rim, axis, normal, carriers, witness_records, corners);
+    }
+  }
   const Expansion* triangle[3] = {corners[0], side > 0 ? corners[1] : corners[2],
                                   side > 0 ? corners[2] : corners[1]};
   const bool indexed = prepared != nullptr && prepared->declared_projection_axis >= 0 &&
@@ -1063,7 +1192,8 @@ bool TetMesh::declared_split_children(std::int32_t source, const std::int32_t* p
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
                                 const RelocationOverlay* overlay,
-                                const PreparedFacetGroup* group) const {
+                                const PreparedFacetGroup* group,
+                                bool allow_convex_rim) const {
   if (implicit_source_) implicit_source_->last_inconclusive = false;
   if (facet.source < 0 || (facet.orientation != 1 && facet.orientation != -1)) return false;
   std::array<std::int32_t, 3> slots{};
@@ -1141,7 +1271,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
         return false;
       }
     }
-    return declared_face_valid(declared->second, carriers, witness_records, facet.orientation, group);
+    return declared_face_valid(declared->second, carriers, witness_records, facet.orientation, group,
+                               allow_convex_rim);
   }
 
   PreparedFacetGroup local;
