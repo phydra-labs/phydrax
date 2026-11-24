@@ -3105,6 +3105,9 @@ The native owner rechecks every affected cell and every retained or replaced
 facet and segment at the new carrier before committing atomically.
 Moved surviving vertex IDs retain relocation lineage and the exact source
 stencil; collapsed source-vertex ancestry remains explicit after the move.
+The in-place collapse screen distinguishes a newly created long edge from an
+unchanged survivor spoke. An unchanged spoke cancels in the band comparison
+but is still measured and reported on the result.
 Within one directed star, collapse reuses its invariant pre-edit objective and
 identical rejected numerical variants. Source-stencil checks and native
 admission remain independent; this does not retain proposals across changed stars.

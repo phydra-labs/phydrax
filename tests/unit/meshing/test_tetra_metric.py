@@ -1565,6 +1565,50 @@ def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
     )
 
 
+def test_in_place_collapse_can_retain_an_unsplittable_long_spoke() -> None:
+    # The long boundary segment has consecutive binary64 y coordinates.
+    # It cannot split exactly, but retaining it does not worsen the band
+    # when collapsing the short edge from the interior point into its end.
+    points = np.asarray(
+        (
+            (0.0, 1.0, 0.0),
+            (1.75, np.nextafter(1.0, 2.0), 0.0),
+            (0.875, 1.875, 0.0),
+            (0.875, 1.0, 0.875),
+            (0.5, 1.0625, 0.0625),
+        ),
+        dtype=np.float64,
+    )
+    source = _mesh_result(points, [[4, *face] for face in combinations(range(4), 3)])
+    mesh = source.mesh
+    edge_keys = entity_keys(mesh, 1)
+    segment = np.all(edge_keys == np.asarray((0, 1), dtype=np.int64), axis=1)
+    tensor = np.broadcast_to(np.eye(3, dtype=np.float64), (5, 3, 3)).copy()
+    outcome = execute_tetra_metric_adaptation(
+        source,
+        tensor,
+        cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=segment.astype(np.int64),
+        protected_edges=np.zeros(edge_keys.shape[0], dtype=np.bool_),
+        fixed_vertices=np.asarray((True, True, True, True, False), dtype=np.bool_),
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=False,
+    )
+
+    evidence = outcome.evidence
+    assert evidence.status is TetraMetricStatus.STALLED
+    assert evidence.collapses == 1 and evidence.splits == 0
+    assert evidence.out_of_range_edges == evidence.unrepresentable_edges == 1
+    assert evidence.unmet_edges[0].vertex_ids == (0, 1)
+    assert evidence.unmet_edges[0].kind is TetraMetricUnmetKind.UNREPRESENTABLE
+    np.testing.assert_array_equal(outcome.edit.vertex_global_ids, np.arange(4))
+    np.testing.assert_array_equal(outcome.edit.coordinates, points[:4])
+    assert _target_edges(outcome) == set(combinations(range(4), 2))
+    assert evidence.maximum_region_volume_error <= 1.0e-14
+
+
 def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
     source = _source()
     mesh = source.mesh

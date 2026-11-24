@@ -283,6 +283,8 @@ class Adapter {
     SourceWitness witness;
     std::array<double, 9> metric{};
   };
+  bool may_collapse_in_place(std::int32_t removed, std::int32_t kept,
+                             const LocalIncidence::Star& removed_star) const;
   bool plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePlan& plan);
   // Commits a collapse: in place of an interior vertex star-locally
   // (LocalIncidence::replace_cavity), of a boundary vertex through
@@ -1212,6 +1214,45 @@ std::int64_t Adapter::split_sweep() {
 
 // ------------------------------------------------------------- collapses ---
 
+bool Adapter::may_collapse_in_place(std::int32_t removed, std::int32_t kept,
+                                    const LocalIncidence::Star& removed_star) const {
+  double longest_removed = 0.0;
+  double longest_candidate = 0.0;
+  for (std::int32_t slot : removed_star) {
+    for (std::int32_t other : mesh_.tet(slot).v) {
+      if (other == removed) continue;
+      if (!protected_edge(removed, other)) {
+        longest_removed = std::max(longest_removed, edge_length(removed, other));
+      }
+      if (other != kept && !protected_edge(kept, other)) {
+        longest_candidate = std::max(longest_candidate, edge_length(kept, other));
+      }
+    }
+  }
+  double above_removed = 0.0;
+  double above_candidate = 0.0;
+  double below = 0.0;
+  band_quanta(longest_removed, above_removed, below);
+  band_quanta(longest_candidate, above_candidate, below);
+  if (!(above_candidate > above_removed)) return true;
+
+  // Retained survivor spokes cancel in the full band comparison. Confirm
+  // that an excess quantum belongs to a new edge before refusing a collapse.
+  const double threshold = std::max(longest_removed, kUpperLength);
+  for (std::int32_t slot : removed_star) {
+    for (std::int32_t other : mesh_.tet(slot).v) {
+      if (other == removed || other == kept || protected_edge(kept, other)) continue;
+      const double value = edge_length(kept, other);
+      if (!(value > threshold)) continue;
+      band_quanta(value, above_candidate, below);
+      if (above_candidate > above_removed && incidence_.edge_valence(kept, other) == 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePlan& plan) {
   const int dimension = mesh_.vertex_dimension(removed);
   if (mesh_.protected_vertex(removed) || mesh_.protection_radius(removed) > 0.0 ||
@@ -1225,35 +1266,8 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
     return false;
   }
   const LocalIncidence::Star removed_star = incidence_.vertex_star(removed);
-  bool in_place = true;
-  // Screen: a survivor spoke longer than every spoke the removed vertex loses
-  // makes the long violations grow unless the survivor already has a longer
-  // one; such collapses are passed over without building the star.
-  {
-    double longest_removed = 0.0;
-    double longest_new = 0.0;
-    for (std::int32_t slot : removed_star) {
-      const Tetrahedron& cell = mesh_.tet(slot);
-      for (int corner = 0; corner < 4; ++corner) {
-        const std::int32_t other = cell.v[corner];
-        if (other == removed || protected_edge(removed, other)) continue;
-        longest_removed = std::max(longest_removed, edge_length(removed, other));
-        if (other != kept && !protected_edge(kept, other)) {
-          longest_new = std::max(longest_new, edge_length(kept, other));
-        }
-      }
-    }
-    double above_removed = 0.0;
-    double above_new = 0.0;
-    double below = 0.0;
-    band_quanta(longest_removed, above_removed, below);
-    band_quanta(longest_new, above_new, below);
-    if (above_new > above_removed) {
-      // In place the collapse adds a long spoke; only a survivor move may do.
-      if (!survivor_moves_) return false;
-      in_place = false;
-    }
-  }
+  const bool in_place = may_collapse_in_place(removed, kept, removed_star);
+  if (!in_place && !survivor_moves_) return false;
   const LocalIncidence::Star kept_star = incidence_.vertex_star(kept);
   if (removed_star.empty() || kept_star.empty()) return false;
   if (dimension < 3) {
