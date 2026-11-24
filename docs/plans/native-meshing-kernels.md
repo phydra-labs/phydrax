@@ -493,14 +493,20 @@ public-route clocks, not the construction comparison or a general bound.
 
 ### Original graded coarsening
 
-The isolated adaptation candidate `26928e9440` passes the scientific
-requirements on the authenticated original 10,452-cell source: 1,876 output
-tetrahedra, zero out-of-band edges or inversions, mean quality 0.82959
-(required 0.827), and raw midpoint band share 0.86422 (required 0.794).
-Certification and transfer complete on the real candidate. This is not an
-integration or throughput pass: paired warm construction was about 1.70 s
-against the original 0.377 s ceiling. Most of that clock is native edit
-work, not the separately timed certification and transfer.
+The isolated wall-ring candidate `cbf6be8d7b` passes the scientific
+requirements on the authenticated original 10,452-cell source: 1,843
+output tetrahedra, zero out-of-band edges or inversions, mean quality
+0.82748 (required 0.827), and raw midpoint band share 0.87486 (required
+0.794). Certification and transfer complete. The wall-ring proposal cut
+accepted boundary moves from 2,660 to 1,126 with the same source admission
+and transport checks, but also lowered mean quality from 0.82959.
+
+Paired one-worker warm construction fell from 1.72 to 1.14 seconds,
+still above the original 0.377-second ceiling. These are internal paired
+clocks, not a new matched MMG3D result. The candidate's mesh, metric,
+lineage, stencil, and evidence IDs match when requesting 1, 2, 3, 4,
+or 8 workers. Edits remain sequential; the worker cap applies only to
+the supporting verification kernels.
 
 ### Matched fixed-wall volume qualification
 
@@ -644,3 +650,38 @@ queries only.
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
   fixed-boundary volume refinement against threaded HXT.
+
+### Rank-matched sphere hex-dominant comparison
+
+On `62e8398582`, the original F8 sphere without layers uses an identical
+triangulated wall and the same nominal h = 0.05464 on both tools.
+OpenFOAM v2606 `snappyHexMesh` reports the requested rank count in each of
+three interleaved pairs. The minima are:
+
+| Native worker requests / reference MPI ranks | Phydrax (s) | snappyHexMesh (s) |
+|---:|---:|---:|
+| 1 | 4.697 | 10.525 |
+| 2 | 4.795 | 8.428 |
+| 4 | 4.772 | 6.253 |
+| 8 | 4.805 | 5.122 |
+
+All reference meshes pass `checkMesh`. The best eligible arm at each rank
+also has zero independently measured nonpositive decomposition tets.
+Phydrax clears the registered quality limits and improves hex fraction,
+sampled wall distance, maximum and mean nonorthogonality, and skewness
+against those reference outputs. Native result IDs are identical at 1, 2,
+3, 4, and 8 requests. The native clock stays flat; the data demonstrate
+invariance and live comparisons, not parallel native speedup.
+
+The clocks include candidate construction on Phydrax and the meshing
+subprocess on OpenFOAM (including MPI startup for parallel ranks).
+Background meshing, partitioning, reconstruction, quality checks, and
+proof are separate. Output counts differ (89,219 versus 74,305). This
+qualifies only the sphere without layers against `snappyHexMesh`, not
+matched-team cfMesh or any layer-thickness comparison.
+
+The two-rank layer probes do not qualify as direct comparisons.
+`snappyHexMesh` uses relative layer thicknesses in the archived cases,
+whereas Phydrax requests an absolute thickness schedule. Its quadric
+with two requested layers also returned eight cells with nonpositive
+decomposition tets despite passing `checkMesh`.
