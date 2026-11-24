@@ -45,6 +45,8 @@
 - After reaching the metric band through edits, interior relocation can
   improve mean shape by retransporting the exact source metric without
   moving boundary or protected vertices or introducing violations.
+- Native adaptation's shape sweeps preserve stricter requested completion
+  lengths as well as the unit band.
 - Native metric adaptation batches fixed-width entity keys and skips
   unused source-face lookup tables, preserving entity order and identities.
 - Native adaptation skips uniform organization sorting and already aligned

@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <span>
 #include <vector>
 
 #include "check.hpp"
@@ -139,6 +140,52 @@ struct Run {
   TetEditStatus status = TetEditStatus::kApplied;
 };
 
+Run adapt_constant_metric(TetMesh& mesh, std::span<const double> points,
+                          std::span<const std::int32_t> tetrahedra, double c,
+                          double lower, bool topology, bool relocation = true) {
+  Run run;
+  PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
+  metric::AdaptInput input;
+  input.source_points.assign(points.begin(), points.end());
+  const double tensor[9] = {c, 0, 0, 0, c, 0, 0, 0, c};
+  const double logarithm[9] = {std::log(c), 0, 0, 0, std::log(c), 0, 0, 0, std::log(c)};
+  const auto count = points.size() / 3;
+  for (std::size_t row = 0; row < count; ++row) {
+    input.source_metrics.insert(input.source_metrics.end(), tensor, tensor + 9);
+    input.source_logarithms.insert(input.source_logarithms.end(), logarithm, logarithm + 9);
+    input.source_vertex_ids.push_back(row);
+  }
+  input.source_cells.assign(tetrahedra.begin(), tetrahedra.end());
+  // The live mesh is the source: each vertex its own source row.
+  input.stencil_offsets.push_back(0);
+  for (const auto& vertex : run.before.vertices) {
+    input.vertex_ids.push_back(vertex.id);
+    input.stencil_rows.push_back(static_cast<std::int32_t>(vertex.id));
+    input.stencil_weights.push_back(1.0);
+    input.stencil_offsets.push_back(static_cast<std::int64_t>(input.stencil_rows.size()));
+    input.vertex_target_ids.push_back(vertex.id);
+  }
+  input.ancestry_offsets.push_back(0);
+  for (const auto& cell : run.before.cells) {
+    input.cell_ids.push_back(cell.id);
+    input.cell_blocks.push_back(0);
+    input.cell_target_ids.push_back(cell.id);
+    input.ancestry_ids.push_back(cell.id);
+    input.ancestry_kinds.push_back(static_cast<std::int32_t>(metric::AdaptLineage::kPreserved));
+    input.ancestry_offsets.push_back(static_cast<std::int64_t>(input.ancestry_ids.size()));
+    input.next_cell_id = std::max(input.next_cell_id, cell.id + 1);
+  }
+  input.next_vertex_id = count;
+  input.next_target_vertex = count;
+  input.next_target_cell = input.next_cell_id;
+  input.lower = lower;
+  input.topology_operations = topology;
+  input.relocation = relocation;
+  run.status = metric::adapt_metric(mesh, input, run.output);
+  PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
+  return run;
+}
+
 enum class CubeBoundary { kUnbound, kFacetWitness, kSourceOnlySeam, kTiltedSourceOnlySeam };
 
 // Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
@@ -153,7 +200,6 @@ Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
   const bool witnessed = boundary != CubeBoundary::kUnbound;
   const std::int32_t moved = seam ? 1 : n + 2;
   if (witnessed) cube.points[3 * moved + (seam ? 2 : 1)] *= 0.625;
-  Run run;
   TetMesh mesh(BoundaryPolicy::kConforming);
   const std::vector<std::int32_t> regions(cube.tetrahedra.size() / 4, 0);
   // Each cube side declares its exact plane (origin, two axes): the plane of
@@ -221,44 +267,7 @@ Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
   }
   PHX_CHECK(mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides, {}, {}, {},
                        {}, &source, fixed) == PHX_MC_OK);
-  PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
-  metric::AdaptInput input;
-  input.source_points = cube.points;
-  const double tensor[9] = {c, 0, 0, 0, c, 0, 0, 0, c};
-  const double logarithm[9] = {std::log(c), 0, 0, 0, std::log(c), 0, 0, 0, std::log(c)};
-  for (std::size_t row = 0; row < count; ++row) {
-    input.source_metrics.insert(input.source_metrics.end(), tensor, tensor + 9);
-    input.source_logarithms.insert(input.source_logarithms.end(), logarithm, logarithm + 9);
-    input.source_vertex_ids.push_back(row);
-  }
-  input.source_cells.assign(cube.tetrahedra.begin(), cube.tetrahedra.end());
-  // The live mesh is the source: each vertex its own source row.
-  input.stencil_offsets.push_back(0);
-  for (const auto& vertex : run.before.vertices) {
-    input.vertex_ids.push_back(vertex.id);
-    input.stencil_rows.push_back(static_cast<std::int32_t>(vertex.id));
-    input.stencil_weights.push_back(1.0);
-    input.stencil_offsets.push_back(static_cast<std::int64_t>(input.stencil_rows.size()));
-    input.vertex_target_ids.push_back(vertex.id);
-  }
-  input.ancestry_offsets.push_back(0);
-  for (const auto& cell : run.before.cells) {
-    input.cell_ids.push_back(cell.id);
-    input.cell_blocks.push_back(0);
-    input.cell_target_ids.push_back(cell.id);
-    input.ancestry_ids.push_back(cell.id);
-    input.ancestry_kinds.push_back(static_cast<std::int32_t>(metric::AdaptLineage::kPreserved));
-    input.ancestry_offsets.push_back(static_cast<std::int64_t>(input.ancestry_ids.size()));
-    input.next_cell_id = std::max(input.next_cell_id, cell.id + 1);
-  }
-  input.next_vertex_id = count;
-  input.next_target_vertex = count;
-  input.next_target_cell = input.next_cell_id;
-  input.lower = lower;
-  input.topology_operations = !witnessed;
-  run.status = metric::adapt_metric(mesh, input, run.output);
-  PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
-  return run;
+  return adapt_constant_metric(mesh, cube.points, cube.tetrahedra, c, lower, !witnessed);
 }
 
 // The result's contract, checked from its snapshot alone.
@@ -336,6 +345,47 @@ void check_completion_tolerance_does_not_skip_eligible_collapses() {
   const Run run = adapt_cube(2, 1.9, CubeBoundary::kUnbound, 0.67);
   PHX_CHECK(run.status == TetEditStatus::kApplied);
   PHX_CHECK(run.output.counters.collapses > 0);
+}
+
+void completed_shape_cannot_reopen_the_requested_band() {
+  // The bipyramid's quality-improving flip would introduce the 7/8 apex
+  // edge. Splitting the separate cell's length-2 edge reaches the requested
+  // band and triggers the post-completion shape sweep.
+  const std::array<double, 27> points{
+      0, 0, 0, 1.375, 0, 0, .6875, 1.1875, 0, .6875, .390625, .4375,
+      .6875, .390625, -.4375, 3, 0, 0, 5, 0, 0, 4, .9375, 0, 4, .4375, .8125};
+  const std::array<std::int32_t, 12> tetrahedra{0, 1, 2, 3, 0, 2, 1, 4, 5, 6, 7, 8};
+  const std::array<std::int32_t, 30> faces{
+      0, 1, 3, 0, 4, 1, 0, 3, 2, 0, 2, 4, 1, 2, 3,
+      2, 1, 4, 5, 7, 6, 5, 6, 8, 5, 8, 7, 6, 7, 8};
+  const std::array<std::int32_t, 10> groups{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  const std::array<std::int32_t, 3> regions{};
+  const std::array<double, 10> tolerances{};
+  SourceComplexView source;
+  source.points = points;
+  source.faces = faces;
+  source.face_group_rows = groups;
+  source.face_tolerances = tolerances;
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(mesh.build(points, tetrahedra, regions, faces, groups, {}, {}, {}, {},
+                       &source, {}) == PHX_MC_OK);
+  constexpr double lower = .9;
+  const Run run = adapt_constant_metric(mesh, points, tetrahedra, 1.0, lower, true, false);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  PHX_CHECK(run.output.counters.splits == 1);
+  std::map<std::uint64_t, const double*> carrier;
+  for (const auto& vertex : run.after.vertices) carrier.emplace(vertex.id, vertex.carrier.data());
+  for (const auto& cell : run.after.cells) {
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        const auto* p = carrier.at(cell.vertices[first]);
+        const auto* q = carrier.at(cell.vertices[second]);
+        const double length = std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        PHX_CHECK(length >= lower && length <= kUpper);
+      }
+    }
+  }
 }
 
 void check_witnessed_boundary_relocation() {
@@ -541,6 +591,7 @@ int main() {
   check_refinement();
   check_coarsening();
   check_completion_tolerance_does_not_skip_eligible_collapses();
+  completed_shape_cannot_reopen_the_requested_band();
   check_witnessed_boundary_relocation();
   check_source_only_seam_relocates_across_a_primitive();
   check_source_only_seam_refuses_a_tilted_declaration();

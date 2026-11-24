@@ -72,8 +72,9 @@ struct RelocationMode {
   bool band_only = false;
   // The field is one tensor: goals are screened by the full evaluation.
   bool constant_field = false;
-  // Started in the strict band: keep it and improve the star's mean quality.
-  bool closed_band_shape = false;
+  // Positive only for the completed-band shape sweep. Every spoke must
+  // retain this lower bound as well as the unit band.
+  double shape_lower = 0.0;
   // Keep the quality of strict band improvements only for callers that
   // consume it. Equal-band acceptance always checks quality.
   bool report_quality = true;

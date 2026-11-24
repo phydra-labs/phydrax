@@ -252,6 +252,7 @@ class Adapter {
 
   // Measurement.
   bool complete(double lower) const;
+  double shape_lower() const { return std::max(input_.lower, kLowerLength); }
 
   // Splits.
   std::int64_t split_sweep();
@@ -2163,7 +2164,7 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
         if (!protected_edge(x, y) && incidence_.edge_star(x, y).empty()) {
           const double value = edge_length(x, y);
           diagonal_length[key] = value;
-          const bool eligible = !shape || (value >= kLowerLength && value <= kUpperLength);
+          const bool eligible = !shape || (value >= shape_lower() && value <= kUpperLength);
           diagonal_state[key] = eligible ? 1 : 2;
         } else {
           diagonal_state[key] = 2;
@@ -2252,7 +2253,7 @@ TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied,
   if (cells.size() != 3) return TetEditStatus::kApplied;
   const double added_length = edge_length(s, t);
   if (shape) {
-    if (!(added_length >= kLowerLength && added_length <= kUpperLength) ||
+    if (!(added_length >= shape_lower() && added_length <= kUpperLength) ||
         !(shape_score(after_quality, cells.size(), *shape_reference) >
           before_quality + kImprovement)) {
       return TetEditStatus::kApplied;
@@ -2801,6 +2802,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   std::vector<std::int8_t> measured(spokes);
   std::vector<std::uint8_t> neighbor_first(spokes);
   std::vector<double> lengths(spokes);
+  const double lower = closed_band_shape ? shape_lower() : kLowerLength;
   bool outside = false;
   for (std::size_t row = 0; row < rows.size(); ++row) {
     std::copy_n(mesh_.point(rows[row]), 3, points.data() + 3 * row);
@@ -2814,7 +2816,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
       return TetEditStatus::kApplied;  // a spoke without a finite quantum is not relocated
     }
     outside = outside || (measured[row - 1] != 0 &&
-                          !(lengths[row - 1] >= kLowerLength && lengths[row - 1] <= kUpperLength));
+                          !(lengths[row - 1] >= lower && lengths[row - 1] <= kUpperLength));
   }
   // Stages 3 and 4 can improve quality before the terminal band-only search.
   if (closed_band_shape ? outside : !outside && (relocation_stage_ < 3 || tangents)) {
@@ -2860,7 +2862,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   mode.deep = deep;
   mode.refine = tangents || (deep && relocation_stage_ == 2);
   mode.band_only = tangents || deep;
-  mode.closed_band_shape = closed_band_shape;
+  mode.shape_lower = closed_band_shape ? lower : 0.0;
   mode.report_quality = false;
   RelocationStar relocation_star;
   relocation_star.point_count = static_cast<std::int64_t>(rows.size());
@@ -3304,8 +3306,8 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     const bool done = complete(input_.lower);
     if (done) {
       // An edited mesh can reach the band before the shape search. This
-      // pass leaves every retained edge unchanged and requires every new
-      // edge in the strict band, so it cannot invalidate completion.
+      // pass leaves every retained edge unchanged and checks each new edge
+      // against both the unit band and the caller's completion bound.
       if (input_.topology_operations && !shape_searched) {
         const auto shaped = shape_sweeps();
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
