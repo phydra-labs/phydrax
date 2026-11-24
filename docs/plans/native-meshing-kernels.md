@@ -695,6 +695,20 @@ the clock (4.350 seconds versus 4.072 seconds); ranks one, two, and four
 are faster. The angle average improves (4.94° versus 8.10°) at every
 rank. This does not qualify a combined speed and quality win on quadric.
 
+The isolated wall repair at `5a5a067470` moves only free vertices on their
+patch next to a fixed feature, without relaxing the existing guards.
+On that same unlayered quadric, a new set of three interleaved pairs at
+eight actual MPI ranks gives 4.147 seconds versus 4.181 seconds
+and 0.63713 maximum skewness versus 0.72618. It passes all matched
+quality comparisons, but the clock remains above the earlier 4.072-second
+reference. This is a narrow same-window result, not a completed ladder.
+The local repair remains sequential: each trial sees the last accepted
+face geometry and commits only after checking its incident cells.
+On this exact candidate, `execute(prove=True)` returned the same mesh and
+a certified embedding in 151.36 seconds including construction, with a
+12.45 GB peak process RSS. The octree route still requires the proved
+execution; it does not prove an already constructed candidate.
+
 The absolute-thickness pilot requests the native first layer thickness and
 growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
 requested sphere layer cells and passes both validity checks. On the
