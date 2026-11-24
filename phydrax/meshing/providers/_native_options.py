@@ -14,6 +14,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import finite_real_scalar
 from ...geometry.implicit._policy import (
     AdaptiveImplicitSurfacePolicy,
     ImplicitSurfacePolicy,
@@ -63,7 +64,11 @@ _ROUTE_SCHEDULE_FIELDS: dict[NativeMeshingRoute, tuple[str, ...]] = {
     "curve_arc_length": ("curve_schedule",),
     "parametric_surface": ("surface_schedule",),
     "plc_tetrahedral": ("volume_schedule",),
-    "cad_tetrahedral": ("volume_schedule",),
+    "cad_tetrahedral": (
+        "volume_schedule",
+        "sampled_minimum_scaled_jacobian",
+        "sampled_minimum_determinant_ratio",
+    ),
     "periodic_delaunay": (),
     "periodic_power": (),
     "plc_restricted_power": ("polyhedral_schedule",),
@@ -136,7 +141,13 @@ def _resolve_schedules(
 
 @final
 class NativeMeshingOptions(StrictModule, NonTrainableState):
-    """Algorithm choices; an omitted route is resolved from source and request."""
+    """Algorithm choices; an omitted route is resolved from source and request.
+
+    Nonzero sampled mapped shape targets apply only to direct native CAD
+    P2/P3. They require the given dimensionless scaled Jacobian and
+    determinant ratio on the degree-six simplex lattice. They do not replace
+    exact validity or CAD fidelity proof.
+    """
 
     route: NativeMeshingRoute | None = eqx.field(static=True)
     implicit_policy: AdaptiveImplicitSurfacePolicy | ImplicitSurfacePolicy | None = (
@@ -149,6 +160,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
     structured_schedule: schedules_owner.NativeStructuredSchedule | None
     hex_core_fraction: float | None = eqx.field(static=True)
     grid_schedule: NativeHexGridSchedule | None
+    sampled_minimum_scaled_jacobian: float = eqx.field(static=True)
+    sampled_minimum_determinant_ratio: float = eqx.field(static=True)
     options_id: str = eqx.field(static=True)
 
     @checked
@@ -167,12 +180,24 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         structured_schedule: schedules_owner.NativeStructuredSchedule | None = None,
         hex_core_fraction: float | None = None,
         grid_schedule: NativeHexGridSchedule | None = None,
+        sampled_minimum_scaled_jacobian: float = 0.0,
+        sampled_minimum_determinant_ratio: float = 0.0,
     ) -> None:
         route_ = (
             None
             if route is None
             else parse(route, NativeMeshingRoute, "NativeMeshingOptions.route")
         )
+        scaled = finite_real_scalar(
+            sampled_minimum_scaled_jacobian, "sampled_minimum_scaled_jacobian"
+        )
+        ratio = finite_real_scalar(
+            sampled_minimum_determinant_ratio, "sampled_minimum_determinant_ratio"
+        )
+        if not 0.0 <= scaled <= 2.0**0.5:
+            raise ValueError("sampled_minimum_scaled_jacobian must lie in [0, sqrt(2)].")
+        if not 0.0 <= ratio <= 1.0:
+            raise ValueError("sampled_minimum_determinant_ratio must lie in [0, 1].")
         fields = () if route_ is None else _ROUTE_SCHEDULE_FIELDS[route_]
         supplied = (
             ("grid_schedule", grid_schedule),
@@ -183,6 +208,8 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
             ("curve_schedule", curve_schedule),
             ("surface_schedule", surface_schedule),
             ("volume_schedule", volume_schedule),
+            ("sampled_minimum_scaled_jacobian", scaled or None),
+            ("sampled_minimum_determinant_ratio", ratio or None),
         )
         for name, value in supplied:
             if route_ is not None and value is not None and name not in fields:
@@ -241,24 +268,25 @@ class NativeMeshingOptions(StrictModule, NonTrainableState):
         self.structured_schedule = structured
         self.hex_core_fraction = fraction
         self.grid_schedule = grid
-        self.options_id = canonical_fingerprint(
-            {
-                "kind": "native-meshing-options",
-                "route": route_,
-                "implicit_policy": None if policy is None else repr(policy),
-                "curve_schedule": None if curve is None else curve.schedule_id,
-                "surface_schedule": None if surface is None else surface.schedule_id,
-                "volume_schedule": None if volume is None else volume.schedule_id,
-                "polyhedral_schedule": None
-                if polyhedral is None
-                else polyhedral.schedule_id,
-                "structured_schedule": None
-                if structured is None
-                else structured.schedule_id,
-                "hex_core_fraction": fraction,
-                "grid_schedule": None if grid is None else grid.schedule_id,
-            }
-        )
+        self.sampled_minimum_scaled_jacobian = scaled
+        self.sampled_minimum_determinant_ratio = ratio
+        identity: dict[str, object] = {
+            "kind": "native-meshing-options",
+            "route": route_,
+            "implicit_policy": None if policy is None else repr(policy),
+            "curve_schedule": None if curve is None else curve.schedule_id,
+            "surface_schedule": None if surface is None else surface.schedule_id,
+            "volume_schedule": None if volume is None else volume.schedule_id,
+            "polyhedral_schedule": None if polyhedral is None else polyhedral.schedule_id,
+            "structured_schedule": None if structured is None else structured.schedule_id,
+            "hex_core_fraction": fraction,
+            "grid_schedule": None if grid is None else grid.schedule_id,
+        }
+        if scaled > 0.0:
+            identity["sampled_minimum_scaled_jacobian"] = scaled
+        if ratio > 0.0:
+            identity["sampled_minimum_determinant_ratio"] = ratio
+        self.options_id = canonical_fingerprint(identity)
 
 
 __all__ = ["NativeMeshingOptions", "NativeMeshingRoute"]

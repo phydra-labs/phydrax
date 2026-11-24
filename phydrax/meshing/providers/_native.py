@@ -541,6 +541,16 @@ def _options_for_route(
                 }
                 else None
             ),
+            sampled_minimum_scaled_jacobian=(
+                options.sampled_minimum_scaled_jacobian
+                if route == "cad_tetrahedral"
+                else 0.0
+            ),
+            sampled_minimum_determinant_ratio=(
+                options.sampled_minimum_determinant_ratio
+                if route == "cad_tetrahedral"
+                else 0.0
+            ),
         )
     except (TypeError, ValueError) as error:
         raise _failure(
@@ -1651,6 +1661,21 @@ class NativeMeshingProvider:
         contract = _resolve_coordinate_contract(source, coordinate_contract)
         _validate_scope_binding(source, specification)
         route = _resolve_route(source, specification, self.options)
+        sampled_shape = (
+            self.options.sampled_minimum_scaled_jacobian > 0.0
+            or self.options.sampled_minimum_determinant_ratio > 0.0
+        )
+        if sampled_shape and (
+            route != "cad_tetrahedral"
+            or not isinstance(specification, VolumeMeshingSpec)
+            or specification.target.geometry_order not in (2, 3)
+        ):
+            _unsupported(
+                route,
+                source,
+                specification,
+                "sampled mapped shape requires direct CAD P2/P3",
+            )
         if (
             isinstance(specification, SurfaceMeshingSpec)
             and specification.cross_field is not None
@@ -1672,6 +1697,12 @@ class NativeMeshingProvider:
                 self.options,
                 contract,
             )
+            if sampled_shape and isinstance(prepared, _PreparedDirectBRepCadVolume):
+                from ._native_cad_mesh import cad_solid_support_issues
+
+                issues = cad_solid_support_issues(prepared)
+                if issues:
+                    _unsupported(route, source, specification, "; ".join(issues))
             preparation_id = (
                 prepared.preparation_id
                 if isinstance(prepared, _PreparedDirectBRepCadVolume)

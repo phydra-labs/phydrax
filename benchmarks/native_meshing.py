@@ -714,6 +714,7 @@ def _cad_rows() -> tuple[_Row, ...]:
     def run(size: float, order: int) -> _meshcore.CadSolidResult:
         # The F2 request bounds interpolation at size h by κmax h² / 4
         # on each face. The kernel budgets shared chords from adjacent faces.
+        curved = _CAD_CURVE_TARGETS.get(("quadric", order, round(size * 1e5)))
         return _meshcore.cad_mesh_solid(
             model,
             np.full((faces,), size, dtype=np.float64),
@@ -721,6 +722,12 @@ def _cad_rows() -> tuple[_Row, ...]:
             curve_tolerances,
             tolerance_fraction=0.8,
             geometry_order=order,
+            sampled_minimum_scaled_jacobian=0.0
+            if curved is None
+            else curved.scaled_jacobian,
+            sampled_minimum_determinant_ratio=0.0
+            if curved is None
+            else curved.determinant_ratio,
         )
 
     rows: list[_Row] = []
@@ -758,6 +765,7 @@ def _cad_sphere_rows() -> tuple[_Row, ...]:
     model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
 
     def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        curved = _CAD_CURVE_TARGETS["sphere", order, round(size * 1e5)]
         return _meshcore.cad_mesh_solid(
             model,
             np.full(model.surface_nodes.size, size, dtype=np.float64),
@@ -765,6 +773,8 @@ def _cad_sphere_rows() -> tuple[_Row, ...]:
             np.full(model.curve_nodes.size, np.inf, dtype=np.float64),
             tolerance_fraction=0.8,
             geometry_order=order,
+            sampled_minimum_scaled_jacobian=curved.scaled_jacobian,
+            sampled_minimum_determinant_ratio=curved.determinant_ratio,
         )
 
     return tuple(
@@ -815,6 +825,9 @@ def _cad_unmet(result: object, /) -> int:
         raise TypeError("The CAD row returns a CadSolidResult.")
     stats = result.volume.stats[0]
     unmet = int(stats["unmet_cells"])
+    unmet += int(
+        stats["unmet_scaled_jacobian_cells"] + stats["unmet_determinant_ratio_cells"]
+    )
     if result.volume.nodes.size:
         quadratic = stats["quadratic"]
         unmet += int(quadratic["final_invalid"] + quadratic["final_unresolved"])

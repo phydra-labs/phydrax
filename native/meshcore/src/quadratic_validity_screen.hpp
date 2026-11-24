@@ -51,4 +51,9 @@ class QuadraticDerivativeStencil {
 bool quadratic_validity_screen(const double* nodes, const QuadraticDerivativeStencil& stencil,
                                double relative_floor) noexcept;
 
+// Sufficient exact-root screen for the canonical ten-node tetrahedron
+// (corners followed by edges 01, 02, 03, 12, 13, 23), with the same mode,
+// coordinate and floor preconditions as quadratic_validity_screen.
+bool quadratic_affine_neighborhood_screen(const double* nodes, double relative_floor) noexcept;
+
 }  // namespace phx::mc

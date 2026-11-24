@@ -9,6 +9,11 @@
   authored vertices, hole domains and constraint ancestry are retained.
 - Quadratic geometry validity prepares one ordered sparse derivative stencil
   per bank without changing exact verdicts, bounds, or geometry.
+- Direct native CAD P2/P3 can request sampled scaled-Jacobian and
+  determinant-ratio targets without relaxing the size cap or moving the CAD
+  wall. Shaped requests can change mesh identity. Exact validity and
+  deferred source certification remain separate. Rebuild native clients
+  for the CAD volume construction and export ABI changes.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
   Admission reuses its extrema directly in the zero-edit evidence.

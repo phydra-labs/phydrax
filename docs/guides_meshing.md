@@ -480,6 +480,17 @@ statistic (`SizeCompliancePolicy.target_statistics`) and compares it with
 The native CAD route reports `size:<control>:p50_circumradius` and
 `size:<control>:p95_circumradius` with the requested bound h/sqrt(2).
 
+For direct native CAD with P2 or P3 geometry, `NativeMeshingOptions` can also
+request `sampled_minimum_scaled_jacobian` and
+`sampled_minimum_determinant_ratio`. Both default to zero (disabled). The
+native route evaluates these dimensionless targets on the degree-six
+tetrahedral lattice and reports the number of cells missing each target.
+Unmet mapped targets are compliance issues even with a soft affine shape
+schedule. Interior shape correction leaves the authored CAD wall fixed and
+does not relax the requested size cap. The sampled targets do not establish
+exact map validity, embedding, or source fidelity; `candidate.prove()`
+checks those separately on the actual emitted map.
+
 ### Native trimmed-chart surfaces
 
 The native `parametric_surface` route accepts affine as well as rational and

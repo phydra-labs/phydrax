@@ -625,6 +625,8 @@ def construct_cad_solid(prepared: _PreparedDirectBRepCadVolume, /) -> CadSolidRe
             min_relative_determinant=schedule.minimum_relative_determinant,
             geometry_order=order,
             proximity_controls=tuple(native for _, native in proximity),
+            sampled_minimum_scaled_jacobian=prepared.options.sampled_minimum_scaled_jacobian,
+            sampled_minimum_determinant_ratio=prepared.options.sampled_minimum_determinant_ratio,
         )
     except ValueError as error:
         if not proximity:
@@ -936,9 +938,25 @@ def execute_cad_solid(
     unforced = int(stats["unmet_unforced_cells"])
     issues: list[str] = []
     gated = _shape_targets_gated(schedule)
+    mapped_shape = (
+        (
+            "sampled_minimum_scaled_jacobian",
+            prepared.options.sampled_minimum_scaled_jacobian,
+            "unmet_scaled_jacobian_cells",
+        ),
+        (
+            "sampled_minimum_determinant_ratio",
+            prepared.options.sampled_minimum_determinant_ratio,
+            "unmet_determinant_ratio_cells",
+        ),
+    )
+    mapped_miss = any(int(stats[count]) for _, _, count in mapped_shape)
+    affine_unresolved = solid.status is MeshcoreStatus.UNRESOLVED and (
+        unforced > 0 or not mapped_miss
+    )
     deviations = (
         _proxy_deviations(model, solid, float(deviation))
-        if proximity or (gated and solid.status is MeshcoreStatus.UNRESOLVED)
+        if proximity or (gated and affine_unresolved)
         else None
     )
     requested: list[tuple[str, float]] = [
@@ -952,6 +970,13 @@ def execute_cad_solid(
         ("unmet_forced_quality_cells", float(forced)),
         ("unmet_unforced_quality_cells", float(unforced)),
     ]
+    for name, target, count in mapped_shape:
+        if target > 0.0:
+            requested.append((name, target))
+            missed = int(stats[count])
+            achieved.append((count, float(missed)))
+            if missed:
+                issues.append(f"native_{count}:{missed}")
     if solid.surface.surface_refinement_retries:
         achieved.extend(
             (
@@ -966,7 +991,7 @@ def execute_cad_solid(
             )
         )
     if gated:
-        if solid.status is MeshcoreStatus.UNRESOLVED:
+        if affine_unresolved:
             issues.append(f"native_unmet_quality_cells:{unforced}")
             # Input finding: a rim whose true wedge is below the dihedral
             # target makes that target unattainable in a neighborhood of the

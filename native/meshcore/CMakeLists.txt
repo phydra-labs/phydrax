@@ -137,9 +137,12 @@ set(PHX_MC_SOURCES
   src/cad_mesh.cpp
   src/cad_capi.cpp
   src/cad_curving.cpp
+  src/cad_quadratic_shape.cpp
+  src/cad_cubic_shape.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
+  src/bounded_lbfgs.hpp
   src/boundary_policy.hpp
   src/capi_guard.hpp
   src/cavity.hpp
@@ -214,6 +217,8 @@ set(PHX_MC_HEADERS
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp
+  src/cad_quadratic_shape.hpp
+  src/cad_cubic_shape.hpp
   src/quadratic_validity_screen.hpp
 )
 

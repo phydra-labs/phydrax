@@ -31,6 +31,9 @@ struct CadQuadraticInput {
   const int32_t* curve_edge_curves = nullptr;
   const double* curve_edge_parameters = nullptr;
   double relative_floor = 0.0;
+  double length_scale = 0.0;
+  double sampled_minimum_scaled_jacobian = 0.0;
+  double sampled_minimum_determinant_ratio = 0.0;
 };
 
 struct CadQuadraticMesh {
@@ -46,6 +49,7 @@ struct CadQuadraticMesh {
   // Straightened curved boundary edges: (edge, cell whose failure caused it).
   std::vector<std::array<int64_t, 2>> straightened;
   phx_mc_cad_quadratic_stats stats{};
+  std::array<std::int64_t, 2> unmet_sampled_shape{};
 };
 
 int32_t cad_quadratic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInput& input,
@@ -56,6 +60,7 @@ struct CadCubicMesh {
   // IDs in nodes (not the vertex bank): two per edge 01, 02, 03, 12, 13, 23
   // in local endpoint order, then one per face opposite corners 0, 1, 2, 3.
   std::vector<std::array<int64_t, 16>> cell_nodes;
+  std::array<std::int64_t, 2> unmet_sampled_shape{};
 };
 
 int32_t cad_cubic_nodes(const cad::CadGeometry& geometry, const CadQuadraticInput& input,

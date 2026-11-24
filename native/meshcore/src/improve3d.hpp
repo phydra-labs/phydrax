@@ -58,6 +58,8 @@ struct TetQualityRequest {
   // every such cell meets the score target); set by improve_mesh before each
   // edit is judged, for its residual order.
   double minimum_score = 1.0;
+  // A hard size request may not be waived while recovering below-floor cells.
+  bool absolute_size_limit = false;
 };
 // Assess current cells without changing the mesh or its stored unmet records.
 std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest& request,

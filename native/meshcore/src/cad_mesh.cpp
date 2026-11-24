@@ -960,13 +960,41 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   recovery.reset();
   if (created != PHX_MC_OK) return created;
   TetMesh& state = tet_mesh_state(*handle);
+  const bool affine_reserve = controls.sampled_minimum_scaled_jacobian > 0.0 ||
+                              controls.sampled_minimum_determinant_ratio > 0.0;
+  // Leave headroom below the requested cap before improving the affine
+  // cells. Source charts and the fixed wall are not part of this fill.
+  constexpr double reserve = 0.90;
+  if (affine_reserve) {
+    for (double& target : targets) target *= reserve;
+  }
   const int32_t refined = refine_mesh(state, controls.radius_edge_bound, targets,
                                       stats.refine_inserted, stats.refine_unmet,
                                       controls.parallelism);
   if (refined != PHX_MC_OK && refined != PHX_MC_UNRESOLVED) return refined;
-  const TetQualityRequest quality{controls.radius_edge_bound, controls.minimum_dihedral_degrees,
-                                  controls.minimum_relative_determinant};
-  const int32_t improved = improve_mesh(state, quality, {}, stats.improve_inserted,
+  if (affine_reserve) {
+    double maximum_target = 0.0;
+    for (int64_t f = 0; f < model.surface_count; ++f) {
+      maximum_target = std::max(maximum_target, sizes[f]);
+    }
+    targets.clear();
+    targets.reserve(state.vertex_slot_count());
+    for (std::size_t slot = 0; slot < state.vertex_slot_count(); ++slot) {
+      const auto vertex = static_cast<int32_t>(slot);
+      if (state.live_vertex(vertex)) {
+        targets.push_back(std::min(maximum_target, state.vertex_size(vertex) / reserve));
+      }
+    }
+  }
+  TetQualityRequest quality{controls.radius_edge_bound, controls.minimum_dihedral_degrees,
+                            controls.minimum_relative_determinant};
+  if (affine_reserve) {
+    quality.minimum_relative_determinant = std::max(0.20, controls.minimum_relative_determinant);
+    quality.absolute_size_limit = true;
+  }
+  const std::span<const double> improvement_sizes =
+      affine_reserve ? std::span<const double>(targets) : std::span<const double>();
+  const int32_t improved = improve_mesh(state, quality, improvement_sizes, stats.improve_inserted,
                                         stats.improve_collapsed, stats.improve_relocated,
                                         stats.unmet_cells);
   if (improved != PHX_MC_OK && improved != PHX_MC_UNRESOLVED) return improved;
@@ -1079,18 +1107,25 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
         reinterpret_cast<const int32_t*>(surface.curve_edges.data()),
         surface.curve_edge_curves.data(),
         reinterpret_cast<const double*>(surface.curve_edge_parameters.data()),
-        controls.minimum_relative_determinant};
+        controls.minimum_relative_determinant, smallest,
+        controls.sampled_minimum_scaled_jacobian, controls.sampled_minimum_determinant_ratio};
     if (controls.geometry_order == 2) {
       const int32_t curved = cad_quadratic_nodes(geometry, input, result.quadratic);
       stats.quadratic_ns = elapsed_ns(curve_start);
-      if (curved != PHX_MC_OK) return curved;
+      if (curved != PHX_MC_OK && curved != PHX_MC_UNRESOLVED) return curved;
       stats.quadratic = result.quadratic.stats;
-      if (stats.quadratic.final_invalid > 0 || stats.quadratic.final_unresolved > 0)
+      stats.unmet_scaled_jacobian_cells = result.quadratic.unmet_sampled_shape[0];
+      stats.unmet_determinant_ratio_cells = result.quadratic.unmet_sampled_shape[1];
+      if (curved == PHX_MC_UNRESOLVED || stats.quadratic.final_invalid > 0 ||
+          stats.quadratic.final_unresolved > 0)
         overall = PHX_MC_UNRESOLVED;
     } else {
       const int32_t curved = cad_cubic_nodes(geometry, input, result.cubic);
       stats.cubic_ns = elapsed_ns(curve_start);
-      if (curved != PHX_MC_OK) return curved;
+      if (curved != PHX_MC_OK && curved != PHX_MC_UNRESOLVED) return curved;
+      stats.unmet_scaled_jacobian_cells = result.cubic.unmet_sampled_shape[0];
+      stats.unmet_determinant_ratio_cells = result.cubic.unmet_sampled_shape[1];
+      if (curved == PHX_MC_UNRESOLVED) overall = curved;
     }
   }
   return overall;

@@ -239,18 +239,25 @@ extern "C" int32_t phx_mc_cad_mesh_surface(const phx_mc_cad_model* model,
   });
 }
 
-extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
-                                         const phx_mc_cad_surface_controls* controls,
-                                         const phx_mc_cad_volume_controls* volume,
-                                         phx_mc_cad_surface_result** result,
-                                         int32_t parallelism) {
+extern "C" int32_t phx_mc_cad_construct_volume(const phx_mc_cad_model* model,
+                                              const phx_mc_cad_surface_controls* controls,
+                                              const phx_mc_cad_volume_controls* volume,
+                                              phx_mc_cad_surface_result** result,
+                                              int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!model || !controls || !volume || !result) return PHX_MC_INVALID_ARGUMENT;
     *result = nullptr;
     if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
-    if (volume->geometry_order < 1 || volume->geometry_order > 3)
+    if (volume->geometry_order < 1 || volume->geometry_order > 3 ||
+        !(volume->sampled_minimum_scaled_jacobian >= 0.0 &&
+          volume->sampled_minimum_scaled_jacobian <= std::sqrt(2.0)) ||
+        !(volume->sampled_minimum_determinant_ratio >= 0.0 &&
+          volume->sampled_minimum_determinant_ratio <= 1.0) ||
+        (volume->geometry_order == 1 &&
+         (volume->sampled_minimum_scaled_jacobian > 0.0 ||
+          volume->sampled_minimum_determinant_ratio > 0.0)))
       return PHX_MC_INVALID_ARGUMENT;
     phx::mc::cad::CadGeometry geometry;
     const int32_t bound = geometry.bind(*model);
@@ -281,6 +288,10 @@ extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
       phx::mc::CadVolumeControls volume_controls{
           volume->radius_edge_bound, volume->min_dihedral_degrees,
           volume->min_relative_determinant, volume->geometry_order};
+      volume_controls.sampled_minimum_scaled_jacobian =
+          volume->sampled_minimum_scaled_jacobian;
+      volume_controls.sampled_minimum_determinant_ratio =
+          volume->sampled_minimum_determinant_ratio;
       if (!field.empty()) volume_controls.proximity = &field;
       volume_controls.parallelism = static_cast<std::uint32_t>(parallelism);
       const phx_mc_cad_volume_stats timings = candidate->volume.stats;
@@ -314,8 +325,8 @@ extern "C" int32_t phx_mc_cad_volume_bank_sizes(const phx_mc_cad_surface_result*
   return PHX_MC_OK;
 }
 
-extern "C" int32_t phx_mc_cad_volume_copy_banks(const phx_mc_cad_surface_result* result,
-                                                const phx_mc_cad_volume_arrays* a) {
+extern "C" int32_t phx_mc_cad_export_volume(const phx_mc_cad_surface_result* result,
+                                           const phx_mc_cad_volume_arrays* a) {
   if (!result || !a) return PHX_MC_INVALID_ARGUMENT;
   const auto& v = result->volume;
   const auto& q = v.quadratic;

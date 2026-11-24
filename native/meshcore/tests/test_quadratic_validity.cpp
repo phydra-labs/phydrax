@@ -382,6 +382,7 @@ void screen_agrees_with_exact_path() {
   }
 
   std::array<std::int64_t, kFamilies> cells{}, valid{}, screened{};
+  std::int64_t affine_neighborhood_screened = 0;
   const phx::mc::QuadraticDerivativeStencil stencil(weights.data());
   for (int floor = 0; floor < 3; ++floor) {
     const auto count = static_cast<std::int64_t>(families[floor].size());
@@ -398,6 +399,11 @@ void screen_agrees_with_exact_path() {
       const int family = families[floor][k];
       ++cells[family];
       valid[family] += exact[k] == kValid;
+      if (phx::mc::quadratic_affine_neighborhood_screen(nodes[floor].data() + 30 * k,
+                                                       kFloors[floor])) {
+        ++affine_neighborhood_screened;
+        PHX_CHECK(exact[k] == kValid);
+      }
       if (!phx::mc::quadratic_validity_screen(nodes[floor].data() + 30 * k, stencil,
                                               kFloors[floor]))
         continue;
@@ -416,6 +422,7 @@ void screen_agrees_with_exact_path() {
   PHX_CHECK(total >= 100000);
   PHX_CHECK(cells[kFamilies - 1] > 0);
   PHX_CHECK(2 * screened[0] > valid[0]);
+  PHX_CHECK(affine_neighborhood_screened > 0);
 
   // Bounds are optional only as a pair.
   std::int32_t decision = 77;

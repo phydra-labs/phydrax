@@ -16,6 +16,7 @@
 #include "expansion.hpp"
 #include "exact_scalar.hpp"
 #include "floating_point_mode.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "quadratic_validity_screen.hpp"
 #include "rounding.hpp"
@@ -824,6 +825,53 @@ const ScreenTable& screen_table() {
 }
 
 }  // namespace
+
+bool quadratic_affine_neighborhood_screen(const double* nodes, double relative_floor) noexcept {
+  double magnitude = 0.0;
+  for (int i = 0; i < 30; ++i) magnitude = std::max(magnitude, std::abs(nodes[i]));
+  if (!(magnitude >= 0x1p-100 && magnitude <= 0x1p100)) return false;
+
+  // J = A + E(x), with A the binary64 corner-edge columns. For an edge
+  // correction delta the derivative of 4*l_i*l_j has coefficient l1 norm
+  // at most 20 in any column: l_0 has norm 4 and the others have norm 1.
+  // Thus E has coefficient-vector l1 norm <= 20 times the sum of edge
+  // residual l1 norms, plus the error in A's subtractions. The factors of
+  // two cover accumulation; the absolute pads dominate the <100 binary64
+  // operations' rounding (including gradual underflow) at the admitted scale.
+  constexpr int edges[6][2]{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+  double residual = 0.0;
+  for (int e = 0; e < 6; ++e) {
+    for (int axis = 0; axis < 3; ++axis) {
+      const double middle = 0.5 * (nodes[3 * edges[e][0] + axis] +
+                                   nodes[3 * edges[e][1] + axis]);
+      residual += std::abs(nodes[12 + 3 * e + axis] - middle);
+    }
+  }
+  const double e = geometry::next_up(40.0 * residual + 0x1p-38 * magnitude);
+  double columns[3][3], norms[3];
+  for (int column = 0; column < 3; ++column) {
+    geometry::difference(nodes + 3 * (column + 1), nodes, columns[column]);
+    const double* a = columns[column];
+    norms[column] = 2 * (std::abs(a[0]) + std::abs(a[1]) + std::abs(a[2]));
+  }
+
+  // Multilinearity and Hadamard bound the l1 sum of the determinant's
+  // perturbation coefficients. Conversion to a Bernstein control of any
+  // admissible actual degree multiplies each monomial by a number in [0,1].
+  // The same error therefore covers *all* root controls, not just pointwise
+  // positivity of the exact map. The scale pad also bounds error in det(A).
+  const auto [a, b, c] = norms;
+  const double error = 2 * e * (a * b + a * c + b * c + e * (a + b + c + e)) +
+                       0x1p-40 * magnitude * magnitude * magnitude;
+  double cross[3];
+  geometry::cross(columns[1], columns[2], cross);
+  const double lower = geometry::next_down(geometry::dot(columns[0], cross) - error);
+  if (!(lower > 0.0)) return false;
+  const double bound = geometry::next_up(
+      geometry::next_up(geometry::next_up(a + e) * geometry::next_up(b + e)) *
+      geometry::next_up(c + e));
+  return lower > geometry::next_up(relative_floor * bound);
+}
 
 bool quadratic_validity_screen(const double* nodes, const QuadraticDerivativeStencil& stencil,
                                double relative_floor) noexcept {
