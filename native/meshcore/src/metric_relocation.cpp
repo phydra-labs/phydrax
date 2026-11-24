@@ -156,9 +156,20 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
   if (equal ? mode_.band_only : !decreased) return Verdict::kRejected;
   if (!floor_oriented(position)) return Verdict::kRejected;
 
+  // Prepare only on the first candidate that reaches the shape test.
+  if (quality_logs_.empty()) {
+    quality_logs_.reserve(static_cast<std::size_t>(point_count_));
+    quality_logs_.push_back(0.0);
+    for (std::int64_t row = 1; row < point_count_; ++row) {
+      quality_logs_.push_back(log_determinant(metrics_.data() + 9 * row));
+    }
+  }
+  quality_logs_.front() = log_determinant(metric);
+
   // The usual merit is the minimum; the closed-band shape sweep uses the mean.
   double corners[12];
   double tensors[36];
+  double logs[4];
   double measure = 0.0;
   bool undefined = false;
   for (std::int64_t cell = 0; cell < cell_count_; ++cell) {
@@ -169,8 +180,9 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
           row == 0 ? metric : metrics_.data() + 9 * static_cast<std::size_t>(row);
       for (std::size_t axis = 0; axis < 3; ++axis) corners[3 * slot + axis] = values[axis];
       for (std::size_t entry = 0; entry < 9; ++entry) tensors[9 * slot + entry] = tensor[entry];
+      logs[slot] = quality_logs_[static_cast<std::size_t>(row)];
     }
-    const double value = tetra_quality(corners, tensors);
+    const double value = tetra_quality(corners, tensors, logs);
     if (mode_.closed_band_shape) {
       if (!std::isfinite(value)) return Verdict::kRejected;
       measure += value;

@@ -148,6 +148,8 @@ class RelocationSearch {
   std::array<double, 9> projector_{};
   CarrierChartView chart_;
   RelocationMode mode_;
+  // Stationary corner logs are immutable; entry zero follows the candidate.
+  std::vector<double> quality_logs_;
 
   // The cursor: the pull and step of the next raw goal, the goals seen, the
   // stencils examined, and for a refining search the admitted goals and the
