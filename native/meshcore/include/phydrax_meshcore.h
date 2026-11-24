@@ -95,6 +95,11 @@ PHX_MC_API int32_t phx_mc_orient2d(int64_t count, const double* a, const double*
                                    const double* c, int8_t* signs);
 PHX_MC_API int32_t phx_mc_orient3d(int64_t count, const double* a, const double* b,
                                    const double* c, const double* d, int8_t* signs);
+/* Exact positive orientation of every indexed tetrahedron. A nonpositive
+ * cell or coordinate outside the native exact domain sets positive to zero. */
+PHX_MC_API int32_t phx_mc_tetrahedra_positive_orientation(
+    int64_t point_count, const double* points, int64_t cell_count,
+    const int32_t* cells, int32_t parallelism, int8_t* positive);
 PHX_MC_API int32_t phx_mc_incircle(int64_t count, const double* a, const double* b,
                                    const double* c, const double* d, int8_t* signs);
 PHX_MC_API int32_t phx_mc_insphere(int64_t count, const double* a, const double* b,

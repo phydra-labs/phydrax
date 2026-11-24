@@ -1264,6 +1264,38 @@ void test_insphere_stage_c_threshold() {
               std::get<0>(quantities(c_above)));
 }
 
+void test_indexed_tetrahedral_orientation() {
+  constexpr int64_t count = 4109;
+  const double points[12]{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  std::vector<int32_t> cells(4 * count);
+  for (int64_t row = 0; row < count; ++row) {
+    for (int corner = 0; corner < 4; ++corner) cells[4 * row + corner] = corner;
+  }
+  for (const int32_t workers : {1, 2, 3, 4, 8}) {
+    int8_t positive = -1;
+    cells[cells.size() - 3] = 1;
+    cells[cells.size() - 2] = 2;
+    PHX_CHECK(phx_mc_tetrahedra_positive_orientation(4, points, count, cells.data(),
+                                                     workers, &positive) == PHX_MC_OK);
+    PHX_CHECK(positive == 1);
+    cells[cells.size() - 3] = 2;
+    cells[cells.size() - 2] = 1;
+    PHX_CHECK(phx_mc_tetrahedra_positive_orientation(4, points, count, cells.data(),
+                                                     workers, &positive) == PHX_MC_OK);
+    PHX_CHECK(positive == 0);
+  }
+}
+
+void test_indexed_tetrahedral_orientation_domain() {
+  const double points[15]{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
+                          0x1p-500, 0.0, 0.0};
+  const int32_t cell[4]{0, 1, 2, 3};
+  int8_t positive = 1;
+  PHX_CHECK(phx_mc_tetrahedra_positive_orientation(5, points, 1, cell, 1, &positive) ==
+            PHX_MC_OK);
+  PHX_CHECK(positive == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -1281,6 +1313,8 @@ int main() {
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();
+  test_indexed_tetrahedral_orientation();
+  test_indexed_tetrahedral_orientation_domain();
   test_floating_point_hazards();
   return phx::mc::test::finish("test_predicates");
 }

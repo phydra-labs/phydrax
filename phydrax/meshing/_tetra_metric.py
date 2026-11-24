@@ -24,11 +24,9 @@ from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
     _raise_for_call,
-    exact_orient3d,
     interval_program_execute,
     IntervalBoxProgram,
     IntervalBranchProgram,
-    meshcore_exact_domain,
     metric_band_quanta,
     metric_collapse_positions,
     metric_congruence_defects,
@@ -62,6 +60,7 @@ from .._meshcore import (
     TetMeshMetricAdaptation,
     TetMeshPeriodicState,
     TetMeshSourceComplex,
+    tetrahedra_positive_orientation,
 )
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
@@ -1784,33 +1783,6 @@ def _plain_tetra_source_is_current(source: CellMeshingResult, /) -> bool:
     return True
 
 
-_NOOP_TETRAHEDRAL_BLOCK = 16_384
-
-
-def _positive_noop_tetrahedra(
-    points: np.ndarray, cells: np.ndarray, workers: int, /
-) -> bool:
-    """Require the exact positive sign of every indexed tetrahedron."""
-    count = cells.shape[0]
-    block = _NOOP_TETRAHEDRAL_BLOCK
-
-    def positive(rows: np.ndarray, /) -> bool:
-        a, b, c, d = rows.T
-        signs = exact_orient3d(points[a], points[b], points[c], points[d])
-        return bool(np.all(signs == 1))
-
-    if count <= block:
-        return positive(cells)
-    flags = np.empty(((count + block - 1) // block,), dtype=np.bool_)
-
-    def measure(begin: int, end: int, chunk: int, /) -> None:
-        flags[chunk] = positive(cells[begin:end])
-
-    status = parallel_for(count, measure, chunk_size=block, parallelism=workers)
-    _raise_for_call(status, "positive tetrahedral orientation")
-    return bool(np.all(flags))
-
-
 def _noop_metric_length_extrema(
     points: np.ndarray, metric: np.ndarray, edges: np.ndarray, workers: int, /
 ) -> tuple[float, float]:
@@ -1854,14 +1826,8 @@ def strict_plain_tetra_metric_noop(
         or not _plain_tetra_source_is_current(source)
     ):
         return None
-    minimum, maximum = meshcore_exact_domain()
-    magnitude = np.abs(points)
-    if not np.all(
-        (magnitude == 0.0) | ((magnitude >= 2.0**minimum) & (magnitude <= 2.0**maximum))
-    ):
-        return None
     workers = exact_kernel_parallelism()
-    if not _positive_noop_tetrahedra(points, cells, workers):
+    if not tetrahedra_positive_orientation(points, cells, parallelism=workers):
         return None
     metric = _admit_metric_bank(metric_values, points.shape[0])
     edges = np.asarray(connectivity.edges)

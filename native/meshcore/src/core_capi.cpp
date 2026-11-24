@@ -3,6 +3,7 @@
 //
 // C ABI: library identity, batched predicates, and mesh handle accessors.
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -274,6 +275,59 @@ int32_t phx_mc_orient3d(int64_t count, const double* a, const double* b, const d
       signs[i] = static_cast<int8_t>(
           phx::mc::orient3d(a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i));
     }
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tetrahedra_positive_orientation(
+    int64_t point_count, const double* points, int64_t cell_count,
+    const int32_t* cells, int32_t parallelism, int8_t* positive) {
+  return guarded([&]() -> int32_t {
+    if (point_count <= 0 || cell_count <= 0 || parallelism < 1 || points == nullptr ||
+        cells == nullptr || positive == nullptr || !addressable(point_count, 3, sizeof(double)) ||
+        !addressable(cell_count, 4, sizeof(int32_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    for (int64_t at = 0; at < 4 * cell_count; ++at) {
+      if (cells[at] < 0 || cells[at] >= point_count) return PHX_MC_INVALID_INPUT;
+    }
+    for (int64_t at = 0; at < 3 * point_count; ++at) {
+      if (!coordinate_in_domain(points[at])) {
+        *positive = 0;
+        return PHX_MC_OK;
+      }
+    }
+    const auto range_positive = [&](std::size_t begin, std::size_t end) {
+      for (std::size_t row = begin; row < end; ++row) {
+        const int32_t* vertex = cells + 4 * row;
+        const auto point = [&](int corner) {
+          return points + 3 * static_cast<std::size_t>(vertex[corner]);
+        };
+        if (phx::mc::orient3d(point(0), point(1), point(2), point(3)) != 1) return false;
+      }
+      return true;
+    };
+    const auto count = static_cast<std::size_t>(cell_count);
+    constexpr std::size_t block = 1024;
+    if (parallelism == 1 || count <= block) {
+      *positive = range_positive(0, count) ? 1 : 0;
+      return PHX_MC_OK;
+    }
+    std::atomic<bool> all_positive{true};
+    const int32_t status = phx::mc::parallel_for(
+        count, phx::mc::ParallelRequest{block, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const GradualNearestScope worker_mode;
+          if (!worker_mode.established()) return PHX_MC_INTERNAL_ERROR;
+          if (!range_positive(begin, end)) {
+            all_positive.store(false, std::memory_order_relaxed);
+          }
+          return PHX_MC_OK;
+        });
+    if (status != PHX_MC_OK) return status;
+    *positive = all_positive.load(std::memory_order_relaxed) ? 1 : 0;
     return PHX_MC_OK;
   });
 }

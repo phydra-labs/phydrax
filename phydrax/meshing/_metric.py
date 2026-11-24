@@ -291,6 +291,19 @@ class _BoundViolations(NamedTuple):
     maximum_anisotropy: np.ndarray
 
 
+def _metric_bound_witness(values: Array, /) -> tuple[Array, Array, Array, Array]:
+    evidence = verify_dense_properties(values, policy=_SPD_POLICY)
+    return (
+        evidence.hermitian,
+        evidence.positive_definite,
+        evidence.eigenvalues,
+        evidence.tolerance,
+    )
+
+
+_scalar_bound_witness = jax.jit(_metric_bound_witness)
+
+
 def _bound_violations(
     metric: np.ndarray,
     minimum_size: float,
@@ -312,13 +325,16 @@ def _bound_violations(
     # This proof uses the spectrum endpoints, not rank: every eigenvalue is
     # the same positive scalar, so verify the equivalent one-entry spectrum.
     verification_bank = metric if scalars is None else scalars[:, None, None]
-    evidence = verify_dense_properties(jnp.asarray(verification_bank), policy=_SPD_POLICY)
-    if not np.all(np.asarray(evidence.hermitian)):
+    prove = _metric_bound_witness if scalars is None else _scalar_bound_witness
+    hermitian, positive_definite, spectrum, rounding = prove(
+        jnp.asarray(verification_bank)
+    )
+    if not np.all(np.asarray(hermitian)):
         raise ValueError("Mesh metrics must be symmetric.")
-    if not np.all(np.asarray(evidence.positive_definite)):
+    if not np.all(np.asarray(positive_definite)):
         raise ValueError("Mesh metrics must be positive definite.")
-    eigenvalues = np.asarray(evidence.eigenvalues)
-    tolerance = np.asarray(evidence.tolerance)
+    eigenvalues = np.asarray(spectrum)
+    tolerance = np.asarray(rounding)
     smallest, largest = eigenvalues[:, 0], eigenvalues[:, -1]
     return _BoundViolations(
         largest - tolerance > minimum_size**-2,

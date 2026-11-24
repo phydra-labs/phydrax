@@ -1237,6 +1237,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_orient2d": (_I32, (_I64, _P, _P, _P, _P)),
     "phx_mc_orient3d": (_I32, (_I64, _P, _P, _P, _P, _P)),
+    "phx_mc_tetrahedra_positive_orientation": (_I32, (_I64, _P, _I64, _P, _I32, _P)),
     "phx_mc_incircle": (_I32, (_I64, _P, _P, _P, _P, _P)),
     "phx_mc_insphere": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_orient2d_sos": (_I32, (_I64, _P, _P, _P, _P, _P)),
@@ -4604,6 +4605,25 @@ def validity_coordinates(values: object, /) -> np.ndarray:
     """
     magnitudes = np.abs(np.asarray(values, dtype=np.float64))
     return (magnitudes == 0.0) | ((magnitudes >= 2.0**-60) & (magnitudes <= 2.0**60))
+
+
+def tetrahedra_positive_orientation(
+    points: np.ndarray, cells: np.ndarray, /, *, parallelism: int
+) -> bool:
+    """Whether every indexed tetrahedron has strictly positive exact orientation."""
+    point_array, cell_array = _tetrahedral_mesh(points, cells)
+    workers = _int32_argument(parallelism, "parallelism")
+    positive = ctypes.c_int8()
+    status = load_meshcore()["phx_mc_tetrahedra_positive_orientation"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        cell_array.shape[0],
+        cell_array.ctypes.data,
+        workers,
+        ctypes.addressof(positive),
+    )
+    _raise_for_call(status, "tetrahedra_positive_orientation")
+    return bool(positive.value)
 
 
 def tetrahedra_validity(
