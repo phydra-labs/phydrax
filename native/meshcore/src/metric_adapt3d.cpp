@@ -4,6 +4,7 @@
 #include "metric_adapt3d.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -351,10 +352,15 @@ class Adapter {
   TetEditStatus relocate_pair(std::int32_t u, std::int32_t v, bool& applied);
   // The joint moves of the out-of-band edges at `vertices`.
   std::int64_t pair_sweep(std::span<const std::int32_t> vertices);
+  void bind_rounded_sources(const TetMeshSnapshot& snapshot);
   std::optional<CarrierChartView> carrier_chart(std::int32_t vertex,
-                                                const LocalIncidence::Star& star);
-  std::optional<SourceWitness> relocation_witness(std::int32_t vertex,
-                                                  const Carrier& carrier) const;
+                                                const LocalIncidence::Star& star,
+                                                bool for_relocation = false);
+  bool source_seam_chart(const SourceWitness& witness, CarrierChartView chart) const;
+  std::optional<SourceWitness> relocation_witness(std::int32_t vertex, const Carrier& carrier,
+                                                  CarrierChartView chart = {}) const;
+  std::optional<SourceWitness> seam_witness(const SourceWitness& old, const Carrier& carrier,
+                                           CarrierChartView chart) const;
 
   // Lineage.
   void record_created_cell(std::int32_t slot, std::int32_t parent_block,
@@ -398,6 +404,11 @@ class Adapter {
   std::vector<std::int32_t> witness_face_groups_;
   std::vector<std::int32_t> witness_faces_;
   std::unordered_set<std::int32_t> declared_groups_;
+  std::unordered_set<std::int32_t> exact_plane_groups_;
+  // Source-only primitives use the source segment row, not a live edge ID.
+  std::vector<std::array<std::int32_t, 2>> source_only_segments_;
+  std::unordered_map<std::uint64_t, std::int32_t> source_only_segment_rows_;
+  bool rounded_sources_ = false;
   bool source_banks_match_ = false;
   // Collapses may move their survivor: on once boundary relocation stalls.
   bool survivor_moves_ = false;
@@ -646,6 +657,7 @@ void Adapter::bind() {
       group_triangles_[snapshot.source_face_groups[row]].simplices.push_back(triangle);
     }
     for (auto& entry : group_triangles_) carriers_->prepare_chart(entry.second);
+    bind_rounded_sources(snapshot);
     if (source_banks_match_ &&
         std::any_of(snapshot.vertices.begin(), snapshot.vertices.end(),
                     [](const TetSnapshotVertex& vertex) {
@@ -654,6 +666,35 @@ void Adapter::bind() {
       witness_face_groups_ = std::move(snapshot.source_face_groups);
       witness_faces_ = std::move(snapshot.source_faces);
     }
+  }
+}
+
+void Adapter::bind_rounded_sources(const TetMeshSnapshot& snapshot) {
+  rounded_sources_ = source_banks_match_ && input_.exact_source == nullptr &&
+                     !mesh_.implicit_source() && !snapshot.periodic_identity.bound &&
+                     snapshot.periodic_orbits.empty() && snapshot.periodic_entity_maps.empty();
+  if (!rounded_sources_) return;
+  for (std::size_t row = 0; row < snapshot.source_face_plane_tolerances.size(); ++row) {
+    const auto group = snapshot.source_face_groups[row];
+    if (snapshot.source_face_plane_tolerances[row] == 0.0 && declared_groups_.contains(group)) {
+      exact_plane_groups_.insert(group);
+    }
+  }
+  std::unordered_set<std::int32_t> live_groups;
+  for (const TetSnapshotSegment& segment : snapshot.constrained_segments) {
+    live_groups.insert(segment.source);
+  }
+  const std::size_t count = snapshot.source_segment_groups.size();
+  source_only_segments_.resize(count, {-1, -1});
+  for (std::size_t row = 0; row < count; ++row) {
+    if (live_groups.contains(snapshot.source_segment_groups[row]) ||
+        snapshot.source_segment_tolerances[row] != 0.0) continue;
+    const std::int32_t a = snapshot.source_segments[2 * row];
+    const std::int32_t b = snapshot.source_segments[2 * row + 1];
+    source_only_segments_[row] = {a, b};
+    const auto [record, inserted] = source_only_segment_rows_.try_emplace(
+        edge_key(a, b), static_cast<std::int32_t>(row));
+    if (!inserted) record->second = -1;  // ambiguous primitive
   }
 }
 
@@ -2402,13 +2443,26 @@ CarrierChart prepare_seam(const CarrierSource& source, const CarrierChart& first
   return seam;
 }
 
+bool Adapter::source_seam_chart(const SourceWitness& witness, CarrierChartView chart) const {
+  if (witness.stratum != SourceStratum::kSegment || witness.entity < 0 ||
+      static_cast<std::size_t>(witness.entity) >= source_only_segments_.size()) return false;
+  const auto& ends = source_only_segments_[static_cast<std::size_t>(witness.entity)];
+  if (ends[0] < 0) return false;
+  const auto found = source_only_segment_rows_.find(edge_key(ends[0], ends[1]));
+  if (found == source_only_segment_rows_.end() || found->second != witness.entity) return false;
+  const std::array<std::int64_t, 3> key{std::min(ends[0], ends[1]), std::max(ends[0], ends[1]), -1};
+  const auto simplex = std::ranges::lower_bound(chart.simplices, key, {}, &CarrierSimplex::rows);
+  return simplex != chart.simplices.end() && simplex->rows == key;
+}
+
 // An interior vertex has an empty view. A boundary vertex uses its one
 // source group or the shared source edges of its two groups, not live facets.
 std::optional<CarrierChartView> Adapter::carrier_chart(
-    std::int32_t vertex, const LocalIncidence::Star& star) {
+    std::int32_t vertex, const LocalIncidence::Star& star, bool for_relocation) {
   const int dimension = mesh_.vertex_dimension(vertex);
   if (dimension == 3) return CarrierChartView{};
   if (dimension != 2 || !source_banks_match_) return std::nullopt;
+  bool exterior_rounding = for_relocation && rounded_sources_;
   std::int32_t first_group = kNoConstraint;
   std::int32_t second_group = kNoConstraint;
   for (std::int32_t slot : star) {
@@ -2416,7 +2470,9 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
     for (int face = 0; face < 4; ++face) {
       if (cell.v[face] == vertex) continue;
       const std::int32_t group = mesh_.complex().constraint(slot, face);
-      if (group == kNoConstraint || group == first_group || group == second_group) continue;
+      if (group == kNoConstraint) continue;
+      exterior_rounding = exterior_rounding && is_ghost(mesh_.tet(cell.n[face]));
+      if (group == first_group || group == second_group) continue;
       if (first_group == kNoConstraint) {
         first_group = group;
       } else if (second_group == kNoConstraint) {
@@ -2428,7 +2484,17 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   }
   const auto first = group_triangles_.find(first_group);
   if (first == group_triangles_.end()) return std::nullopt;
-  if (second_group == kNoConstraint) return first->second.view();
+  const auto cartesian_axes = [&](std::int32_t group, const CarrierChart& chart) {
+    const auto axes = static_cast<unsigned>(chart.simplices.front().projected_axes);
+    return exact_plane_groups_.contains(group) && std::popcount(axes) == 2 ? axes : 0U;
+  };
+  const SourceWitness& witness = mesh_.witness(vertex);
+  if (second_group == kNoConstraint) {
+    CarrierChartView chart = first->second.view();
+    chart.allow_rounded_images = exterior_rounding && witness.stratum == SourceStratum::kNone &&
+                                 cartesian_axes(first_group, first->second) != 0;
+    return chart;
+  }
   const auto second = group_triangles_.find(second_group);
   if (second == group_triangles_.end()) return std::nullopt;
 
@@ -2440,13 +2506,55 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   }
   const CarrierChart& seam = cached->second;
   if (seam.simplices.empty()) return std::nullopt;
-  return seam.view();
+  CarrierChartView chart = seam.view();
+  chart.allow_rounded_images =
+      exterior_rounding && source_seam_chart(witness, chart) &&
+      std::popcount(cartesian_axes(first_group, first->second) &
+                    cartesian_axes(second_group, second->second)) == 1;
+  return chart;
+}
+
+std::optional<SourceWitness> Adapter::seam_witness(const SourceWitness& old, const Carrier& carrier,
+                                                   CarrierChartView chart) const {
+  const auto bound = [&](std::int32_t row) -> SourceWitness {
+    const auto& ends = source_only_segments_[static_cast<std::size_t>(row)];
+    SourceWitness witness{SourceStratum::kSegment, row};
+    for (int term = 0; term < carrier.size; ++term) {
+      const auto slot = static_cast<std::size_t>(term);
+      if (carrier.rows[slot] == ends[1]) {
+        witness.parameters[0] = std::ldexp(static_cast<double>(carrier.weights[slot]), -carrier.bits);
+      }
+    }
+    return witness;
+  };
+  const auto find = [&](std::int64_t a, std::int64_t b) -> std::optional<SourceWitness> {
+    const auto found = source_only_segment_rows_.find(
+        edge_key(static_cast<std::int32_t>(a), static_cast<std::int32_t>(b)));
+    if (found == source_only_segment_rows_.end() || found->second < 0) return std::nullopt;
+    return bound(found->second);
+  };
+  if (carrier.size == 2) return find(carrier.rows[0], carrier.rows[1]);
+  if (carrier.size != 1) return std::nullopt;
+  const auto point = carrier.rows[0];
+  const auto& old_ends = source_only_segments_[static_cast<std::size_t>(old.entity)];
+  if (point == old_ends[0] || point == old_ends[1]) return bound(old.entity);
+  // At a source knot, keep the old primitive if possible; otherwise the
+  // first source-only primitive in the same canonical chart owns the point.
+  for (const CarrierSimplex& edge : chart.simplices) {
+    if (edge.rows[0] != point && edge.rows[1] != point) continue;
+    if (auto witness = find(edge.rows[0], edge.rows[1])) return witness;
+  }
+  return std::nullopt;
 }
 
 std::optional<SourceWitness> Adapter::relocation_witness(std::int32_t vertex,
-                                                          const Carrier& carrier) const {
+                                                          const Carrier& carrier,
+                                                          CarrierChartView chart) const {
   const SourceWitness& old = mesh_.witness(vertex);
   if (old.stratum == SourceStratum::kNone) return SourceWitness{};
+  if (old.stratum == SourceStratum::kSegment && chart.allow_rounded_images) {
+    return seam_witness(old, carrier, chart);
+  }
   if (!carrier.exact || old.entity < 0) return std::nullopt;
   SourceWitness next{old.stratum, old.entity};
   const auto matches = [&](const Expansion* image) {
@@ -2544,7 +2652,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   }
   const LocalIncidence::Star star = incidence_.vertex_star(vertex);
   if (star.empty()) return TetEditStatus::kApplied;
-  const auto chart = carrier_chart(vertex, star);
+  const auto chart = carrier_chart(vertex, star, true);
   if (!chart) return TetEditStatus::kApplied;
   const bool interior = chart->simplices.empty();
   const bool tangents = relocation_stage_ == 5;
@@ -2668,7 +2776,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
       moved.id = mesh_.vertex_id(vertex);
       moved.carrier = candidate.carrier.point;
       moved.edge_witness_supplied = true;
-      const auto witness = relocation_witness(vertex, candidate.carrier);
+      const auto witness = relocation_witness(vertex, candidate.carrier, *chart);
       if (!witness) continue;
       moved.witness = *witness;
       TetEditStatus status = TetEditStatus::kRejectedTopology;
@@ -2689,8 +2797,10 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
           source_rows[term] = static_cast<std::int32_t>(carrier.rows[term]);
           weights[term] = std::ldexp(static_cast<double>(carrier.weights[term]), -carrier.bits);
         }
-        const detail::SourceStencil stencil{std::span(source_rows).first(count),
-                                             std::span(weights).first(count)};
+        const detail::SourceStencil stencil{
+            std::span(source_rows).first(count), std::span(weights).first(count),
+            carrier.exact ? detail::SourceStencilImage::kExact
+                          : detail::SourceStencilImage::kRoundedPlane};
         status = incidence_.relocate(mesh_, records, star, &stencil);
       } else {
         // The star-local route does not admit an implicit-boundary mesh.

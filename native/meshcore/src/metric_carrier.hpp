@@ -85,6 +85,8 @@ class CarrierBoxGrid {
 struct CarrierChartView {
   std::span<const CarrierSimplex> simplices;
   const CarrierBoxGrid* grid = nullptr;
+  // A caller with an exact boundary witness may admit a rounded source image.
+  bool allow_rounded_images = false;
 };
 
 struct CarrierChart {

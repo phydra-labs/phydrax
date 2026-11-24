@@ -738,9 +738,11 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
   bool has_location = false;
   if (on_simplex) {
     const auto holds = [&](const CarrierSimplex& simplex) {
-      return (simplex.size == 2 || simplex.size == 3) &&
-             (simplex.projected_axes == 0 || within_projection_box(geometry, simplex, target)) &&
-             locate_simplex(view, exact_target, simplex, located);
+      if ((simplex.size != 2 && simplex.size != 3) ||
+          (simplex.projected_axes != 0 && !within_projection_box(geometry, simplex, target)) ||
+          !locate_simplex(view, exact_target, simplex, located)) return false;
+      located.declared = located.declared || chart.allow_rounded_images;
+      return true;
     };
     if (chart.grid != nullptr) {
       for (const std::int64_t row : chart.grid->candidates(target)) {

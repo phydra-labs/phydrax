@@ -2538,13 +2538,41 @@ void rounded_survivor_matches_batch_across_chart_boundary(RoundedControl control
   const std::array<double, 3> weights{1.0 - b, b - a, a};
   constexpr auto rounded = detail::SourceStencilImage::kRoundedPlane;
   const SourceStencil stencil{rows, weights, rounded};
+  const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
+  const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1], weights[2] + 0x1p-49};
+  const std::array bad_stencils{
+      SourceStencil{wrong_group, weights, rounded},
+      SourceStencil{rows, wrong_point, rounded},
+      SourceStencil{rows, std::span(weights).first<2>(), rounded},
+  };
   MovePlan move{incidence.vertex_star(kept), {}};
   move.vertex.id = local.vertex_id(kept);
   const bool wrong_zero = control == RoundedControl::kOppositeZeroSign;
   const double z = oblique ? 0.125 * x : (wrong_zero ? -0.0 : 0.0);
   move.vertex.carrier = {x, y, z};
-  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star) ==
-            TetEditStatus::kApplied);
+  const auto refuses_move = [&](Point carrier, const SourceStencil& proof,
+                                TetEditStatus expected = TetEditStatus::kRejectedTopology) {
+    TetEditVertex candidate = move.vertex;
+    candidate.carrier = carrier;
+    PHX_CHECK(incidence.relocate(local, std::span(&candidate, 1), move.star, &proof) == expected);
+    PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+  };
+  if (admit) {
+    for (const SourceStencil& bad : bad_stencils) refuses_move(move.vertex.carrier, bad);
+    const std::array<std::int32_t, 2> rim_rows{1, 3};
+    const std::array<double, 2> rim_weights{0.1875, 0.8125};
+    refuses_move({5.0, 7.0 * 0.8125, 0.0}, {rim_rows, rim_weights, rounded});
+
+    // A supported image inside the source group can still invert the star.
+    const std::array<std::int32_t, 3> inverted_rows{0, 1, 3};
+    const std::array<double, 3> inverted_weights{0.75, 0.125, 0.125};
+    refuses_move({1.25, 0.875, 0.0}, {inverted_rows, inverted_weights, rounded},
+                 TetEditStatus::kInvalidGeometry);
+  } else {
+    refuses_move(move.vertex.carrier, stencil);
+  }
+  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star,
+                               admit ? &stencil : nullptr) == TetEditStatus::kApplied);
   if (wrong_zero) PHX_CHECK(std::signbit(local.point(kept)[2]));
   TetEditStatus status = TetEditStatus::kApplied;
   PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
@@ -2560,13 +2588,7 @@ void rounded_survivor_matches_batch_across_chart_boundary(RoundedControl control
     if (!plan) continue;
     const auto star = incidence.vertex_star(removed);
     if (admit) {
-      const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
-      const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1],
-                                             weights[2] + 0x1p-49};
-      for (const SourceStencil bad : {
-               SourceStencil{wrong_group, weights, rounded},
-               SourceStencil{rows, wrong_point, rounded},
-               SourceStencil{rows, std::span(weights).first<2>(), rounded}}) {
+      for (const SourceStencil& bad : bad_stencils) {
         PHX_CHECK(!incidence.collapse_boundary(local, plan->operation, star, nullptr, &bad));
         PHX_CHECK(same_state(local, batch));
       }
