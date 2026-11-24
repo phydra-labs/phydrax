@@ -735,8 +735,7 @@ rollback stay serial. The eight-worker smoothing phase drops from 1.810
 to 1.523 seconds in internal pairs. All four live unlayered quadric
 comparisons meet quality and both the live and earlier time limits;
 at eight workers Phydrax takes 3.982 seconds versus 4.043 seconds.
-The certified mesh identity is unchanged. The separate layered sphere
-quality gap remains.
+The certified mesh identity is unchanged.
 
 The absolute-thickness pilot requests the native first layer thickness and
 growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
@@ -756,6 +755,18 @@ Phydrax passes the registered quality limits, but maximum skewness is
 0.53156 versus the live reference's 0.49744 at every rank. No combined
 speed and quality win is credited. Native output IDs again agree at
 1, 2, 3, 4, and 8 requests.
+
+On `85011cdbb8`, smoothing tilts a smooth unsplit layer column rigidly
+about its wall vertex when a face between its layer cells is skewed. A
+tilt must not raise local skewness, must pass the existing validity
+screen, and must keep every touched layer cell at least the control's
+`minimum_thickness_fraction` of its thickness. On the same sphere the
+mesh has no invalid cells, passes compliance and the registered limits,
+and its maximum skewness is 0.49535 against the live 0.49744. The layered
+quadric mesh is unchanged. Three interleaved eight-rank pairs took
+5.421 / 5.116 / 5.332 seconds against 5.419 / 5.193 / 5.341 seconds for
+`snappyHexMesh`, under a one-minute load of 6.9 to 4.7. The quality gap
+is closed; the timing result is not a qualification.
 
 ### Matched graded no-op adaptation
 
