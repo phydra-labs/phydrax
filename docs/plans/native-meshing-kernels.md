@@ -736,3 +736,10 @@ The prepared clock includes metric gradation and the no-op adaptation
 check, not mesh or metric input preparation, I/O, or final proof. The
 Phydrax clock does not scale with its worker cap here; invariant outputs
 are not a parallel throughput win.
+
+On `21e243a38f`, direct native exact orientation and bounded quality
+chunks improve the same no-op route without changing the source, metric,
+or evidence IDs. Removing a redundant input eigensolve also improves
+the one-worker path. At eight requests, paired Phydrax times fall from
+11.36 / 81.70 / 842.25 ms to 7.59 / 44.87 / 428.73 ms. These internal
+pairs still do not meet the previously measured OpenMP Omega_h times.
