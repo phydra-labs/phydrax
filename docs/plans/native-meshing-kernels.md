@@ -480,6 +480,22 @@ grid torus still takes the ordinary fixed-wall route. With the new size
 dispatch, its measured 8-worker time rose from 0.243 s to 0.292 s, still
 below HXT's 0.630 s.
 
+### Matched largest CAD qualification
+
+On the original quadric at h = 0.02286, Phydrax took 1.232 s at one
+worker and 1.126 s at eight; Gmsh 4.15.2 HXT took 1.863 s and 1.133 s
+respectively. These are the minima of three interleaved pairs per worker
+count on macOS. The native process was reused; HXT ran in fresh processes
+with initialization and geometry preparation outside the mesh clock.
+The eight-worker comparison uses the faster of the one- and eight-worker
+HXT clocks. It qualifies construction on this row, not proof latency.
+
+The native mesh and non-time evidence were byte-identical at 1, 2, 3, 4,
+and 8 workers: 493,903 tetrahedra, zero unmet constraints, and no
+independent quality misses. The maximum tetrahedron radius-edge ratio was
+1.999924, the maximum tetrahedron circumradius divided by h was 0.999987,
+and the maximum boundary circumradius divided by its bound was 0.972409.
+
 ### Matched affine point-location qualification
 
 All eight F10 affine location comparisons passed against libigl 2.6.3 on the
