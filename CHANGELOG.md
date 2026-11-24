@@ -69,7 +69,7 @@
   certification. Rebuild meshcore for the native verifier.
 - Octree hex smoothing refreshes independent face geometry and cell
   centroids with configured native workers. Repair order and mesh geometry
-  are unchanged. Rebuild meshcore for the worker-aware build entry point.
+  are unchanged. Rebuild meshcore for `phx_mc_hex_dominant_build`.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once
@@ -136,8 +136,8 @@
   When first-order relocation stalls at a short boundary spoke, a bounded
   tangential search can recover progress without relaxing the metric band,
   source-carrier checks, or exact cell validity.
-- Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
-  `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
+- Added the `plc_octree_hex_dominant` route
+  (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
   core refined to half size at the boundary with exact inside/outside, one
   projected wall layer snapped to feature edges and corners, smoothing with a
   non-orthogonality and skewness descent and local repair, optional wall

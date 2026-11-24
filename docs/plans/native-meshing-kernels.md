@@ -334,9 +334,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than
     cfMesh's. The tet-to-hex split route stays only if a row needs it.
-    Design (Nov 20). One call, `phx_mc_hex_dominant` (`_meshcore.hex_dominant`), on a closed
-    oriented triangle surface with its facet rows, the core size h, the boundary size h / 2^k, the
-    feature angle and an optional exact layer thickness schedule. The measured reference is cfMesh
+    Construction calls `phx_mc_hex_dominant_build` (`_meshcore.hex_dominant`) on a closed
+    oriented triangle surface with its facet rows, the core size h, the boundary size h / 2^k,
+    the feature angle, an optional exact layer thickness schedule, and a worker cap.
+    The measured reference is cfMesh
     `cartesianMesh`: its 77,896-cell sphere has every non-hexahedron in the h / (h/2) transition shell
     (9-, 12- and 15-face cells) and reaches 18.7 degrees there only because it smooths; an unsmoothed
     2:1 octree face has 25.2 degrees. Construction (floating point, exact predicates):

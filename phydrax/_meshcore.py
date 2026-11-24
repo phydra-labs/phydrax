@@ -3309,9 +3309,10 @@ def hex_dominant(
 ) -> HexDominant:
     """Hex-dominant mesh of a closed outward-oriented triangle surface.
 
-    Rows follow ``phx_mc_hex_dominant``: ``core_size`` is ``boundary_size``
-    times a power of two; ``layer_thicknesses`` (possibly empty) are the
-    hexahedral layer thicknesses from the wall outward.
+    Rows follow ``phx_mc_hex_dominant_build``: ``core_size`` is
+    ``boundary_size`` times a power of two; ``layer_thicknesses`` (possibly
+    empty) are the hexahedral layer thicknesses from the wall outward.
+    ``parallelism`` caps workers for independent face and cell geometry.
     """
 
     points = _points(vertices, "vertices", 3)
