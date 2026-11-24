@@ -445,13 +445,62 @@ Jacobian, determinant ratio, and analytic boundary residual on the same
 sampling lattice as the Netgen/Gmsh comparison. The sampled surface residual
 does not replace the separate bidirectional CAD fidelity or embedding proof.
 
-The macOS results across all 12 rows beat every curving clock and certified
-every cell's determinant, but no row matched all reference quality fields. The
-quadric rows met the boundary residual thresholds and missed minimum scaled
-Jacobian. Blending in the spherical chart's unit frame brought all six sphere
-rows within their boundary residual limits without losing validity or the
-curving time advantage. Minimum scaled Jacobian and determinant ratio still
-miss on all six sphere rows. Keep F5 open until the combined gates pass.
+On `8055b46755`, all 12 native cases cleared the original registered
+curving clocks and sampled quality limits. A separate macOS campaign on
+`8055b46755` and `a4537ac8f0` interleaved three fresh processes per arm with
+Netgen 6.2.2608 `Mesh.Curve` and Gmsh 4.15.2 `setOrder` (no optimizer).
+Both references used the same analytic surfaces, degrees, and size requests,
+not the same linear tetrahedra. Phydrax took 35–93% of the faster reference's
+curving time in every case, and cleared all measured live quality limits in
+10 of 12. The two misses were:
+
+| P2 case | Sampled measure | Phydrax | Netgen | Registered minimum |
+|---|---|---:|---:|---:|
+| Sphere, h = 0.0594 | Minimum determinant ratio | 0.91915074 | 0.91945316 | 0.919 |
+| Quadric, h = 0.1061 | Minimum scaled Jacobian | 0.27713941 | 0.27725924 | 0.277 |
+
+No retained arm had a sampled nonpositive determinant. The 12 registered
+passes and 10 live quality-qualified wins answer different questions.
+
+### Restricted implicit construction and deferred proof
+
+All four original implicit cases on `8055b46755` beat their live
+single-thread reference under the original fresh-process protocol. The
+construction clock excludes preparation and proof on both sides.
+
+| Source | Tolerance | Phydrax (ms) | Reference (ms) |
+|---|---:|---:|---:|
+| Sphere | 0.02 | 1.563 | 1.592 (CGAL) |
+| Sphere | 0.01 | 1.990 | 3.707 (CGAL) |
+| Torus | 0.02 | 14.143 | 84.661 (Gmsh) |
+| Torus | 0.01 | 26.438 | 202.973 (Gmsh) |
+
+Separate repeat-construction checks reproduced the native coordinate and
+connectivity digests within each case. The resulting meshes passed native
+embedding and volume verification, domain coverage, and continuous
+distance bounds in both directions. The provider comparisons used sampled
+distance rather than those proofs. The reference torus uses the original
+translated frame: same intrinsic shape and tolerance, not identical global
+coordinates.
+
+On `a4537ac8f0`, `prove=False` also skips exact local validity and global
+embedding at candidate publication. The two public proof modes retain
+the same plan, mesh, source-fidelity, embedding, and coverage identities
+on the tested sphere and torus. For the torus at tolerance 0.01, a single
+paired diagnostic measured 1.09 s before and 0.38 s after for candidate
+publication, and 7.61 s for the deferred proof. These are separate
+public-route clocks, not the construction comparison or a general bound.
+
+### Original graded coarsening
+
+The isolated adaptation candidate `26928e9440` passes the scientific
+requirements on the authenticated original 10,452-cell source: 1,876 output
+tetrahedra, zero out-of-band edges or inversions, mean quality 0.82959
+(required 0.827), and raw midpoint band share 0.86422 (required 0.794).
+Certification and transfer complete on the real candidate. This is not an
+integration or throughput pass: paired warm construction was about 1.70 s
+against the original 0.377 s ceiling. Most of that clock is native edit
+work, not the separately timed certification and transfer.
 
 ### Matched fixed-wall volume qualification
 
@@ -552,11 +601,14 @@ queries only.
   1, 2, 4, and 8. This is worker invariance, not a parallel speedup claim.
 - F13 overset remains sequential. On the same ordered binary input, it beats
   TIOGA at 1, 2, 4, and 8 MPI ranks for all three hex and all three tet sizes
-  (three interleaved calls per row). At the largest sizes and eight ranks, the
-  prepared candidate call takes 0.274 s vs 0.649 s for hexes and 0.182 s vs
-  0.517 s for tets. All native connectivity IDs are invariant under worker
-  requests; certified donors pass the independent check. These are assembly
-  clocks, not cold process or proof times.
+  in the earlier campaign (three interleaved calls per row). The original
+  100k-tet middle input is no longer available for a new pinned run; only
+  the authenticated 10k and 1M tet inputs were recovered. At the largest
+  sizes and eight ranks, the prepared candidate call takes 0.274 s vs
+  0.649 s for hexes and 0.182 s vs 0.517 s for tets. Native connectivity IDs
+  are invariant under worker requests, and certified donors pass the
+  independent check. These are assembly clocks, not cold process or proof
+  times.
 - F14 conforming Voronoi construction remains sequential. The pre-centering
   matrix passed timing at all 32 size/worker combinations, 31 of 32 using
   archived quality ceilings and 29 of 32 against the fastest retained
@@ -576,6 +628,18 @@ queries only.
   faster of the valid retained serial outputs took 8.729 s versus 5.350 s
   for Phydrax, with all measured quality criteria met. No timing or method
   was substituted for the strict comparison.
+- F8 cfMesh settings did not establish matched thread counts: all five
+  otherwise passing configured-count cases used observed 10- or 30-thread
+  teams. Enforcing the requested cap aborted the provider in two probes.
+  No matched-thread win is credited and the requested-count observations
+  are not evidence of unresolved native proofs.
+- F9 sphere at h = 0.1 passed the live Gmsh comparison at worker requests
+  1, 2, 4, and 8 on its original shared wall, with invariant native output
+  and evidence IDs. At `a4537ac8f0` a separate one-worker run took 0.246 s
+  versus 0.285 s, with zero native quality misses and zero nonpositive
+  sampled Gmsh prism corners or tetrahedra. The twelve cfMesh outputs on
+  the other layer rows failed their own `checkMesh` gate, independent of
+  native proof and timing.
 - Periodic Delaunay and fixed-boundary recovery remain sequential in the
   matched comparisons against the sequential CGAL providers. All Phydrax
   output banks are invariant under worker requests. This does not qualify
