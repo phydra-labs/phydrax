@@ -8,9 +8,10 @@ kernel's minimum time is at most its ceiling times the row's allowed ratio.
 Ratios above one are interim acceptance targets of the plan
 `docs/plans/native-meshing-kernels.md`; the final target of every row is 1.
 
-The 3D metric rows report native out-of-band and unrepresentable edge counts
-separately from the common cell ``unmet`` count and the independent quality
-checks. Their certification and transfer time is excluded from construction.
+The 3D metric rows require the ledger's ordered mesh and raw target banks
+(``--metric-inputs``). Native out-of-band and unrepresentable edges are
+reported separately from the independent provider quality and cell ``unmet``
+counts. Certification and transfer are excluded from construction timing.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from functools import partial
 from hashlib import sha256
 from itertools import product
 from pathlib import Path
+from struct import unpack_from
 from typing import Any, NamedTuple, TYPE_CHECKING
 
 import jax
@@ -309,6 +311,7 @@ def _rows(
     layer_inputs: Path | None,
     voronoi_inputs: Path | None,
     hexdom_inputs: Path | None,
+    metric_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -356,10 +359,6 @@ def _rows(
             ),
             _volume_rows,
         ),
-        (
-            frozenset({"metric-3d-iso", "metric-3d-aniso", "metric-3d-coarsen"}),
-            lambda: _f6_rows(sizes),
-        ),
         (frozenset({"cad-quadric", "cad-quadric-p2", "cad-quadric-p3"}), _cad_rows),
         (frozenset({"cad-sphere-p2", "cad-sphere-p3"}), _cad_sphere_rows),
         (frozenset({"cad-step-washer"}), _cad_step_washer_rows),
@@ -369,6 +368,13 @@ def _rows(
             lambda: _overset_rows(sizes, overset_inputs),
         ),
     )
+    metric_rows = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
+    if metric_inputs is not None:
+        families += ((metric_rows, lambda: _f6_rows(sizes, metric_inputs, names)),)
+    elif names is not None and metric_rows & names:
+        raise ValueError(
+            "The 3D metric rows read the ledger's F6b banks: pass --metric-inputs."
+        )
     queries = frozenset(
         {"query-closest", "query-signed", "query-winding", "query-locate"}
     )
@@ -1910,7 +1916,12 @@ def _constructed_cells(result: object, /) -> int:
 # The ceiling covers grading and construction of the topology edit. The
 # published target is still certified; certification and transfer are timed
 # separately from the construction samples.
-_F6_SIZES = {10_000: 0.0782, 100_000: 0.0363, 1_000_000: 0.01685}
+_F6_SIZES = {
+    10_000: ("cube1e4", 10_452),
+    100_000: ("cube1e5", 98_932),
+    1_000_000: ("cube1e6", 965_817),
+}
+_F6_FIELDS = ("iso", "aniso", "coarsen")
 _F6_REFERENCE = {
     ("iso", 10_000): (0.774, 0.845),
     ("iso", 100_000): (0.870, 0.845),
@@ -1924,38 +1935,27 @@ _F6_REFERENCE = {
 }
 
 
-def _gmsh_cube(h: float, /) -> tuple[np.ndarray, np.ndarray]:
-    from importlib import import_module
-
-    gmsh = import_module("gmsh")
-    gmsh.initialize()
-    gmsh.option.setNumber("General.Terminal", 0)
-    gmsh.option.setNumber("General.NumThreads", 1)
-    gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
-    gmsh.model.occ.synchronize()
-    gmsh.option.setNumber("Mesh.MeshSizeMin", h)
-    gmsh.option.setNumber("Mesh.MeshSizeMax", h)
-    gmsh.model.mesh.generate(3)
-    tags, coordinates, _ = gmsh.model.mesh.getNodes()
-    types, _, nodes = gmsh.model.mesh.getElements(3)
-    gmsh.finalize()
-    order = np.argsort(tags)
-    tags = np.asarray(tags)[order]
-    points = np.asarray(coordinates, dtype=np.float64).reshape((-1, 3))[order]
-    cells = np.searchsorted(
-        tags,
-        np.concatenate(
-            [np.asarray(n).reshape((-1, 4)) for t, n in zip(types, nodes) if t == 4]
-        ),
-    ).astype(np.int32)
-    corners = points[cells]
-    volume = np.einsum(
-        "ij,ij->i",
-        corners[:, 1] - corners[:, 0],
-        np.cross(corners[:, 2] - corners[:, 0], corners[:, 3] - corners[:, 0]),
+def _f6_source(
+    path: Path, cell_count: int, /
+) -> tuple[np.ndarray, np.ndarray, tuple[tuple[str, str], ...]]:
+    with np.load(path, allow_pickle=False) as bank:
+        points, cells = bank["xyz"], bank["el"]
+    if points.ndim != 2 or points.shape[1] != 3 or points.dtype != np.dtype("<f8"):
+        raise ValueError(f"{path}: xyz must contain little-endian binary64 points.")
+    if (
+        cells.shape != (cell_count, 4)
+        or cells.dtype not in (np.dtype("<i4"), np.dtype("<i8"))
+        or np.any(cells < 0)
+        or np.any(cells >= points.shape[0])
+    ):
+        raise ValueError(f"{path}: el must contain {cell_count} ordered tetrahedra.")
+    points = np.ascontiguousarray(points)
+    cells = np.ascontiguousarray(cells, dtype="<i4")
+    digests = (
+        ("points", sha256(memoryview(points).cast("B")).hexdigest()),
+        ("cells", sha256(memoryview(cells).cast("B")).hexdigest()),
     )
-    cells[volume < 0.0] = cells[volume < 0.0][:, [0, 2, 1, 3]]
-    return points, cells
+    return points, cells, digests
 
 
 def _tet_edges(cells: np.ndarray, /) -> np.ndarray:
@@ -1963,38 +1963,26 @@ def _tet_edges(cells: np.ndarray, /) -> np.ndarray:
     return np.unique(np.sort(pairs, axis=1), axis=0)
 
 
-def _f6_metric(field: str, points: np.ndarray, sizes: np.ndarray | None, /) -> np.ndarray:
-    # Tensors 1 / h^2 (iso, coarsen) or diag(1/0.1^2, 1/0.1^2, 1/h_n^2) at points.
-    match field:
-        case "iso":
-            d = np.abs(np.linalg.norm(points - 0.5, axis=1) - 0.3)
-            h = np.minimum(0.01 + 0.3 * d, 0.1)
-            return np.eye(3)[None] / (h * h)[:, None, None]
-        case "aniso":
-            normal = np.minimum(0.01 + 0.3 * np.abs(points[:, 2] - 0.5), 0.1)
-            metric = np.zeros((points.shape[0], 3, 3), dtype=np.float64)
-            metric[:, 0, 0] = metric[:, 1, 1] = 1.0 / 0.01
-            metric[:, 2, 2] = 1.0 / (normal * normal)
-            return metric
-        case "coarsen":
-            if sizes is None:
-                raise ValueError(
-                    "The coarsening target is sampled at the input vertices."
-                )
-            return np.eye(3)[None] / (sizes * sizes)[:, None, None]
-        case _:
-            raise ValueError(f"Unknown F6 field {field!r}.")
-
-
-def _coarsen_sizes(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
-    edges = _tet_edges(cells)
-    length = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    total = np.zeros(points.shape[0], dtype=np.float64)
-    count = np.zeros(points.shape[0], dtype=np.float64)
-    for end in range(2):
-        np.add.at(total, edges[:, end], length)
-        np.add.at(count, edges[:, end], 1.0)
-    return 2.0 * total / count
+def _f6_target(
+    path: Path, vertex_count: int, components: int, /
+) -> tuple[np.ndarray, str]:
+    raw = path.read_bytes()
+    if len(raw) != 8 + 8 * vertex_count * components or unpack_from("<ii", raw) != (
+        vertex_count,
+        components,
+    ):
+        raise ValueError(f"{path}: target bank must match the source vertex rows.")
+    values = np.frombuffer(raw, dtype="<f8", offset=8).reshape((vertex_count, components))
+    tensors = np.zeros((vertex_count, 3, 3), dtype=np.float64)
+    if components == 1:
+        tensors[:, 0, 0] = tensors[:, 1, 1] = tensors[:, 2, 2] = values[:, 0]
+    else:
+        # Omega_h bank order: xx yy zz xy yz xz.
+        tensors[:, 0, 0], tensors[:, 1, 1], tensors[:, 2, 2] = values[:, :3].T
+        tensors[:, 0, 1] = tensors[:, 1, 0] = values[:, 3]
+        tensors[:, 1, 2] = tensors[:, 2, 1] = values[:, 4]
+        tensors[:, 0, 2] = tensors[:, 2, 0] = values[:, 5]
+    return tensors, sha256(raw).hexdigest()
 
 
 class _F6Run(NamedTuple):
@@ -2011,7 +1999,9 @@ def _f6_stage_seconds(result: object, /) -> float:
     return result.construction_seconds
 
 
-def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+def _f6_rows(
+    sizes: tuple[int, ...], inputs: Path, names: frozenset[str] | None, /
+) -> tuple[_Row, ...]:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.discretization._cell_mesh import CellBlock, CellMesh
     from phydrax.meshing import (
@@ -2034,10 +2024,10 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     from phydrax.meshing._tetra_metric import TetraMetricEvidence
 
     rows: list[_Row] = []
-    for size, h in _F6_SIZES.items():
+    for size, (label, cell_count) in _F6_SIZES.items():
         if size not in sizes:
             continue
-        points, cells = _gmsh_cube(h)
+        points, cells, source_digests = _f6_source(inputs / f"{label}.npz", cell_count)
         block = CellBlock(
             "tetrahedra",
             "tetrahedron",
@@ -2061,16 +2051,26 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
             vertices.entity_set_id,
             np.asarray(vertices.entity_ids, dtype=np.int64),
         )
-        coarse = _coarsen_sizes(points, cells)
         edges = _tet_edges(cells)
         policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D)
-        for field in ("iso", "aniso", "coarsen"):
+        for field in _F6_FIELDS:
+            name = f"metric-3d-{field}"
+            if names is not None and name not in names:
+                continue
+            tensors, target_digest = _f6_target(
+                inputs / f"{label}.{field}.mbin",
+                points.shape[0],
+                6 if field == "aniso" else 1,
+            )
             target = MeshMetricField(
                 scope,
-                _f6_metric(field, points, coarse),
+                tensors,
                 minimum_size=1.0e-3,
                 maximum_size=10.0,
                 maximum_anisotropy=100.0,
+            )
+            coarsen_sizes = (
+                1.0 / np.sqrt(tensors[:, 0, 0]) if field == "coarsen" else None
             )
             gradation = MetricGradationPolicy(
                 1.0 + math.log(1.3), anisotropic=field == "aniso"
@@ -2118,14 +2118,19 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
 
             rows.append(
                 _Row(
-                    f"metric-3d-{field}",
+                    name,
                     size,
                     run,
                     _adapted_cells,
-                    quality=lambda result, field=field, size=size: _f6_quality(
-                        result, field, _F6_REFERENCE[field, size]
+                    quality=partial(
+                        _f6_quality,
+                        field,
+                        _F6_REFERENCE[field, size],
+                        points,
+                        coarsen_sizes,
                     ),
                     stage_seconds=_f6_stage_seconds,
+                    input_sha256=(*source_digests, ("target_metric", target_digest)),
                 )
             )
     return tuple(rows)
@@ -2860,11 +2865,15 @@ def _adapted_cells(result: object, /) -> int:
 
 
 def _f6_quality(
-    result: object, field: str, reference: tuple[float, float], /
+    field: str,
+    reference: tuple[float, float],
+    source_points: np.ndarray,
+    coarsen_sizes: np.ndarray | None,
+    result: object,
+    /,
 ) -> tuple[int, dict[str, float]]:
-    # Ledger F6: midpoint lengths, centroid metric mean ratio, and inverted
-    # cells. Coarsening uses the adapted tensors. A stall or a quality miss
-    # fails the row even when its timing is within the ceiling.
+    # Independent F6b measurement: original midpoint field and Euclidean
+    # shape, except for anisotropic shape in the centroid's target metric.
     from phydrax.meshing import MeshAdaptationStatus
 
     if not isinstance(result, _F6Run):
@@ -2872,19 +2881,41 @@ def _f6_quality(
     points, cells = _adapted_arrays(result)
     edges = _tet_edges(cells)
     vector = points[edges[:, 1]] - points[edges[:, 0]]
-    if field == "coarsen":
-        if result.outcome.metric is None:
-            raise ValueError("A metric route publishes its target metric.")
-        tensors = np.asarray(result.outcome.metric.values, dtype=np.float64)
-        midpoint = 0.5 * (tensors[edges[:, 0]] + tensors[edges[:, 1]])
-        centroid = tensors[cells].mean(axis=1)
-    else:
-        midpoint = _f6_metric(
-            field, 0.5 * (points[edges[:, 0]] + points[edges[:, 1]]), None
-        )
-        centroid = _f6_metric(field, points[cells].mean(axis=1), None)
-    length = np.sqrt(np.einsum("ni,nij,nj->n", vector, midpoint, vector))
+    midpoint = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
+    match field:
+        case "iso":
+            distance = np.abs(np.linalg.norm(midpoint - 0.5, axis=1) - 0.3)
+            length = np.linalg.norm(vector, axis=1) / np.minimum(
+                0.01 + 0.3 * distance, 0.1
+            )
+        case "aniso":
+            normal = np.minimum(0.01 + 0.3 * np.abs(midpoint[:, 2] - 0.5), 0.1)
+            length = np.sqrt(
+                (vector[:, 0] ** 2 + vector[:, 1] ** 2) / 0.1**2
+                + vector[:, 2] ** 2 / normal**2
+            )
+        case "coarsen":
+            from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+
+            if coarsen_sizes is None:
+                raise ValueError("F6 coarsening requires the original scalar bank.")
+            size = LinearNDInterpolator(source_points, coarsen_sizes)(midpoint)
+            outside = np.isnan(size)
+            if np.any(outside):
+                size[outside] = NearestNDInterpolator(source_points, coarsen_sizes)(
+                    midpoint[outside]
+                )
+            length = np.linalg.norm(vector, axis=1) / size
+        case _:
+            raise ValueError(f"Unknown F6 field {field!r}.")
     corners = points[cells]
+    if field == "aniso":
+        centroid_z = corners.mean(axis=1)[:, 2]
+        normal = np.minimum(0.01 + 0.3 * np.abs(centroid_z - 0.5), 0.1)
+        scale = np.empty((cells.shape[0], 3), dtype=np.float64)
+        scale[:, 0] = scale[:, 1] = 1.0 / 0.1
+        scale[:, 2] = 1.0 / normal
+        corners = corners * scale[:, None, :]
     volume = (
         np.einsum(
             "ij,ij->i",
@@ -2893,13 +2924,12 @@ def _f6_quality(
         )
         / 6.0
     )
-    squares = np.zeros(cells.shape[0], dtype=np.float64)
-    for i in range(4):
-        for j in range(i + 1, 4):
-            side = corners[:, j] - corners[:, i]
-            squares += np.einsum("ni,nij,nj->n", side, centroid, side)
-    metric_volume = np.abs(volume) * np.sqrt(np.linalg.det(centroid))
-    quality = 12.0 * (3.0 * metric_volume) ** (2.0 / 3.0) / squares
+    squares = sum(
+        ((corners[:, i] - corners[:, j]) ** 2).sum(axis=1)
+        for i in range(4)
+        for j in range(i + 1, 4)
+    )
+    quality = 12.0 * np.cbrt(9.0 * volume**2) / squares * np.sign(volume)
     share = float(np.mean((length >= 0.7) & (length <= 1.4)))
     inverted = int(np.count_nonzero(volume <= 0.0))
     missed = (
@@ -4143,6 +4173,13 @@ def main(argv: list[str] | None = None) -> int:
         "the hexdom rows run only with it",
     )
     parser.add_argument(
+        "--metric-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F6b cube1eN.npz and cube1eN.FIELD.mbin "
+        "input banks; the 3D metric rows run only with it",
+    )
+    parser.add_argument(
         "--reference-mesh",
         nargs=2,
         metavar=("NPZ", "H"),
@@ -4176,6 +4213,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.layer_inputs,
         arguments.voronoi_inputs,
         arguments.hexdom_inputs,
+        arguments.metric_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
