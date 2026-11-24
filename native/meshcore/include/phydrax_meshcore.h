@@ -2156,6 +2156,9 @@ PHX_MC_API int32_t phx_mc_hex_dominant_sizes(const phx_mc_hex_dominant_mesh* res
                                              int64_t* sizes);
 PHX_MC_API int32_t phx_mc_hex_dominant_export(const phx_mc_hex_dominant_mesh* result,
                                               const phx_mc_hex_dominant_arrays* arrays);
+/* Verify the original face bank in place, with no construction or mutation. */
+PHX_MC_API int32_t phx_mc_hex_dominant_certify(const phx_mc_hex_dominant_mesh* result,
+                                            int64_t* failed_cells);
 PHX_MC_API void phx_mc_hex_dominant_free(phx_mc_hex_dominant_mesh* result);
 
 /* ------------------------------------------------ conforming Voronoi cells

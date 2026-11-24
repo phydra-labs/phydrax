@@ -37,7 +37,7 @@ first proved execution and reused.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import final
 
 import equinox as eqx
@@ -622,27 +622,12 @@ def _compliance(
             ("octree:levels", float(stats[25])),
         )
     )
-    if stats[22] >= 0.0:
-        achieved.extend(
-            (
-                ("octree:certified", float(stats[22])),
-                ("octree:certified_cells", float(stats[10])),
-                ("octree:uncertified_cells", float(stats[23])),
-            )
-        )
     return MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),
         requested=tuple(requested),
         achieved=tuple(achieved),
     )
-
-
-_UNPROVED = (
-    "This hex-dominant mesh was constructed with prove=False: the kernel did "
-    "not certify its cells and the PLC fidelity source was not prepared; "
-    "execute(prove=True) constructs and proves it."
-)
 
 
 class _FidelityQueryPreparation:
@@ -664,6 +649,51 @@ class _FidelityQueryPreparation:
                 )
             )
         return self._query
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredOctreeHexProof:
+    """Bind the native face ordering and source query to one published mesh."""
+
+    native: meshcore._HexDominantProof
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    fidelity: _FidelityQueryPreparation
+    tolerance: float
+
+    def prepare(self, construction: NativeMeshConstruction, /) -> NativeMeshConstruction:
+        if (
+            construction.mesh is not self.mesh
+            or construction.geometry is not self.geometry
+        ):
+            raise ValueError("The octree proof does not bind this mesh and geometry.")
+        failed = self.native.uncertified_cells()
+        if failed:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"{failed} hex-dominant cells failed certification after their repairs.",
+                provider_code="native_octree_hex_certification",
+                stage="volume_fill",
+            )
+        base = construction.compliance
+        return replace(
+            construction,
+            compliance=MeshingComplianceReport(
+                base.specification_id,
+                issues=base.issues,
+                requested=base.requested,
+                achieved=base.achieved
+                + (
+                    ("octree:certified", 1.0),
+                    ("octree:certified_cells", float(self.mesh.connectivity.cell_count)),
+                    ("octree:uncertified_cells", 0.0),
+                ),
+            ),
+            certification=plc_fidelity_request(
+                self.mesh, self.geometry, self.fidelity.get(), self.tolerance
+            ),
+            octree_hex_proof=None,
+        )
 
 
 @final
@@ -691,8 +721,8 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         self.core_size = core_size
         self.boundary_size = boundary_size
 
-    def execute(self, /, *, prove: bool = True) -> NativeMeshConstruction:
-        """Construct the mesh; ``prove`` runs the kernel's cell certification."""
+    def execute(self, /) -> NativeMeshConstruction:
+        """Construct the candidate without running its acceptance proof."""
         complex_ = self.source.complex
         triangles, polygons = _plc_triangles(self.source)
         triangle_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)[polygons]
@@ -714,16 +744,12 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             boundary_size=self.boundary_size,
             feature_angle_degrees=_FEATURE_ANGLE_DEGREES,
             layer_thicknesses=thicknesses,
-            prove=prove,
+            prove=False,
         )
-        if native.status is not meshcore.MeshcoreStatus.OK:
-            stats = np.asarray(native.stats, dtype=np.float64)
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"{int(stats[23])} hex-dominant cells failed certification after "
-                "their repairs.",
-                provider_code="native_octree_hex_certification",
-                stage="volume_fill",
+        proof = native.proof
+        if proof is None:
+            raise RuntimeError(
+                "Octree construction did not return its native proof bank."
             )
         published = _publish(native)
         organization = _organization(
@@ -734,19 +760,10 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         )
         geometry = CellGeometrySpec.affine(published.mesh)
         tolerance = self.specification.maximum_deviation
-        certification = (
-            plc_fidelity_request(
-                published.mesh,
-                geometry,
-                self.fidelity_query.get(),
-                self.boundary_size if tolerance is None else tolerance,
-            )
-            if prove
-            else NativeCertificationRequest(
-                MeshCertificationSchedule("volume_plc_fidelity"),
-                self.source.source_id,
-                self.source.source_revision,
-            )
+        certification = NativeCertificationRequest(
+            MeshCertificationSchedule("volume_plc_fidelity"),
+            self.source.source_id,
+            self.source.source_revision,
         )
         stages = (
             MeshingStageReport(
@@ -765,7 +782,13 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             geometry=geometry,
             organization=organization,
             stages=stages,
-            uncertifiable=None if prove else _UNPROVED,
+            octree_hex_proof=_DeferredOctreeHexProof(
+                proof,
+                published.mesh,
+                geometry,
+                self.fidelity_query,
+                self.boundary_size if tolerance is None else tolerance,
+            ),
         )
 
 

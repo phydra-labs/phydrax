@@ -791,6 +791,10 @@ def _accept_native_construction(
             stage=MeshingStageKind.GEOMETRY_AUDIT.value,
         )
     _require_native_target(construction, specification)
+    if construction.octree_hex_proof is not None:
+        if route != "plc_octree_hex_dominant":
+            raise ValueError("An octree cell proof belongs to the octree hex route.")
+        construction = construction.octree_hex_proof.prepare(construction)
     event = construction.surface_quad_field_event
     requested_field = (
         specification.cross_field

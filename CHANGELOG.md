@@ -64,6 +64,9 @@
 - Hex repair reuses ordered local incidence and committed face geometry.
   Polyhedral publication checks explicit loop vertex repetition in
   bounded worksets without changing topology identities or defect order.
+- Octree hex-dominant candidates can be certified with `.prove()` without
+  reconstructing the mesh. Unproved execution still skips cell and source
+  certification. Rebuild meshcore for the native verifier.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once

@@ -3218,10 +3218,8 @@ void Builder::smooth() {
 }
 
 int32_t Builder::certify() {
-  const Topology t = topology(mesh);
   const int64_t cells = static_cast<int64_t>(mesh.cell_kinds.size());
-  int64_t failed = 0;
-  for (int64_t c = 0; c < cells; ++c) failed += !polyhedron_certified(mesh, t, c);
+  const int64_t failed = uncertified_cells(mesh);
   stats[10] = static_cast<double>(cells - failed);
   stats[23] = static_cast<double>(failed);
   stats[22] = failed == 0 ? 1.0 : 0.0;
@@ -3229,6 +3227,14 @@ int32_t Builder::certify() {
 }
 
 }  // namespace
+
+int64_t uncertified_cells(const Mesh& mesh) {
+  const Topology t = topology(mesh);
+  const int64_t cells = static_cast<int64_t>(mesh.cell_kinds.size());
+  int64_t failed = 0;
+  for (int64_t c = 0; c < cells; ++c) failed += !polyhedron_certified(mesh, t, c);
+  return failed;
+}
 
 int32_t build(const Input& in, Mesh& mesh) {
   const auto start = Clock::now();

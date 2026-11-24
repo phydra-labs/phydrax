@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ._result import MeshingComplianceReport
     from ._scope import _SourceEntityScopes
     from ._trace import MeshingStageReport
+    from .providers._native_octree_hex import _DeferredOctreeHexProof
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,9 @@ class NativeMeshConstruction:
     # Why acceptance has no certifier for this construction; acceptance
     # refuses it with this reason instead of certifying a mesh without witness.
     uncertifiable: str | None = field(default=None, kw_only=True)
+    octree_hex_proof: _DeferredOctreeHexProof | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
     layer_curving_evidence: LayerCurvingSourceEvidence | None = field(
         default=None, kw_only=True
     )

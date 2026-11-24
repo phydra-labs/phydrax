@@ -367,12 +367,19 @@ def test_route_publishes_layers_and_proves_them() -> None:
     assert np.count_nonzero(np.asarray(roles.values) == 2) > 0
 
 
-def test_default_octree_candidate_refuses_deferred_proof() -> None:
-    candidate = _plan().execute()
+def test_default_octree_candidate_proves_its_existing_mesh() -> None:
+    plan = _plan()
+    candidate = plan.execute()
+    certified = candidate.prove()
+    eager = plan.execute(prove=True)
 
-    assert candidate.mesh.connectivity.cell_count == 432
-    with pytest.raises(MeshingFailure, match="prove=False"):
-        candidate.prove()
+    assert certified.mesh is candidate.mesh
+    assert certified.geometry is candidate.geometry
+    assert certified.certification is not None and certified.certification.passed
+    assert eager.certification is not None
+    assert certified.certification.report_id == eager.certification.report_id
+    assert certified.compliance.report_id == eager.compliance.report_id
+    assert certified.result_id == eager.result_id
 
 
 def test_route_requires_a_polyhedral_target() -> None:

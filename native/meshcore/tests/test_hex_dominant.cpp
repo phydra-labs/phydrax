@@ -144,7 +144,7 @@ struct Result {
 };
 
 Result mesh(const Surface& s, double core, double boundary, const std::vector<double>& layers,
-            int32_t prove = 1) {
+            int32_t prove = 1, int64_t* failed_cells = nullptr) {
   Result r;
   const std::vector<int32_t> facets(s.f.size() / 3, 0);
   phx_mc_hex_dominant_mesh* handle = nullptr;
@@ -162,6 +162,9 @@ Result mesh(const Surface& s, double core, double boundary, const std::vector<do
                                             &handle};
   r.status = phx_mc_hex_dominant(&request);
   if (handle == nullptr) return r;
+  if (failed_cells != nullptr) {
+    PHX_CHECK(phx_mc_hex_dominant_certify(handle, failed_cells) == PHX_MC_OK);
+  }
   int64_t sizes[5];
   PHX_CHECK(phx_mc_hex_dominant_sizes(handle, sizes) == PHX_MC_OK);
   r.points.resize(3 * sizes[0]);
@@ -506,6 +509,21 @@ void convex_curve_split_is_scale_free() {
   PHX_CHECK(scaled);
 }
 
+void deferred_proof_preserves_the_layered_mesh() {
+  const Surface source = icosphere(4);
+  const Result eager = mesh(source, 0.25, 0.125, {0.01, 0.012});
+  int64_t failed_cells = -1;
+  const Result deferred = mesh(source, 0.25, 0.125, {0.01, 0.012}, 0, &failed_cells);
+  PHX_CHECK(eager.status == PHX_MC_OK && deferred.status == PHX_MC_OK);
+  PHX_CHECK(failed_cells == 0);
+  PHX_CHECK(eager.points == deferred.points);
+  PHX_CHECK(eager.face_offsets == deferred.face_offsets);
+  PHX_CHECK(eager.face_vertices == deferred.face_vertices);
+  PHX_CHECK(eager.face_owner == deferred.face_owner);
+  PHX_CHECK(eager.face_neighbor == deferred.face_neighbor);
+  PHX_CHECK(eager.cell_roles == deferred.cell_roles);
+}
+
 void invalid_input_is_refused() {
   Surface open = icosphere(2);
   open.f.resize(open.f.size() - 3);
@@ -526,6 +544,7 @@ int main() {
   convex_curve_layers_split();
   oblique_curve_segments_gain_midpoints();
   convex_curve_split_is_scale_free();
+  deferred_proof_preserves_the_layered_mesh();
   invalid_input_is_refused();
   return phx::mc::test::finish("test_hex_dominant");
 }

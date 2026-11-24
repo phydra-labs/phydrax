@@ -1428,11 +1428,7 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
         return self._construction.coordinate_contract
 
     def prove(self, /) -> CellMeshingResult:
-        """Certify this mesh without reconstruction or repair.
-
-        The octree hex-dominant route needs ``execute(prove=True)`` up front:
-        an unproved octree candidate does not carry the required proof data.
-        """
+        """Certify this mesh without reconstruction or repair."""
         return _accept_native_construction(
             self._construction,
             self.specification,
@@ -1516,13 +1512,11 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
 
         By default this returns a :class:`CellMeshingCandidate` without an
         acceptance proof. Where supported, ``candidate.prove()`` certifies
-        exactly that mesh. Owner-local execution and certification of the
-        octree hex-dominant route require ``prove=True`` up front.
+        exactly that mesh. Owner-local execution requires ``prove=True``.
         """
         if not isinstance(prove, bool):
             raise TypeError("prove must be bool.")
         from ._native_implicit import _PreparedFixedImplicitRoute
-        from ._native_octree_hex import _PreparedNativeOctreeHexDominant
         from ._native_voronoi import _PreparedNativeVoronoi
 
         if isinstance(self.prepared, _PreparedFixedImplicitRoute):
@@ -1567,9 +1561,7 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                 if cad_solid_support_issues(self.prepared)
                 else execute_cad_solid(self.prepared)
             )
-        elif isinstance(
-            self.prepared, (_PreparedNativeVoronoi, _PreparedNativeOctreeHexDominant)
-        ):
+        elif isinstance(self.prepared, _PreparedNativeVoronoi):
             # The native call certifies its cells only for a proved result.
             construction = self.prepared.execute(prove=prove)
         else:

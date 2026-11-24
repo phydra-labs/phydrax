@@ -62,4 +62,7 @@ struct Mesh {
 // index ranges.
 int32_t build(const Input& input, Mesh& mesh);
 
+// Check the final face banks in their original construction order.
+int64_t uncertified_cells(const Mesh& mesh);
+
 }  // namespace phx::mc::hex_dominant

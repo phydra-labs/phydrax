@@ -123,6 +123,17 @@ int32_t phx_mc_hex_dominant_export(const phx_mc_hex_dominant_mesh* result,
   return PHX_MC_OK;
 }
 
+int32_t phx_mc_hex_dominant_certify(const phx_mc_hex_dominant_mesh* result,
+                                    int64_t* failed_cells) {
+  if (result == nullptr || failed_cells == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    *failed_cells = phx::mc::hex_dominant::uncertified_cells(result->mesh);
+    return *failed_cells == 0 ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+  });
+}
+
 void phx_mc_hex_dominant_free(phx_mc_hex_dominant_mesh* result) { delete result; }
 
 }  // extern "C"

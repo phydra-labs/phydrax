@@ -1553,6 +1553,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_hex_dominant": (_I32, (ctypes.POINTER(_HexDominantRequest),)),
     "phx_mc_hex_dominant_sizes": (_I32, (_P, _P)),
     "phx_mc_hex_dominant_export": (_I32, (_P, ctypes.POINTER(_HexDominantArrays))),
+    "phx_mc_hex_dominant_certify": (_I32, (_P, _P)),
     "phx_mc_hex_dominant_free": (None, (_P,)),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
@@ -3232,6 +3233,27 @@ def conforming_voronoi(
     return ConformingVoronoi(MeshcoreStatus(status), *arrays)
 
 
+@final
+class _HexDominantProof:
+    """Own the immutable native face bank for deferred verification."""
+
+    __slots__ = ("_handle", "_library")
+
+    def __init__(self, library: MeshcoreLibrary, handle: ctypes.c_void_p, /) -> None:
+        self._library = library
+        self._handle = handle
+        weakref.finalize(handle, library["phx_mc_hex_dominant_free"], handle.value)
+
+    def uncertified_cells(self, /) -> int:
+        failed = _I64()
+        status = self._library["phx_mc_hex_dominant_certify"](
+            self._handle, ctypes.addressof(failed)
+        )
+        if status != MeshcoreStatus.UNRESOLVED:
+            _raise_for_call(status, "hex_dominant_certify")
+        return failed.value
+
+
 class HexDominant(NamedTuple):
     """Face-based mixed mesh of ``hex_dominant``.
 
@@ -3269,6 +3291,7 @@ class HexDominant(NamedTuple):
     # vertices, undone smoothing moves, certified (1/0, -1 without prove),
     # uncertified cells, hexahedra published as polyhedra, octree levels.
     stats: np.ndarray
+    proof: _HexDominantProof | None = None
 
 
 def hex_dominant(
@@ -3340,6 +3363,7 @@ def hex_dominant(
             },
         )
         raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "missing hex-dominant result")
+    proof = None
     try:
         sizes = np.empty((5,), dtype=np.int64)
         _raise_for_call(
@@ -3369,9 +3393,12 @@ def hex_dominant(
             library["phx_mc_hex_dominant_export"](handle, ctypes.byref(outputs)),
             "hex_dominant_export",
         )
+        if not prove and status == MeshcoreStatus.OK:
+            proof = _HexDominantProof(library, handle)
     finally:
-        library["phx_mc_hex_dominant_free"](handle)
-    return HexDominant(MeshcoreStatus(status), *arrays)
+        if proof is None:
+            library["phx_mc_hex_dominant_free"](handle)
+    return HexDominant(MeshcoreStatus(status), *arrays, proof)
 
 
 def _int32_argument(value: object, name: str, /) -> int:
