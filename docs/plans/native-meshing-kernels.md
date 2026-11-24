@@ -323,6 +323,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
     non-planar and breaks exact cell convexity (rotated cube h 0.25: 158 of 170 cells; F14 cube
     and Steinmetz rows lose convex cells). Exact convexity is kept: clusters are resolved by the
     existing rigid and lone seed moves, with the fidelity bound charged as today.
+    The interior body-centered cubic lattice is centered in the source bounding box so its
+    phase is symmetric about each box midplane. The lattice spacing, clearance from the
+    source wall, and reflected boundary seed construction are unchanged. This can change
+    the mesh and evidence IDs; the same exact convexity and source-coverage checks apply.
   - S6-D hex-dominant with snapping (F8; cfMesh 5.77-8.59 s at ~1e5 cells, hex fraction 0.91-0.96,
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than

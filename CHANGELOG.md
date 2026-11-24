@@ -44,6 +44,9 @@
 - Native refinement prepares fixed-wall lattice exclusions and the initial
   Euclidean proposal bank in ordered worker chunks. Proposal order,
   insertion decisions, and output banks are unchanged.
+- Conforming Voronoi meshes center their interior lattice in the source
+  box. This can change newly constructed mesh and evidence IDs; site
+  spacing, wall clearance, and exact certification are unchanged.
 - Native CAD face sizing shares the nearest-chord traversal between its
   size floor and fidelity budget. Boundary grading visits the lower-bound
   child first; size and fidelity criteria are unchanged.

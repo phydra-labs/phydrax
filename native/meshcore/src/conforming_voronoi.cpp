@@ -713,18 +713,23 @@ class Seeder {
           break;
       }
     }
-    // Body-centered cubic lattice of cell volume h^3 beyond the reach.
+    // Center the body-centered cubic lattice in the source box. Both
+    // sublattices then meet opposing wall seed bands at the same phase,
+    // while retaining cell volume h^3 and the same wall clearance.
     const double a = std::cbrt(2.0) * h_;
-    int64_t counts[3];
-    for (int k = 0; k < 3; ++k)
-      counts[k] = static_cast<int64_t>(std::ceil((s_.upper[k] - s_.lower[k]) / a)) + 1;
+    double center[3];
+    int64_t half[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      center[axis] = std::midpoint(s_.lower[axis], s_.upper[axis]);
+      half[axis] = static_cast<int64_t>(std::ceil((s_.upper[axis] - s_.lower[axis]) / (2.0 * a)));
+    }
     for (int shift = 0; shift < 2; ++shift)
-      for (int64_t k = 0; k < counts[2]; ++k)
-        for (int64_t j = 0; j < counts[1]; ++j)
-          for (int64_t i = 0; i < counts[0]; ++i) {
-            double q[3] = {s_.lower[0] + (static_cast<double>(i) + 0.5 * shift + 0.25) * a,
-                           s_.lower[1] + (static_cast<double>(j) + 0.5 * shift + 0.25) * a,
-                           s_.lower[2] + (static_cast<double>(k) + 0.5 * shift + 0.25) * a};
+      for (int64_t k = -half[2]; k <= half[2] - shift; ++k)
+        for (int64_t j = -half[1]; j <= half[1] - shift; ++j)
+          for (int64_t i = -half[0]; i <= half[0] - shift; ++i) {
+            double q[3] = {center[0] + (static_cast<double>(i) + 0.5 * shift) * a,
+                           center[1] + (static_cast<double>(j) + 0.5 * shift) * a,
+                           center[2] + (static_cast<double>(k) + 0.5 * shift) * a};
             snap(q);
             const int32_t region = region_at(s_, columns_, q);
             if (region < 0 || triangles_.any_within(q, reach_)) continue;
