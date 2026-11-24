@@ -66,6 +66,7 @@ def _kernel_cube(layers: tuple[float, ...]) -> meshcore.HexDominant:
         boundary_size=0.125,
         feature_angle_degrees=45.0,
         layer_thicknesses=np.asarray(layers, dtype=np.float64),
+        layer_minimum_thickness_fraction=0.5,
         prove=True,
     )
 

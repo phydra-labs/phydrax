@@ -2089,7 +2089,11 @@ PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* reques
  * corners between smooth patches; the fine band, the transitions and the
  * wall are smoothed. layer_count > 0 splits every projection column at the
  * cumulative layer_thicknesses from the wall (hexahedral layers; the core
- * keeps half a boundary cell plus the stack clear of the surface).
+ * keeps half a boundary cell plus the stack clear of the surface). Smoothing
+ * that tilts a layer column keeps the mean height of each layer cell's upper
+ * corners over the plane of its wall-side corners at least
+ * layer_minimum_thickness_fraction (in (0, 1], also without layers) of its
+ * thickness.
  *
  * The result is face-based: face f has the loop face_vertices[face_offsets[f]
  * .. face_offsets[f + 1]) oriented out of face_owner[f]; face_neighbor[f] is
@@ -2132,6 +2136,7 @@ typedef struct phx_mc_hex_dominant_request {
   double feature_angle_degrees;
   int32_t layer_count;
   const double* layer_thicknesses;
+  double layer_minimum_thickness_fraction;
   int32_t prove;
   phx_mc_hex_dominant_mesh** result;
 } phx_mc_hex_dominant_request;

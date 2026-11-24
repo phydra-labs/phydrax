@@ -27,6 +27,7 @@ int32_t validate(const phx_mc_hex_dominant_request* in) {
       in->layer_count < 0 || (in->layer_count > 0 && in->layer_thicknesses == nullptr) ||
       (in->prove != 0 && in->prove != 1) ||
       !(in->feature_angle_degrees > 0.0 && in->feature_angle_degrees < 180.0) ||
+      !(in->layer_minimum_thickness_fraction > 0.0 && in->layer_minimum_thickness_fraction <= 1.0) ||
       !(in->boundary_size > 0.0) || !(in->core_size >= in->boundary_size) ||
       !std::isfinite(in->core_size)) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -78,7 +79,8 @@ int32_t phx_mc_hex_dominant_build(const phx_mc_hex_dominant_request* request,
         request->vertex_count,   request->vertices,         request->triangle_count,
         request->triangles,      request->triangle_facets,  request->core_size,
         request->boundary_size,  request->feature_angle_degrees, request->layer_count,
-        request->layer_thicknesses, request->prove, static_cast<uint32_t>(parallelism)};
+        request->layer_thicknesses, request->layer_minimum_thickness_fraction, request->prove,
+        static_cast<uint32_t>(parallelism)};
     const int32_t built = phx::mc::hex_dominant::build(input, result->mesh);
     if (built == PHX_MC_OK || built == PHX_MC_UNRESOLVED) *request->result = result.release();
     return built;

@@ -30,6 +30,7 @@ struct Input {
   double feature_angle_degrees;
   int32_t layer_count;
   const double* layer_thicknesses;
+  double layer_minimum_thickness_fraction;
   int32_t prove;
   uint32_t parallelism;
 };

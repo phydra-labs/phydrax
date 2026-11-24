@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <utility>
 #include <vector>
@@ -144,7 +145,8 @@ struct Result {
 };
 
 Result mesh(const Surface& s, double core, double boundary, const std::vector<double>& layers,
-            int32_t prove = 1, int64_t* failed_cells = nullptr, int32_t parallelism = 1) {
+            int32_t prove = 1, int64_t* failed_cells = nullptr, int32_t parallelism = 1,
+            double layer_floor = 0.5) {
   Result r;
   const std::vector<int32_t> facets(s.f.size() / 3, 0);
   phx_mc_hex_dominant_mesh* handle = nullptr;
@@ -158,6 +160,7 @@ Result mesh(const Surface& s, double core, double boundary, const std::vector<do
                                             45.0,
                                             static_cast<int32_t>(layers.size()),
                                             layers.data(),
+                                            layer_floor,
                                             prove,
                                             &handle};
   r.status = phx_mc_hex_dominant_build(&request, parallelism);
@@ -409,6 +412,48 @@ void layers_sit_at_their_thicknesses() {
   PHX_CHECK(checked > 0);
 }
 
+// The least layer-cell thickness over the requested one, measured as the
+// compliance report does: the mean height of a cell's upper corners over the
+// plane of its wall-side corners. Layer cells follow the core, levels + 1
+// cells (the last a projection cell) per wall piece.
+double least_layer_ratio(const Result& r, const std::vector<double>& layers) {
+  int64_t core = 0;
+  for (const uint8_t role : r.cell_roles) core += role == 0;
+  double least = std::numeric_limits<double>::infinity();
+  for (size_t c = 0; c < r.cell_kinds.size(); ++c) {
+    const int64_t first = r.cell_vertex_offsets[c], count = r.cell_vertex_offsets[c + 1] - first;
+    if (r.cell_roles[c] != 2 || (count != 6 && count != 8)) continue;
+    const int64_t half = count / 2;
+    const int32_t* h = r.cell_vertices.data() + first;
+    V normal{0, 0, 0};
+    for (int64_t i = 0; i < half; ++i) {
+      const V n = cross3(at(r.points, h[half + i]), at(r.points, h[half + (i + 1) % half]));
+      for (int a = 0; a < 3; ++a) normal[a] += n[a];
+    }
+    const double size = std::sqrt(dot3(normal, normal));
+    double height = 0.0;
+    for (int64_t i = 0; i < half; ++i) height += dot3(minus(at(r.points, h[i]), at(r.points, h[half + i])), normal);
+    const auto level = static_cast<size_t>((static_cast<int64_t>(c) - core) % static_cast<int64_t>(layers.size() + 1));
+    least = std::min(least, std::fabs(height) / size / static_cast<double>(half) / layers[level]);
+  }
+  return least;
+}
+
+// Smoothing tilts layer columns to repair skewed faces between layer cells.
+// On this sphere the default floor admits tilts that thin a layer cell below
+// 0.8 of its thickness; a 0.9 floor keeps every layer cell at 0.9 or more.
+void layer_tilts_keep_the_requested_floor() {
+  const Surface s = icosphere(4);
+  const std::vector<double> layers = {0.01, 0.012};
+  const Result loose = mesh(s, 0.25, 0.125, layers, 1, nullptr, 1, 0.5);
+  const Result tight = mesh(s, 0.25, 0.125, layers, 1, nullptr, 1, 0.9);
+  PHX_CHECK(loose.status == PHX_MC_OK && tight.status == PHX_MC_OK);
+  check_cells(tight);
+  const double thinnest = least_layer_ratio(loose, layers);
+  PHX_CHECK(thinnest >= 0.5 && thinnest < 0.9);
+  PHX_CHECK(least_layer_ratio(tight, layers) >= 0.9);
+}
+
 // Every cell is star-shaped about its distinct-vertex average (the published
 // local map) as well as about its OpenFOAM centroid: on this cylinder at
 // h = 0.09 a mesher screening only the centroid star published 2:1
@@ -532,6 +577,9 @@ void invalid_input_is_refused() {
   for (size_t i = 0; i < inverted.f.size(); i += 3) std::swap(inverted.f[i + 1], inverted.f[i + 2]);
   PHX_CHECK(mesh(inverted, 0.5, 0.25, {}).status == PHX_MC_INVALID_INPUT);
   PHX_CHECK(mesh(icosphere(2), 0.75, 0.25, {}).status == PHX_MC_INVALID_ARGUMENT);
+  for (const double fraction : {0.0, 1.5, std::numeric_limits<double>::quiet_NaN()}) {
+    PHX_CHECK(mesh(icosphere(2), 0.5, 0.25, {0.01}, 1, nullptr, 1, fraction).status == PHX_MC_INVALID_ARGUMENT);
+  }
 }
 
 }  // namespace
@@ -540,6 +588,7 @@ int main() {
   sphere_is_certified_and_on_the_surface();
   box_corners_and_volume_are_exact();
   layers_sit_at_their_thicknesses();
+  layer_tilts_keep_the_requested_floor();
   cells_are_stars_about_their_vertex_average();
   convex_curve_layers_split();
   oblique_curve_segments_gain_midpoints();
