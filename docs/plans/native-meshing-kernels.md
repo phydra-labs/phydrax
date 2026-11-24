@@ -709,6 +709,13 @@ a certified embedding in 151.36 seconds including construction, with a
 12.45 GB peak process RSS. The octree route still requires the proved
 execution; it does not prove an already constructed candidate.
 
+On `0f27508dae`, `execute()` still skips proof, while `candidate.prove()`
+certifies the same returned mesh and geometry without reconstruction.
+The original quadric took 4.48 seconds to construct and 153.70 seconds
+to prove separately. Its certificate ID matches the earlier combined
+execution. These are single phase measurements, not a speed comparison;
+the construction and certificate can be scheduled independently.
+
 The absolute-thickness pilot requests the native first layer thickness and
 growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
 requested sphere layer cells and passes both validity checks. On the
