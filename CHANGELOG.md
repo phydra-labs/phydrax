@@ -7,6 +7,8 @@
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;
   authored vertices, hole domains and constraint ancestry are retained.
+- Quadratic geometry validity prepares one ordered sparse derivative stencil
+  per bank without changing exact verdicts, bounds, or geometry.
 - Tetrahedral metric adaptation returns the audited source unchanged without
   allocating edit state when the native strict unit-band check passes.
 - Native metric adaptation batches fixed-width entity keys and skips

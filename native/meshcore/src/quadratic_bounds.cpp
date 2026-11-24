@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -824,25 +825,25 @@ const ScreenTable& screen_table() {
 
 }  // namespace
 
-bool quadratic_validity_screen(const double* nodes, const std::int32_t* derivative_weights,
+bool quadratic_validity_screen(const double* nodes, const QuadraticDerivativeStencil& stencil,
                                double relative_floor) noexcept {
   double value[9][4];
   double magnitude[9][4];
-  for (int row = 0; row < 3; ++row) {
-    for (int column = 0; column < 3; ++column) {
-      for (int power = 0; power < 4; ++power) {
-        double sum = 0.0;
-        double absolute = 0.0;
-        for (int node = 0; node < kNodeCount; ++node) {
-          const std::int32_t weight = derivative_weights[(column * 4 + power) * kNodeCount + node];
-          if (weight == 0) continue;
-          const double term = static_cast<double>(weight) * nodes[node * 3 + row];
-          sum += term;
-          absolute += std::fabs(term);
+  for (int column = 0; column < 3; ++column) {
+    for (int power = 0; power < 4; ++power) {
+      double sum[3] = {};
+      double absolute[3] = {};
+      for (const auto& term : stencil.terms(column, power)) {
+        for (int row = 0; row < 3; ++row) {
+          const double product = term.weight * nodes[term.coordinate_offset + row];
+          sum[row] += product;
+          absolute[row] += std::fabs(product);
         }
-        if (!screen_range(sum) || !screen_range(absolute)) return false;
-        value[row * 3 + column][power] = sum;
-        magnitude[row * 3 + column][power] = absolute;
+      }
+      for (int row = 0; row < 3; ++row) {
+        if (!screen_range(sum[row]) || !screen_range(absolute[row])) return false;
+        value[row * 3 + column][power] = sum[row];
+        magnitude[row * 3 + column][power] = absolute[row];
       }
     }
   }
@@ -974,12 +975,13 @@ int32_t phx_mc_quadratic_tetrahedron_validity(int64_t count, const double* nodes
     // Without requested bounds only verdicts are produced, so the binary64
     // screen may decide VALID; every other cell takes the exact path.
     const bool bounds = lower != nullptr;
+    std::optional<phx::mc::QuadraticDerivativeStencil> stencil;
+    if (!bounds && count > 0) stencil.emplace(derivative_weights);
     std::vector<ValidityResult> staged;
     staged.reserve(static_cast<std::size_t>(count));
     for (int64_t cell = 0; cell < count; ++cell) {
       const double* cell_nodes = nodes + 30 * cell;
-      if (!bounds &&
-          phx::mc::quadratic_validity_screen(cell_nodes, derivative_weights, relative_floor)) {
+      if (stencil && phx::mc::quadratic_validity_screen(cell_nodes, *stencil, relative_floor)) {
         staged.push_back({kValidityValid, 0.0, 0.0});
       } else {
         staged.push_back(evaluate_validity_cell(cell_nodes, derivative_weights, relative_floor));

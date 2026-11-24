@@ -382,6 +382,7 @@ void screen_agrees_with_exact_path() {
   }
 
   std::array<std::int64_t, kFamilies> cells{}, valid{}, screened{};
+  const phx::mc::QuadraticDerivativeStencil stencil(weights.data());
   for (int floor = 0; floor < 3; ++floor) {
     const auto count = static_cast<std::int64_t>(families[floor].size());
     std::vector<std::int32_t> fast(families[floor].size(), -1), exact(families[floor].size(), -1);
@@ -397,7 +398,7 @@ void screen_agrees_with_exact_path() {
       const int family = families[floor][k];
       ++cells[family];
       valid[family] += exact[k] == kValid;
-      if (!phx::mc::quadratic_validity_screen(nodes[floor].data() + 30 * k, weights.data(),
+      if (!phx::mc::quadratic_validity_screen(nodes[floor].data() + 30 * k, stencil,
                                               kFloors[floor]))
         continue;
       ++screened[family];

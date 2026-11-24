@@ -1138,6 +1138,11 @@ degree-one proof of embedding when its charts meet the radial tests.
 Unsupported maps or unresolved bounds are refused. Archive restore
 re-proves the same map and source.
 
+The native quadratic validity screen packs nonzero derivative weights once
+per cell bank, preserving each coordinate's summation order. Uncertain
+screens still take the exact polynomial path; requested outward bounds
+always take that path.
+
 On spherical charts, curving proposes surface-owned nodes by normalizing
 the weighted corner directions in the unit chart before applying the physical
 frame. This also works with stretched frames. Curve-owned edges still use

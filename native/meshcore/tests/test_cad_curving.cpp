@@ -579,6 +579,7 @@ void check_screen(const TetMesh& mesh, const Quadratic& q, const char* name, boo
         row[12 + 3 * e + c] = q.nodes[3 * static_cast<std::size_t>(q.cell_edges[6 * k + e]) + c];
   }
   const auto count = static_cast<int64_t>(cells);
+  const phx::mc::QuadraticDerivativeStencil stencil(weights.data());
   for (double floor : {0.0, 1e-3, 0.05}) {
     std::vector<int32_t> screened_verdicts(cells, -1), exact_verdicts(cells, -1);
     std::vector<double> lower(cells), upper(cells);
@@ -592,7 +593,7 @@ void check_screen(const TetMesh& mesh, const Quadratic& q, const char* name, boo
     int64_t screened = 0, valid = 0;
     for (std::size_t k = 0; k < cells; ++k) {
       valid += exact_verdicts[k] == PHX_MC_QUADRATIC_VALIDITY_VALID;
-      if (!phx::mc::quadratic_validity_screen(nodes.data() + 30 * k, weights.data(), floor))
+      if (!phx::mc::quadratic_validity_screen(nodes.data() + 30 * k, stencil, floor))
         continue;
       ++screened;
       PHX_CHECK(exact_verdicts[k] == PHX_MC_QUADRATIC_VALIDITY_VALID);
