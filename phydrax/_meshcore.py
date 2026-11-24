@@ -363,6 +363,7 @@ class _HexDominantRequest(ctypes.Structure):
         ("feature_angle_degrees", _F64),
         ("layer_count", _I32),
         ("layer_thicknesses", _P),
+        ("layer_minimum_thickness_fraction", _F64),
         ("prove", _I32),
         ("result", ctypes.POINTER(ctypes.c_void_p)),
     )
@@ -3304,6 +3305,7 @@ def hex_dominant(
     boundary_size: float,
     feature_angle_degrees: float,
     layer_thicknesses: object,
+    layer_minimum_thickness_fraction: float,
     prove: bool,
     parallelism: int = 1,
 ) -> HexDominant:
@@ -3311,7 +3313,9 @@ def hex_dominant(
 
     Rows follow ``phx_mc_hex_dominant_build``: ``core_size`` is
     ``boundary_size`` times a power of two; ``layer_thicknesses`` (possibly
-    empty) are the hexahedral layer thicknesses from the wall outward.
+    empty) are the hexahedral layer thicknesses from the wall outward, and a
+    smoothing tilt of a layer column keeps each of its layer cells at least
+    ``layer_minimum_thickness_fraction`` (in ``(0, 1]``) of its thickness.
     ``parallelism`` caps workers for independent face and cell geometry.
     """
 
@@ -3334,6 +3338,7 @@ def hex_dominant(
         ("core_size", core_size),
         ("boundary_size", boundary_size),
         ("feature_angle_degrees", feature_angle_degrees),
+        ("layer_minimum_thickness_fraction", layer_minimum_thickness_fraction),
     ):
         if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
             raise TypeError(f"{name} must be a real number.")
@@ -3349,6 +3354,7 @@ def hex_dominant(
         feature_angle_degrees=float(feature_angle_degrees),
         layer_count=_int32_argument(layers.shape[0], "layer_count"),
         layer_thicknesses=layers.ctypes.data,
+        layer_minimum_thickness_fraction=float(layer_minimum_thickness_fraction),
         prove=1 if prove else 0,
         result=ctypes.pointer(handle),
     )

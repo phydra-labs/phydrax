@@ -70,6 +70,12 @@
 - Octree hex smoothing refreshes independent face geometry and cell
   centroids with configured native workers. Repair order and mesh geometry
   are unchanged. Rebuild meshcore for `phx_mc_hex_dominant_build`.
+- Layered octree hex walls tilt smooth layer columns rigidly about their
+  wall vertex to repair skewed faces between layer cells. A tilt keeps each
+  layer cell at least the control's `minimum_thickness_fraction` of its
+  thickness, which `phx_mc_hex_dominant_request` now carries as
+  `layer_minimum_thickness_fraction` (in (0, 1]). This can change layered
+  meshes and evidence IDs. Rebuild meshcore for the changed request.
 - Tetrahedral adaptation resolves full-width source lineage by direct key
   lookup, preserving all parents for smaller or mixed-width supports.
 - Native metric carrier searches round fixed projection coordinates once

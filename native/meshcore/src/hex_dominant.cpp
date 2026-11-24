@@ -52,7 +52,12 @@
 //     midpoint on the curve; patch columns next to the slid points smooth
 //     to their wall-edge neighbours weighted by squared length, and the
 //     repair slides them on their patch without raising the local
-//     skewness or their wall faces' deviation from the surface.
+//     skewness or their wall faces' deviation from the surface. A skewed
+//     face between layer cells of a smooth unsplit patch column tilts that
+//     column's layer points rigidly about its wall vertex, toward and across
+//     the face's skew direction, without raising the local skewness and
+//     keeping every layer cell at least the requested fraction of its
+//     thickness above the plane of its wall-side corners.
 // Certification (prove): every cell, published as a polyhedron with OpenFOAM
 // face semantics (a non-planar face is the fan from its vertex average), by
 // the exact orientation of its decomposition tetrahedra (center, face vertex
@@ -975,6 +980,28 @@ struct Builder {
     if (split_of[row] < 0) return layer_total + 0.25 * b;
     const auto& grid = splits[split_of[row]].grid;
     return norm(sub(point(grid.back()), point(grid[0]))) + 0.25 * b;
+  }
+  // A boundary-layer cell's thickness as the compliance report measures it:
+  // the mean height of its upper corners (the first half of its vertex
+  // list) over the plane of its wall-side corners, against the requested
+  // fraction of its level's thickness. Other cells always pass.
+  bool keeps_layer_floor(int32_t c) const {
+    if (mesh.cell_roles[c] != kLayer) return true;
+    const int64_t first = mesh.cell_vertex_offsets[c];
+    const int64_t count = mesh.cell_vertex_offsets[c + 1] - first;
+    if (count != 6 && count != 8) return true;
+    const int64_t half = count / 2;
+    auto corner = [&](int64_t i) { return point(mesh.cell_vertices[first + i]); };
+    Vec normal{0, 0, 0};
+    for (int64_t i = 0; i < half; ++i) normal = add(normal, cross(corner(half + i), corner(half + (i + 1) % half)));
+    const double size = norm(normal);
+    for (double& component : normal) component /= size;
+    double height = 0.0;
+    for (int64_t i = 0; i < half; ++i) height += dot(sub(corner(i), corner(half + i)), normal);
+    const auto level = static_cast<std::size_t>((c - core_cells) % levels);
+    // A degenerate wall-side plane gives NaN, which fails the comparison.
+    return std::fabs(height) / static_cast<double>(half) >=
+           in.layer_minimum_thickness_fraction * in.layer_thicknesses[level];
   }
   int32_t smooth();
   int32_t certify();
@@ -2971,6 +2998,9 @@ int32_t Builder::smooth() {
         const int32_t row = column_of[vertex];
         return row >= 0 && surface_kind[row] != kPatch;
       });
+      const int32_t neighbor = mesh.face_neighbor[f];
+      const bool skewed_layer_side = skewed && neighbor >= 0 &&
+          mesh.cell_roles[mesh.face_owner[f]] == kLayer && mesh.cell_roles[neighbor] == kLayer;
       for (const int32_t c : {mesh.face_owner[f], mesh.face_neighbor[f]}) {
         if (c < 0) continue;
         for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
@@ -2982,6 +3012,12 @@ int32_t Builder::smooth() {
           // short against the distance of their centroids from the curve.
           const int32_t layer_row = role[v] == 3 ? column_row[v] : -1;
           const bool layer = layer_row >= 0 && curve_column[layer_row];
+          const bool tilt = skewed_layer_side && layer_row >= 0 && !layer &&
+              surface_kind[layer_row] == kPatch && split_of[layer_row] < 0 &&
+              !slide_row[layer_row] &&
+              column[layer_row * (levels + 1) + 1] == v &&
+              std::find(face_begin, face_end, v) != face_end &&
+              std::find(face_begin, face_end, surface_vertex[layer_row]) != face_end;
           // A patch vertex slides with its stack near a split column.
           // On an unlayered wall it can also repair a skewed face next
           // to a fixed feature without moving the feature itself.
@@ -2990,7 +3026,7 @@ int32_t Builder::smooth() {
                              (slide_row[wall_row] ||
                               (feature_wall && role[v] == 2 &&
                                std::find(face_begin, face_end, v) != face_end));
-          if ((role[v] != 1 && !layer && !slide) || done[v]) continue;
+          if ((role[v] != 1 && !layer && !slide && !tilt) || done[v]) continue;
           done[v] = 1;
           movers.assign(1, v);
           int32_t level = 0;
@@ -2998,6 +3034,11 @@ int32_t Builder::smooth() {
             const int32_t* stack = column.data() + layer_row * (levels + 1);
             while (stack[level] != v) ++level;
             for (int32_t k = level + 1; k < levels; ++k) movers.push_back(stack[k]);
+          }
+          if (tilt) {
+            const auto [stack, size] = carried(layer_row);
+            movers.assign(stack + 1, stack + size);
+            for (const int32_t u : movers) done[u] = 1;
           }
           if (slide) {
             const auto [stack, size] = carried(wall_row);
@@ -3139,7 +3180,7 @@ int32_t Builder::smooth() {
             }
             return worst;
           };
-          double skew_bound = slide ? local_skew() : 0.0, trial_skew = 0.0;
+          double skew_bound = slide || tilt ? local_skew() : 0.0, trial_skew = 0.0;
           const int32_t stair = v < core_points ? stair_vertex[v] : -1;
           Vec axis{0, 0, 0}, wall{0, 0, 0};
           double below = 0.0;  // height of the layer point below v
@@ -3149,20 +3190,68 @@ int32_t Builder::smooth() {
             wall = point(surface_vertex[layer_row]);
             below = dot(sub(wall, point(column[layer_row * (levels + 1) + level - 1])), m) / dot(m, m);
           }
+          std::array<Vec, 2> tilt_directions{};
+          if (tilt) {
+            wall = point(surface_vertex[layer_row]);
+            const Vec column_axis = sub(point(v), wall);
+            const double depth = norm(column_axis);
+            const auto q = static_cast<std::size_t>(face_slot[f]);
+            const Vec& co = centroid_of(mesh.face_owner[f]);
+            const Vec join = sub(centroid_of(neighbor), co);
+            const Vec offset = sub(local_center[q], co);
+            const Vec& area = local_area[q];
+            const double normal_join = dot(area, join);
+            if (depth > 0.0 && normal_join != 0.0) {
+              const Vec unit_axis = mul(column_axis, 1.0 / depth);
+              const Vec skew = sub(offset, mul(join, dot(area, offset) / normal_join));
+              const Vec tangent = sub(skew, mul(unit_axis, dot(skew, unit_axis)));
+              if (const double size = norm(tangent); size > 0.0) {
+                tilt_directions[0] = mul(tangent, 1.0 / size);
+                tilt_directions[1] = cross(unit_axis, tilt_directions[0]);
+              }
+            }
+          }
           for (const double scale : {0.08, 0.03, 0.01}) {
-            for (bool improved = true; improved;) {
+            for (bool improved = true; improved && (!tilt || current > 1.0);) {
               improved = false;
-              for (int direction = 0; direction < (layer ? 2 : 6); ++direction) {
+              const int directions = layer ? 2 : tilt ? 4 : 6;
+              for (int direction = 0; direction < directions && (!tilt || current > 1.0); ++direction) {
                 Vec delta{0, 0, 0};
                 if (layer) {
                   delta = mul(axis, (direction & 1 ? -1.0 : 1.0) * scale * b);
+                } else if (tilt) {
+                  delta = mul(tilt_directions[direction / 2], (direction & 1 ? -1.0 : 1.0) * scale * b);
                 } else {
                   delta[direction / 2] = (direction & 1 ? -1.0 : 1.0) * scale * b;
                 }
                 starts.clear();
-                for (const int32_t u : movers) {
-                  starts.push_back(point(u));
-                  set_point(u, add(point(u), delta));
+                if (tilt) {
+                  const Vec column_axis = sub(point(v), wall);
+                  const double depth = norm(column_axis);
+                  if (!(depth > 0.0)) continue;
+                  const Vec longitudinal = mul(column_axis, 1.0 / depth);
+                  const Vec lateral = sub(delta, mul(longitudinal, dot(delta, longitudinal)));
+                  const double lateral_size = norm(lateral);
+                  if (!(lateral_size > 0.0)) continue;
+                  const Vec tangent = mul(lateral, 1.0 / lateral_size);
+                  const double slope = lateral_size / norm(sub(point(movers.back()), wall));
+                  const double cosine = 1.0 / std::sqrt(1.0 + slope * slope);
+                  const double sine = slope * cosine;
+                  for (const int32_t u : movers) {
+                    starts.push_back(point(u));
+                    const Vec from_wall = sub(starts.back(), wall);
+                    const double x = dot(from_wall, longitudinal);
+                    const double y = dot(from_wall, tangent);
+                    // Apply one proper rotation to the entire stack.
+                    const Vec change = add(mul(longitudinal, (cosine - 1.0) * x - sine * y),
+                                           mul(tangent, sine * x + (cosine - 1.0) * y));
+                    set_point(u, add(starts.back(), change));
+                  }
+                } else {
+                  for (const int32_t u : movers) {
+                    starts.push_back(point(u));
+                    set_point(u, add(point(u), delta));
+                  }
                 }
                 Hit slid;
                 if (slide) {
@@ -3179,6 +3268,12 @@ int32_t Builder::smooth() {
                     trial_skew = local_skew();
                     accept = trial_skew <= skew_bound;
                   }
+                }
+                if (accept && tilt) {
+                  trial_skew = local_skew();
+                  accept = trial_skew <= skew_bound;
+                  // A tilted stack keeps every layer cell above its floor.
+                  for (std::size_t q = 0; q < nc && accept; ++q) accept = keeps_layer_floor(local_cells[q]);
                 }
                 // The layer keeps its thickness.
                 if (accept && layer) {
@@ -3210,6 +3305,7 @@ int32_t Builder::smooth() {
                   current = value;
                   improved = true;
                   ++repaired;
+                  if (tilt) skew_bound = trial_skew;
                   if (slide) {
                     surface_item[wall_row] = slid.item;
                     skew_bound = trial_skew;

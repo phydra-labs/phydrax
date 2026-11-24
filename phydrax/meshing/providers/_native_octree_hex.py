@@ -732,10 +732,14 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         outward = np.where((regions[:, 0] < 0)[:, None], triangles, triangles[:, ::-1])
         used, compact = np.unique(outward, return_inverse=True)
         layers = self.specification.layer_controls
-        thicknesses = (
-            np.asarray(layers[0].schedule.thicknesses, dtype=np.float64)
+        # Without layers no cell may thin: the strictest floor is inert.
+        thicknesses, floor = (
+            (
+                np.asarray(layers[0].schedule.thicknesses, dtype=np.float64),
+                layers[0].minimum_thickness_fraction,
+            )
             if layers
-            else np.zeros((0,), dtype=np.float64)
+            else (np.zeros((0,), dtype=np.float64), 1.0)
         )
         native = meshcore.hex_dominant(
             np.asarray(complex_.vertices, dtype=np.float64)[used],
@@ -745,6 +749,7 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             boundary_size=self.boundary_size,
             feature_angle_degrees=_FEATURE_ANGLE_DEGREES,
             layer_thicknesses=thicknesses,
+            layer_minimum_thickness_fraction=floor,
             prove=False,
             parallelism=exact_kernel_parallelism(),
         )
