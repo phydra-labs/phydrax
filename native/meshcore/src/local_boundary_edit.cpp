@@ -1164,12 +1164,18 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
 
     // The facets and segments through the vertex, in bank order.
     const std::uint64_t id = moved.id;
+    const auto dimension = mesh.vertex_dimension(slot);
+    const bool rounded =
+        moved_stencil != nullptr && moved_stencil->image == SourceStencilImage::kRoundedPlane;
     std::vector<std::size_t> facet_rows;
     std::vector<std::size_t> segment_rows;
     for (std::int32_t cell : star) {
       const Tetrahedron& tet = mesh.tet(cell);
       for (int face = 0; face < 4; ++face) {
         if (tet.v[face] == slot || mesh.complex_.constraint(cell, face) == kNoConstraint) continue;
+        if (rounded && !is_ghost(mesh.tet(tet.n[face]))) {
+          return TetEditStatus::kRejectedTopology;
+        }
         std::int32_t corners[3];
         oriented_facet(tet.v, face, corners);
         const auto found = boundary_index_.facets.find(sorted_ids(
@@ -1178,20 +1184,34 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
         facet_rows.push_back(found->second);
       }
       for (std::int32_t other : tet.v) {
-        if (other == slot || mesh.vertex_dimension(slot) > 1 || mesh.vertex_dimension(other) > 1) {
+        if (other == slot || (!rounded && (dimension > 1 || mesh.vertex_dimension(other) > 1))) {
           continue;
         }
         const auto found = boundary_index_.segments.find(sorted_ids(id, mesh.vertex_id(other)));
-        if (found != boundary_index_.segments.end()) segment_rows.push_back(found->second);
+        if (found == boundary_index_.segments.end()) continue;
+        if (rounded) return TetEditStatus::kRejectedTopology;
+        segment_rows.push_back(found->second);
       }
     }
     for (auto* rows : {&facet_rows, &segment_rows}) {
       std::sort(rows->begin(), rows->end());
       rows->erase(std::unique(rows->begin(), rows->end()), rows->end());
     }
-    if (moved_stencil != nullptr &&
-        ((facet_rows.empty() && segment_rows.empty()) ||
-         !source_stencil_matches(*moved_stencil, mesh.source_points_, moved.carrier.data()))) {
+    if (rounded) {
+      if (dimension != 2 || facet_rows.empty()) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      const std::int32_t group = mesh.facets_[facet_rows.front()].source;
+      if (!std::ranges::all_of(facet_rows, [&](std::size_t row) {
+            return mesh.facets_[row].source == group;
+          }) ||
+          !rounded_plane_support(mesh, group, *moved_stencil, moved.carrier.data())) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    } else if (moved_stencil != nullptr &&
+               ((facet_rows.empty() && segment_rows.empty()) ||
+                !source_stencil_matches(*moved_stencil, mesh.source_points_,
+                                        moved.carrier.data()))) {
       return TetEditStatus::kRejectedTopology;
     }
     const auto supports_stencil = [&](const auto& groups, std::int32_t source) {
@@ -1201,7 +1221,7 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
     const TetMesh::RelocationOverlay overlay{std::span<const TetEditVertex>(&moved, 1)};
     for (std::size_t row : facet_rows) {
       const TetSnapshotFacet& facet = mesh.facets_[row];
-      if (moved_stencil != nullptr &&
+      if (!rounded && moved_stencil != nullptr &&
           !supports_stencil(boundary_index_.face_group_points, facet.source)) {
         return TetEditStatus::kRejectedTopology;
       }

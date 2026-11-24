@@ -3117,11 +3117,21 @@ but is still measured and reported on the result.
 Within one directed star, collapse reuses its invariant pre-edit objective and
 identical rejected numerical variants. Source-stencil checks and native
 admission remain independent; this does not retain proposals across changed stars.
-A stationary, witness-free boundary survivor can use a local commit when its
-exact stencil image and the correctly rounded binary64 point both lie inside
-one declared axis-aligned source facet group. The rounding displacement must
-avoid the group rim and every authored source segment. Crossing an internal
-triangle edge without a source feature is allowed.
+A stationary, witness-free boundary survivor or a witness-free exterior
+facet relocation can use a local commit when its exact stencil image and its
+correctly rounded binary64 point both lie inside one declared axis-aligned
+source facet group. The rounding displacement must avoid the group rim and
+source segments. Crossing an internal triangle edge without a source feature
+is allowed.
+
+For an ordinary binary64-exact source, a seam shared by two exterior
+Cartesian facet groups uses immutable source segments derived from their
+shared source edges. These segments do not add live constraints or protection.
+An unambiguous seam vertex can relocate within the same seam chart using a
+segment witness reconstructed from its dyadic stencil, including when the
+exact point rounds to a different binary64 value. The native commit still
+checks the witness, the affected facets, and positive cell orientation.
+Oblique and authored rational geometry keep their existing admission paths.
 Edge worksets use persistent endpoint IDs for measurement and tie-breaking.
 Proposed edits and final band evidence measure in the same endpoint order,
 including when only one endpoint moves or a split introduces a new one.
