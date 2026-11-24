@@ -512,6 +512,12 @@ lineage, stencil, and evidence IDs match when requesting 1, 2, 3, 4,
 or 8 workers. Edits remain sequential; the worker cap applies only to
 the supporting verification kernels.
 
+The isolated edge-measurement cache at `a1af04c97f` reuses the exact
+ordered length only while both persistent endpoints and carrier revisions
+still match. All eight authenticated executions retained the same result
+and evidence. Warm one-worker median improved from 1.168 to 1.028 seconds
+in the new internal pairs, still above 0.377 seconds.
+
 ### Matched fixed-wall volume qualification
 
 The original torus25 case uses the same archived 122,926 fixed boundary
@@ -715,6 +721,12 @@ The original quadric took 4.48 seconds to construct and 153.70 seconds
 to prove separately. Its certificate ID matches the earlier combined
 execution. These are single phase measurements, not a speed comparison;
 the construction and certificate can be scheduled independently.
+
+A quiet replay on shared `0f27508dae` passes all matched quadric
+quality checks at 1, 2, 4, and 8 actual MPI ranks. The first three
+counts beat both the new and earlier clocks. At eight, Phydrax takes
+4.207 seconds versus 4.070 seconds for `snappyHexMesh`, confirming the
+remaining clock miss. Output IDs match across native worker requests.
 
 The absolute-thickness pilot requests the native first layer thickness and
 growth factor of 1.2. At two ranks, `snappyHexMesh` adds all 22,800
