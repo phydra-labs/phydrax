@@ -7908,6 +7908,113 @@ def _id_relations(
     )
 
 
+def _tetra_key_records(keys: np.ndarray, /) -> np.ndarray:
+    """View fixed-width keys as records ordered by numeric vertex IDs."""
+    dtype = np.dtype([(f"v{axis}", np.int64) for axis in range(keys.shape[1])])
+    return np.ascontiguousarray(keys).view(dtype).reshape(-1)
+
+
+def _tetra_key_matches(
+    source_records: np.ndarray, queries: np.ndarray, /
+) -> np.ndarray:
+    records = _tetra_key_records(queries)
+    rows = np.searchsorted(source_records, records)
+    present = rows < source_records.size
+    present[present] = source_records[rows[present]] == records[present]
+    rows[~present] = -1
+    return rows
+
+
+def _tetra_incident_key_rows(
+    source_keys: np.ndarray, queries: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Join proper supports against the source entities' actual subkeys."""
+    size = queries.shape[1]
+    projections = tuple(combinations(range(source_keys.shape[1]), size))
+    projected = np.take(source_keys, projections, axis=1).reshape(-1, size)
+    index = _tetra_key_records(projected)
+    order = np.argsort(index, kind="stable")
+    records = _tetra_key_records(queries)
+    first = np.searchsorted(index, records, sorter=order)
+    hits = np.searchsorted(index, records, side="right", sorter=order) - first
+    # Expand only the matching ranges, not products of supports and entities.
+    query_rows = np.repeat(np.arange(records.size), hits)
+    base = first + hits - np.cumsum(hits)
+    source_rows = order[base[query_rows] + np.arange(query_rows.size)]
+    return source_rows // len(projections), query_rows
+
+
+def _tetra_intermediate_relations(
+    source: CellMesh,
+    dimension: int,
+    target_rows: np.ndarray,
+    target_vertex_ids: np.ndarray,
+    stencil_sources: np.ndarray,
+    stencil_counts: np.ndarray,
+    /,
+) -> EntityRelations:
+    """Explicit edge or facet lineage from canonical native tetra stencils."""
+    width = dimension + 1
+    target_keys = target_vertex_ids[target_rows]
+    source_keys = entity_keys(source, dimension)
+    source_keys = source_keys[np.lexsort(source_keys.T[::-1])]
+    source_records = _tetra_key_records(source_keys)
+    identity = _tetra_key_matches(source_records, target_keys)
+    preserved = np.flatnonzero(identity >= 0)
+
+    # Terms of a native stencil are distinct. A single over-width stencil
+    # rules out refinement, but never an identity relation. Only gather the
+    # bounded prefix needed by the remaining rows, even for wide stencils.
+    eligible = np.flatnonzero(np.all(stencil_counts[target_rows] <= width, axis=1))
+    gathered = stencil_sources[:, :width][target_rows[eligible]]
+    gathered = gathered.reshape(eligible.size, width * gathered.shape[-1])
+    gathered.sort(axis=1)
+    distinct = gathered >= 0
+    distinct[:, 1:] &= gathered[:, 1:] != gathered[:, :-1]
+    sizes = np.count_nonzero(distinct, axis=1)
+    supported = (sizes > 0) & (sizes <= width)
+    support_targets = eligible[supported]
+    sizes = sizes[supported]
+    support_keys = np.full((sizes.size, width), -1, dtype=np.int64)
+    support_keys[np.arange(width) < sizes[:, None]] = gathered[
+        distinct & supported[:, None]
+    ]
+
+    source_parts = [identity[preserved]]
+    target_parts = [preserved]
+    for size in range(1, width + 1):
+        members = sizes == size
+        if not np.any(members):
+            continue
+        queries = support_keys[members, :size]
+        targets = support_targets[members]
+        if size == width:
+            sources = _tetra_key_matches(source_records, queries)
+        else:
+            sources, query_rows = _tetra_incident_key_rows(source_keys, queries)
+            targets = targets[query_rows]
+        refined = (sources >= 0) & (sources != identity[targets])
+        source_parts.append(sources[refined])
+        target_parts.append(targets[refined])
+
+    # Source and target row numbers are lexicographic key ranks. Projection
+    # hits are unique and refinement excludes identity pairs.
+    source_rows = np.concatenate(source_parts)
+    targets = np.concatenate(target_parts)
+    order = np.lexsort((targets, source_rows))
+    kinds = np.where(
+        order < preserved.size,
+        int(EntityLineageKind.PRESERVED),
+        int(EntityLineageKind.REFINED_FROM),
+    )
+    return EntityRelations(
+        dimension,
+        source_keys[source_rows[order]],
+        target_keys[targets[order]],
+        kinds.astype(np.int32),
+    )
+
+
 def _adapted_edit(
     state: _NativeState,
     adaptation: TetMeshMetricAdaptation,
@@ -7945,13 +8052,7 @@ def _adapted_edit(
     stencil_sources[term_rows, columns] = term_sources
     stencil_weights[term_rows, columns] = adaptation.stencil_weights[term_order]
     stencil_valid[term_rows, columns] = True
-    supports = dict(
-        zip(
-            target_vertex_ids.tolist(),
-            (frozenset(part.tolist()) for part in np.split(term_sources, starts[1:-1])),
-            strict=True,
-        )
-    )
+    stencil_counts = counts[order]
 
     cell_target_ids = adaptation.cell_target_ids.astype(np.int64)
     cell_rows = np.searchsorted(
@@ -7967,12 +8068,12 @@ def _adapted_edit(
         members = members[np.argsort(cell_target_ids[members], kind="stable")]
         block_cells.append(cells[members])
         block_ids.append(cell_target_ids[members])
-    corners = target_vertex_ids[cells]
-    edge_keys = np.unique(
-        np.sort(corners[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0
+    # Vertex rows already follow ascending target IDs.
+    edge_rows = np.unique(
+        np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0
     )
-    face_keys = np.unique(
-        np.sort(corners[:, _TETRA_FACES], axis=2).reshape((-1, 3)), axis=0
+    face_rows = np.unique(
+        np.sort(cells[:, _TETRA_FACES], axis=2).reshape((-1, 3)), axis=0
     )
 
     relation_sources = adaptation.vertex_relations[:, 0].astype(np.int64)
@@ -7998,11 +8099,21 @@ def _adapted_edit(
                 )
             ),
         ),
-        _intermediate_relations(
-            state.source_mesh, 1, [tuple(key) for key in edge_keys.tolist()], supports
+        _tetra_intermediate_relations(
+            state.source_mesh,
+            1,
+            edge_rows,
+            target_vertex_ids,
+            stencil_sources,
+            stencil_counts,
         ),
-        _intermediate_relations(
-            state.source_mesh, 2, [tuple(key) for key in face_keys.tolist()], supports
+        _tetra_intermediate_relations(
+            state.source_mesh,
+            2,
+            face_rows,
+            target_vertex_ids,
+            stencil_sources,
+            stencil_counts,
         ),
         _id_relations(
             3,
