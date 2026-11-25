@@ -3595,6 +3595,8 @@ TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape,
     return TetEditStatus::kApplied;
   }
   const bool band = !cage.frozen_tensors.empty();
+  const auto budget = band && bounded_tensor_search_ ? ShapeCageBudget::kCoarseTensor
+                                                      : ShapeCageBudget::kFull;
   std::vector<double> displacement(cage.variables);
   std::vector<double> scales(cage.edges.size());
   const double target = band ? 0.0
@@ -3610,7 +3612,7 @@ TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape,
     for (int correction = 0; correction < 5; ++correction) {
       if (!propose_shape_cage(cage.points, cage.cells, cage.edges, radius,
                               shape_lower(), goal, displacement, improve_mean,
-                              cage.frozen_tensors)) {
+                              cage.frozen_tensors, budget)) {
         break;
       }
       proposed = true;

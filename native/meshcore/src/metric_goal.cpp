@@ -521,6 +521,14 @@ bool frozen_tensor_residual(const std::array<double, 9>& a,
 
   const double hi = std::max(f, g);
   const double lo = std::min(f, g);
+  // Both means lie between the endpoint norms. Only shortcut well inside
+  // the band: the margin covers the log1p and quotient/product rounding.
+  constexpr double kScreenMargin = 0x1p-40;
+  if (scale * lo >= lower * (1.0 + kScreenMargin) &&
+      scale * hi <= upper * (1.0 - kScreenMargin)) {
+    residual = 0.0;
+    return true;
+  }
   const double excess = (hi - lo) / lo;
   const bool nearly_equal = excess <= 1e-6;
   double log_ratio = 0.0;
@@ -553,7 +561,8 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
                         std::span<const ShapeCageEdge> edges, double radius,
                         double minimum_length, double target_shape,
                         std::span<double> displacement, bool improve_mean,
-                        std::span<const std::array<double, 9>> frozen_tensors) {
+                        std::span<const std::array<double, 9>> frozen_tensors,
+                        ShapeCageBudget budget) {
   constexpr double kInset = 0.001;
   const double lower = minimum_length + kInset;
   constexpr double kUpper = kUpperLength - kInset;
@@ -690,7 +699,8 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
     }
     return value;
   };
-  const auto result = detail::bounded_lbfgs(position, 1.0, 0.15, 96, 1e-9, merit);
+  const int iterations = tensor_band && budget == ShapeCageBudget::kCoarseTensor ? 16 : 96;
+  const auto result = detail::bounded_lbfgs(position, 1.0, 0.15, iterations, 1e-9, merit);
   // Each accepted step strictly decreases finite merit. A later stall or
   // invalid trial does not invalidate the last accepted position.
   if (result.steps == 0 || !finite(result.value)) return false;

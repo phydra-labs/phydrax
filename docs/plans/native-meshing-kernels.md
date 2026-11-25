@@ -518,6 +518,14 @@ out-of-band edges and inversions, minimum shape 0.39228 vs 0.29750, mean
 0.78462 vs 0.67732, and midpoint band share 0.91225 vs 0.42265. The crop
 still misses the construction clock and does not qualify larger rows.
 
+Limiting the bounded tensor proposal to 16 optimizer steps (96 in the
+exhaustive phase) and screening clearly in-band frozen endpoint norms
+reduced one paired construction sample to **0.618 s vs 0.358 s**.
+The result completes with no inversions or out-of-band edges. Worst shape
+decreases slightly from 0.39228 to 0.38849, still above MMG3D's 0.29750.
+Mean shape is 0.78020 vs 0.67732 and midpoint band share is 0.90758 vs
+0.42265. This is a faster diagnostic, not a construction win.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
@@ -697,6 +705,10 @@ transition, lineage, and evidence IDs. Each run completes the strict band with
 no residuals and mean shape 0.8295888232. This qualifies native output
 invariance for that input, not parallel adaptation or the separate MMG3D
 construction ceiling.
+The bounded-cage 388-cell anisotropic crop also completes with zero
+residuals and unchanged mesh, transition, lineage, stencil, metric,
+and evidence IDs at worker requests of 1, 2, 4, and 8. These requests
+check invariance; they do not attest to a parallel edit team.
 
 ### Matched-worker evidence and remaining limits
 

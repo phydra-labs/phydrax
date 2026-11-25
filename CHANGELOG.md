@@ -754,6 +754,9 @@
   and coupled short-edge repair before exhausting finer single-vertex
   steps. Coarse exhaustion cannot certify a stall. Edit order and
   adapted mesh identities can change; the band and embedding checks do not.
+- The bounded tensor search uses fewer optimizer steps for short-edge
+  cages and screens edges whose endpoint norms are both inside the
+  inset band. The exhaustive budget and final edit checks are unchanged.
 - Native metric adaptation skips an unused shape measurement when a
   relocation strictly improves the edge band. Shape still decides
   equal-band moves and is still reported by the relocation proposal API.
