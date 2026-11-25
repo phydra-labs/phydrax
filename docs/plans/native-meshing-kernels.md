@@ -491,11 +491,15 @@ adapter constructs the result.
 
 Native coupled repair clears both shape gates on the coarsening crop:
 0.60218 minimum and 0.80042 mean, versus MMG3D's 0.58136 and 0.79798.
-The isotropic crop also passes its scientific gates, with 0.54005
-minimum and 0.86074 mean versus 0.52073 and 0.83983. Both finish with
-zero out-of-band edges or inversions. In the single paired samples,
-construction was 0.136 s vs 0.205 s for coarsening and 3.467 s vs
-0.280 s for isotropic adaptation. The latter still misses speed.
+The isotropic crop passes its scientific gates, with 0.54005 minimum and
+0.86074 mean versus 0.52073 and 0.83983. The anisotropic crop clears its
+eight short edges using bounded coupled wall relocation and completes
+with 0.39221 minimum and 0.77685 mean versus 0.29750 and 0.67732.
+All three finish with zero out-of-band edges or inversions. Single
+paired construction samples were 0.133 s vs 0.202 s for coarsening
+and 1.612 s vs 0.356 s for anisotropic adaptation. The isotropic
+checkpoint `a20d61cb8f` took 3.467 s vs 0.280 s. The two refinement
+clocks still miss.
 
 ### Implicit carrier remesh and proof
 

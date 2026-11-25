@@ -8,6 +8,7 @@
 // produced when the file was written; this test requires the same bits on
 // every platform. `--emit` prints that file.
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -546,6 +547,33 @@ void exact_cases() {
   for (const double value : center) PHX_CHECK_NEAR(value, 0.5, 0x1p-40);
 }
 
+void anisotropic_cage_repairs_measured_edge() {
+  const std::array<phx::mc::metric::ShapeCagePoint, 4> points{{
+      {{0.0, 0.0, 0.0}, {-1, -1, -1}}, {{0.3125, 0.0625, 0.0}, {-1, 0, -1}},
+      {{0.0, 1.0, 0.0}, {-1, -1, -1}}, {{0.0, 0.0, 1.0}, {-1, -1, -1}},
+  }};
+  constexpr std::array<double, 9> first{0.5, 0, 0, 0, 4, 0, 0, 0, 2};
+  constexpr std::array<double, 9> second{1, 0, 0, 0, 9, 0, 0, 0, 3};
+  const std::array tensors{first, second, first, first};
+  const std::array<std::array<std::size_t, 4>, 1> cells{{{0, 1, 2, 3}}};
+  const std::array<phx::mc::metric::ShapeCageEdge, 1> edges{{{{0, 1}, 1.0}}};
+  const double lower = std::sqrt(0.5);
+  const auto measured = [](double y) {
+    const double a = std::sqrt(0.5 * 0.3125 * 0.3125 + 4.0 * y * y);
+    const double b = std::sqrt(0.3125 * 0.3125 + 9.0 * y * y);
+    return (b - a) / std::log(b / a);
+  };
+  // The allowed tangential displacement cannot put the Euclidean edge
+  // in-band, but the actual endpoint tensors can.
+  PHX_CHECK(measured(0.0625) < lower);
+  std::array<double, 1> move{};
+  PHX_CHECK(phx::mc::metric::propose_shape_cage(points, cells, edges, 0.25, lower,
+                                               0.0, move, false, tensors));
+  PHX_CHECK(move[0] > 0.0 && move[0] <= 0.25);
+  const double length = measured(0.0625 + move[0]);
+  PHX_CHECK(length >= lower && length <= std::sqrt(2.0));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -559,5 +587,6 @@ int main(int argc, char** argv) {
   phx::mc::test::compare_rows(rows, kRecorded);
   guards_arguments();
   exact_cases();
+  anisotropic_cage_repairs_measured_edge();
   return phx::mc::test::finish("test_metric_goal");
 }

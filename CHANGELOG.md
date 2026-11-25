@@ -2632,6 +2632,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Anisotropic tetrahedral adaptation can close short edges using coupled
+  relocation after the ordinary search stalls. On a derived Cartesian
+  seam, the two exact exterior planes are retained even without a segment
+  witness. Exact carrier transport, strict metric lengths, and the full
+  affected stars are validated before committing; result IDs can change.
 - Scalar tetrahedral metric adaptation can improve low-shape cells with
   bounded joint relocation of their adjacent vertices. Proposals are
   rechecked after exact carrier selection and metric transport; every

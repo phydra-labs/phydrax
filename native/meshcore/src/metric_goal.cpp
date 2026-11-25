@@ -500,17 +500,68 @@ std::int64_t relocation_pulls(std::int64_t count, const double* points, const do
   return overflow ? -1 : written;
 }
 
+namespace {
+
+// Evaluate the residual and, only out of band, its unscaled length
+// direction in the two frozen endpoint tensors.
+bool frozen_tensor_residual(const std::array<double, 9>& a,
+                            const std::array<double, 9>& b,
+                            const std::array<double, 3>& delta, double scale,
+                            double lower, double upper, double& residual,
+                            std::array<double, 3>& direction) noexcept {
+  const auto apply = [&](const std::array<double, 9>& tensor) -> std::array<double, 3> {
+    return {dot3(tensor.data(), delta.data()), dot3(tensor.data() + 3, delta.data()),
+            dot3(tensor.data() + 6, delta.data())};
+  };
+  const auto ma = apply(a);
+  const auto mb = apply(b);
+  const double f = std::sqrt(dot3(delta.data(), ma.data()));
+  const double g = std::sqrt(dot3(delta.data(), mb.data()));
+  if (!(f > 0.0 && g > 0.0) || !finite(f) || !finite(g)) return false;
+
+  const double hi = std::max(f, g);
+  const double lo = std::min(f, g);
+  const double excess = (hi - lo) / lo;
+  const bool nearly_equal = excess <= 1e-6;
+  double log_ratio = 0.0;
+  if (!nearly_equal) {
+    log_ratio = finite(excess) ? deterministic::log1p(excess)
+                               : deterministic::log(hi) - deterministic::log(lo);
+  }
+  const double norm = nearly_equal ? 0.5 * (f + g) : (hi - lo) / log_ratio;
+  const double length = scale * norm;
+  if (!(length > 0.0) || !finite(length)) return false;
+  residual = length - std::clamp(length, lower, upper);
+  if (residual == 0.0) return true;
+
+  // Differentiate the logarithmic quotient, then chain through the
+  // endpoint directional norms.
+  const double d_hi = nearly_equal ? 0.5 : (1.0 - norm / hi) / log_ratio;
+  const double d_lo = nearly_equal ? 0.5 : (norm / lo - 1.0) / log_ratio;
+  const double d_f = f >= g ? d_hi : d_lo;
+  const double d_g = f >= g ? d_lo : d_hi;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    direction[axis] = d_f * (ma[axis] / f) + d_g * (mb[axis] / g);
+  }
+  return finite3(direction.data());
+}
+
+}  // namespace
+
 bool propose_shape_cage(std::span<const ShapeCagePoint> points,
                         std::span<const std::array<std::size_t, 4>> cells,
                         std::span<const ShapeCageEdge> edges, double radius,
                         double minimum_length, double target_shape,
-                        std::span<double> displacement, bool improve_mean) {
+                        std::span<double> displacement, bool improve_mean,
+                        std::span<const std::array<double, 9>> frozen_tensors) {
   constexpr double kInset = 0.001;
   const double lower = minimum_length + kInset;
   constexpr double kUpper = kUpperLength - kInset;
+  const bool tensor_band = !frozen_tensors.empty();
   if (displacement.empty() || cells.empty() || !(radius > 0.0) || !finite(radius) ||
       !(minimum_length > 0.0 && lower <= kUpper) ||
-      !(target_shape > 0.0) || !finite(target_shape)) {
+      (tensor_band && frozen_tensors.size() != points.size()) ||
+      !(target_shape > 0.0 || (tensor_band && target_shape == 0.0)) || !finite(target_shape)) {
     return false;
   }
   for (const ShapeCagePoint& p : points) {
@@ -566,14 +617,28 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
     };
 
     double value = 0.0;
+    constexpr double kEdgeWeight = 16.0;
     for (const ShapeCageEdge& edge : edges) {
       const auto [a, b] = edge.rows;
       const Point delta = difference(trial[a], trial[b]);
+      if (tensor_band) {
+        double residual = 0.0;
+        Point direction;
+        if (!frozen_tensor_residual(frozen_tensors[a], frozen_tensors[b], delta, edge.scale,
+                                    lower, kUpper, residual, direction)) {
+          return kInvalid;
+        }
+        if (residual == 0.0) continue;
+        value += kEdgeWeight * residual * residual;
+        const double weight = (2.0 * kEdgeWeight * residual) * edge.scale;
+        add_gradient(a, direction, weight);
+        add_gradient(b, direction, -weight);
+        continue;
+      }
       const double length = edge.scale * std::sqrt(dot3(delta.data(), delta.data()));
       if (!(length > 0.0) || !finite(length)) return kInvalid;
       const double residual = length - std::clamp(length, lower, kUpper);
       if (residual == 0.0) continue;
-      constexpr double kEdgeWeight = 16.0;
       value += kEdgeWeight * residual * residual;
       const double weight = (2.0 * kEdgeWeight * residual) * edge.scale * edge.scale / length;
       add_gradient(a, delta, weight);
@@ -584,9 +649,10 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
       const Point ab = difference(trial[cell[1]], a);
       const Point ac = difference(trial[cell[2]], a);
       const Point ad = difference(trial[cell[3]], a);
-      std::array<Point, 4> d_volume{Point{}, cross(ac, ad), cross(ad, ab), cross(ab, ac)};
-      const double volume = dot3(ab.data(), d_volume[1].data());  // Six times signed volume.
+      const Point first_gradient = cross(ac, ad);
+      const double volume = dot3(ab.data(), first_gradient.data());  // Six times signed volume.
       if (!(volume > 0.0) || !finite(volume)) return kInvalid;
+      if (target_shape == 0.0 && !improve_mean) continue;
 
       double squared = 0.0;
       for (std::size_t i = 0; i < 4; ++i) {
@@ -602,6 +668,7 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
       value += residual * residual + mean_weight * (1.0 - shape);
 
       // q is proportional to volume^(2/3) / squared. Differentiate both factors.
+      std::array<Point, 4> d_volume{Point{}, first_gradient, cross(ad, ab), cross(ab, ac)};
       for (std::size_t axis = 0; axis < 3; ++axis) {
         d_volume[0][axis] = -((d_volume[1][axis] + d_volume[2][axis]) + d_volume[3][axis]);
       }

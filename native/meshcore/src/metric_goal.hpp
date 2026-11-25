@@ -110,12 +110,15 @@ struct ShapeCagePoint {
 
 struct ShapeCageEdge {
   std::array<std::size_t, 2> rows;
-  double scale;  // Frozen multiplier of Euclidean length.
+  double scale;  // Frozen multiplier of Euclidean length or the endpoint log-mean norm.
 };
 
 // Each cell lists four point rows, ordered with det(p1-p0, p2-p0, p3-p0) > 0.
-// Proposes a descent step from zero for the shape and inset scalar-band
-// penalties. Mean polishing adds an average-shape reward to that merit.
+// Proposes a descent step from zero for the shape and inset band penalties.
+// Nonempty frozen_tensors supplies one row-major SPD tensor per point; the
+// norm is then the logarithmic mean of the two frozen endpoint norms, with
+// the arithmetic mean near equality. Only this mode allows target_shape == 0
+// to disable the shape penalty. Mean polishing adds an average-shape reward.
 // True writes physical displacements bounded by radius; false leaves them
 // untouched. The caller must validate the rounded cage with native
 // predicates and metrics.
@@ -123,6 +126,7 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
                         std::span<const std::array<std::size_t, 4>> cells,
                         std::span<const ShapeCageEdge> edges, double radius,
                         double minimum_length, double target_shape,
-                        std::span<double> displacement, bool improve_mean = false);
+                        std::span<double> displacement, bool improve_mean = false,
+                        std::span<const std::array<double, 9>> frozen_tensors = {});
 
 }  // namespace phx::mc::metric
