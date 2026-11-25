@@ -2484,10 +2484,6 @@ def _available_reference_maps(
     edit: CellTopologyEdit,
     /,
 ) -> tuple[ReferenceCellMapWitnesses, ...]:
-    try:
-        return reference_cell_maps_from_edit(source, target, edit)
-    except ValueError:
-        pass
     dimension = source.topological_dimension
     relation = next(
         (value for value in edit.relations if value.dimension == dimension), None
@@ -3348,6 +3344,27 @@ def _retained_periodic_exact_rows(
     return rows
 
 
+def _only_nonnested_replacements(
+    source: CellMesh, target: CellMesh, edit: CellTopologyEdit, /
+) -> bool:
+    """Neither a recorded parent chart nor an implicit identity chart can exist."""
+    if edit.refinement is not None or edit.coarsening is not None:
+        return False
+    cells = edit.relations[-1]
+    if cells.dimension != source.topological_dimension or not cells.kinds.size:
+        return False
+    if not np.all(cells.kinds == int(EntityLineageKind.SWAPPED_FROM)):
+        return False
+    # Only use the cheap disjoint-range proof. Overlapping ID ranges keep
+    # the normal exact identity-key check, not a guessed family association.
+    last_source = max(
+        np.max(np.asarray(block.global_ids), initial=-1) for block in source.blocks
+    )
+    return all(
+        np.all(np.asarray(block.global_ids) > last_source) for block in target.blocks
+    )
+
+
 def _restricted_target_geometry(
     source: CellMeshingResult,
     target: CellMesh,
@@ -3403,6 +3420,18 @@ def _restricted_target_geometry(
             target,
             _affine_edit_geometry(source, target, edit, exact_source_vertices),
             reference_maps,
+            None,
+        )
+    if (
+        coarsening is None
+        and source.mesh.periodic_topology is None
+        and _only_nonnested_replacements(source.mesh, target, edit)
+        and _piecewise_linear_geometry(source.mesh, source.geometry)
+    ):
+        return (
+            target,
+            _affine_edit_geometry(source, target, edit, exact_source_vertices),
+            (),
             None,
         )
     try:

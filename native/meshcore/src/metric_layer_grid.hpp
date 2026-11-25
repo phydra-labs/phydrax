@@ -10,11 +10,11 @@
 
 namespace phx::mc::metric {
 
-inline constexpr std::int64_t kMaxLayerSourceCells = 250'000;
+inline constexpr std::int64_t kMaxBoxSourceCells = 250'000;
 
 // A proposed conforming tetrahedral grid. Carrier rows refer to the immutable
 // source; tensors are the transported values at those exact dyadic carriers.
-struct MetricLayerGrid {
+struct MetricBoxGrid {
   std::vector<Carrier> vertices;
   std::vector<std::array<double, 9>> tensors;
   std::vector<std::array<std::int32_t, 4>> cells;
@@ -23,14 +23,18 @@ struct MetricLayerGrid {
 // For a box with constant Cartesian tangential metrics and one varying normal
 // metric, generate and measure a graded grid. The transaction owner proves
 // the box and its source groups; neither generator nor scales identify faces.
-std::optional<MetricLayerGrid> propose_metric_layer_grid(
+std::optional<MetricBoxGrid> propose_metric_layer_grid(
+    const AdaptInput& input, const CarrierSource& source,
+    const std::array<double, 3>& low, const std::array<double, 3>& high);
+std::optional<MetricBoxGrid> propose_scalar_box_grid(
     const AdaptInput& input, const CarrierSource& source,
     const std::array<double, 3>& low, const std::array<double, 3>& high);
 
 // An ineligible source or unusable proposal leaves state and output unchanged.
 // A committed whole-volume operation writes its genuine stencil, cell
 // ancestry, generation and status evidence. Fatal transaction errors propagate.
-std::optional<TetEditStatus> adapt_metric_layers(TetMesh& mesh, const AdaptInput& input,
-                                                const CarrierSource& source, AdaptOutput& output);
+std::optional<TetEditStatus> adapt_metric_box(TetMesh& mesh, const AdaptInput& input,
+                                             const CarrierSource& source, bool scalar,
+                                             AdaptOutput& output);
 
 }  // namespace phx::mc::metric

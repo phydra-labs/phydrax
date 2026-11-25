@@ -11,9 +11,11 @@
   Derived seam primitives do not add live constraints. Relocation retains
   source stencils, stable identities, and the existing metric band.
 - Native metric adaptation can retessellate single-region Cartesian boxes
-  in aligned, graded anisotropic fields. The transaction preserves wall
-  identities and records exact transfer stencils and positive-volume cell
-  ancestry. `TetraMetricEvidence.retriangulations` distinguishes it from
+  in graded scalar or aligned anisotropic fields. Scalar refinement spaces
+  the box seams in metric length and repairs the tetrahedra without widening
+  the strict edge band. The transaction preserves wall identities and records
+  exact transfer stencils and positive-volume cell ancestry.
+  `TetraMetricEvidence.retriangulations` distinguishes it from
   local tetrahedral edits. The counter is always stored but contributes to
   the evidence fingerprint only when at least one retessellation committed.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
@@ -319,7 +321,7 @@
   cone of its face normals falls back to the flat normal, and
   `BoundaryLayerEvidence.maximum_level_deviations` reports each level's
   largest departure from the wall triangles. Declared change to layer geometry
-  and identities on those walls. `phx_mc_cell_map_validity` certifies P1
+  and identities on those walls. `phx_mc_certify_cell_maps` certifies P1
   prisms natively (same statuses, endpoints and digests as the rational
   proof), `phx_mc_polyhedral_mesh_entities` / `phx_mc_incidence_order` build
   tetrahedron, pyramid, prism and hexahedron `CellMesh` topology with the
@@ -341,8 +343,9 @@
   between two facets of one declared-plane group off the exact edge when the
   point's exact position lies on the plane and the four halves keep their
   faces' projected orientation, which proves they tile the two facets.
-- Native exact cell validity `phx_mc_cell_map_validity` for P1 tetrahedra and
-  affine or trilinear hexahedra on exact dyadic coordinates, used by
+- Native exact cell validity `phx_mc_certify_cell_maps` for P1 tetrahedra and
+  affine or trilinear hexahedra on exact dyadic coordinates, including
+  wide significands in the coordinate bank's sparse storage, used by
   `certify_cell_geometry_validity`: it reproduces the rational proof's
   statuses, directed determinant endpoints, depths and map digests bit for
   bit, so certificate and audit identities are unchanged; the rational proof

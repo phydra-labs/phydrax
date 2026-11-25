@@ -45,6 +45,7 @@ from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
+from ..discretization._topology import row_positions
 from ..discretization._triangular import TriangleConnectivity
 from ._lineage import (
     EntityLineage,
@@ -938,16 +939,7 @@ def key_rows(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
     width = max(table_.shape[1], queries_.shape[1])
     table_ = _pad_key_table(table_, width)
     queries_ = _pad_key_table(queries_, width)
-    if queries_.shape[0] == 0:
-        return np.zeros((0,), dtype=np.int64)
-    if table_.shape[0] == 0:
-        return np.full((queries_.shape[0],), -1, dtype=np.int64)
-    combined = np.concatenate((table_, queries_), axis=0)
-    _, inverse = np.unique(combined, axis=0, return_inverse=True)
-    inverse = inverse.reshape((-1,))
-    owner = np.full((int(np.max(inverse)) + 1,), -1, dtype=np.int64)
-    owner[inverse[: table_.shape[0]]] = np.arange(table_.shape[0], dtype=np.int64)
-    return owner[inverse[table_.shape[0] :]]
+    return row_positions(table_, queries_)
 
 
 def _target_entity_ids(

@@ -15,6 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include "key_map.hpp"
+#include "topology_keys.hpp"
+
 #include "clip3d.hpp"
 #include "metric_float.hpp"
 #include "metric_layer_overlap.hpp"
@@ -364,7 +367,7 @@ struct VertexOutput {
 };
 
 std::optional<TetEditStatus> bind_grid_vertices(
-    const MetricLayerGrid& grid, const AdaptInput& input, const SourceBox& source,
+    const MetricBoxGrid& grid, const AdaptInput& input, const SourceBox& source,
     const TetMeshSnapshot& snapshot, VertexOutput& vertices, TetEdit& edit) {
   const std::size_t count = grid.vertices.size();
   if (count == 0 || grid.tensors.size() != count) return std::nullopt;
@@ -420,7 +423,7 @@ std::optional<TetEditStatus> bind_grid_vertices(
   return TetEditStatus::kApplied;
 }
 
-bool write_vertices(const MetricLayerGrid& grid, const AdaptInput& input,
+bool write_vertices(const MetricBoxGrid& grid, const AdaptInput& input,
                     const Box& box, const VertexOutput& vertices,
                     std::vector<StencilPoint>& lifted, TetEdit& edit, AdaptOutput& output) {
   const auto count = static_cast<std::int64_t>(input.source_vertex_ids.size());
@@ -509,13 +512,13 @@ struct FaceUse {
   int face;
 };
 
-Face grid_face(const MetricLayerGrid& grid, const FaceUse& use) {
+Face grid_face(const MetricBoxGrid& grid, const FaceUse& use) {
   Face rows;
   oriented_facet(grid.cells[use.cell].data(), use.face, rows.data());
   return rows;
 }
 
-std::optional<TetEditStatus> bind_grid_cells(const MetricLayerGrid& grid, const AdaptInput& input,
+std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const AdaptInput& input,
                                             const SourceBox& source, const VertexOutput& vertices,
                                             TetEdit& edit) {
   const std::size_t count = grid.cells.size();
@@ -524,10 +527,17 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricLayerGrid& grid, const 
       count >= static_cast<std::size_t>(kMaxTetrahedronSlots)) return TetEditStatus::kIndexOverflow;
   edit.replacement_cells.resize(count);
   std::vector<FaceUse> uses;
-  uses.reserve(4 * count);
+  std::vector<unsigned> walls(grid.vertices.size());
+  for (std::size_t vertex = 0; vertex < grid.vertices.size(); ++vertex) {
+    for (int k = 0; k < 3; ++k) {
+      const auto x = grid.vertices[vertex].point[k];
+      if (x == source.box.bounds.low[k]) walls[vertex] |= 1U << (2 * k);
+      else if (x == source.box.bounds.high[k]) walls[vertex] |= 2U << (2 * k);
+    }
+  }
   std::vector<std::uint8_t> referenced(grid.vertices.size(), 0);
-  std::vector<std::array<std::int32_t, 2>> edges;
-  edges.reserve(6 * count);
+  const double lower = std::max(input.lower, kLowerLength);
+  KeyMap edges(std::min(6 * count, count + 2 * grid.vertices.size()));
   for (std::size_t cell = 0; cell < count; ++cell) {
     TetEditCell& record = edit.replacement_cells[cell];
     record.id = input.next_cell_id + cell;
@@ -544,24 +554,24 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricLayerGrid& grid, const 
     for (int k = 0; k < 4; ++k) {
       Face tri;
       oriented_facet(rows.data(), k, tri.data());
-      uses.push_back({face_key(tri), cell, k});
+      // Only wall facets need source labels. The canonical whole-cavity
+      // validator pairs every interior side, including unmarked ones.
+      if ((walls[tri[0]] & walls[tri[1]] & walls[tri[2]]) != 0) {
+        uses.push_back({face_key(tri), cell, k});
+      }
       for (int j = k + 1; j < 4; ++j) {
-        const auto a = rows[k];
-        const auto b = rows[j];
-        edges.push_back(vertices.ids[a].native < vertices.ids[b].native ?
-                            std::array{a, b} : std::array{b, a});
+        auto a = rows[k], b = rows[j];
+        auto& seen = edges.slot(topology::undirected_edge(a, b));
+        if (seen != -1) continue;
+        seen = 1;
+        if (vertices.ids[b].native < vertices.ids[a].native) std::swap(a, b);
+        const double measured = length(grid.vertices[a].point.data(), grid.vertices[b].point.data(),
+                                       grid.tensors[a].data(), grid.tensors[b].data());
+        if (!(measured >= lower && measured <= kUpperLength)) return std::nullopt;
       }
     }
   }
   if (std::find(referenced.begin(), referenced.end(), 0) != referenced.end()) return std::nullopt;
-  std::sort(edges.begin(), edges.end());
-  const double lower = std::max(input.lower, kLowerLength);
-  for (auto it = edges.begin(), end = std::unique(edges.begin(), edges.end()); it != end; ++it) {
-    const auto [a, b] = *it;
-    const double measured = length(grid.vertices[a].point.data(), grid.vertices[b].point.data(),
-                                   grid.tensors[a].data(), grid.tensors[b].data());
-    if (!(measured >= lower && measured <= kUpperLength)) return std::nullopt;
-  }
 
   std::sort(uses.begin(), uses.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
   Box shell{source.box.bounds, {}};
@@ -569,12 +579,7 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricLayerGrid& grid, const 
   for (auto it = uses.begin(); it != uses.end();) {
     const Face rows = grid_face(grid, *it);
     const auto next = it + 1;
-    if (next != uses.end() && it->key == next->key) {
-      if ((next + 1 != uses.end() && (next + 1)->key == it->key) ||
-          face_direction(rows, grid_face(grid, *next)) != -1) return std::nullopt;
-      it = next + 1;
-      continue;
-    }
+    if (next != uses.end() && it->key == next->key) return std::nullopt;
     const double* a = grid.vertices[rows[0]].point.data();
     const double* b = grid.vertices[rows[1]].point.data();
     const double* c = grid.vertices[rows[2]].point.data();
@@ -675,6 +680,8 @@ class CellIndex {
     return true;
   }
 
+  const Bounds& bounds(std::size_t row) const { return bounds_[row]; }
+
  private:
   struct Node {
     Bounds box;
@@ -694,6 +701,175 @@ class CellIndex {
   std::vector<Node> nodes_;
 };
 
+struct SourceCellPlanes {
+  std::array<Point, 4> normals;
+  std::array<std::int32_t, 4> neighbors;
+  std::array<std::int64_t, 4> vertices;
+
+  bool supports(const Carrier& vertex) const {
+    return std::includes(vertices.begin(), vertices.end(),
+                         vertex.rows.begin(), vertex.rows.begin() + vertex.size);
+  }
+};
+
+struct SourceSite {
+  std::int32_t owner = -1;
+  bool closed = false;
+  bool interior = false;
+};
+
+// The existing determinant bound depends only on coordinate ranges and
+// maximum displacements. All rounded vertices are admitted in this box.
+// These extremes bound every face query for both embeddings and let us
+// reuse the normals and the error across targets.
+double box_face_error(const Box& box, std::span<const StencilPoint> lifted) {
+  StencilPoint envelope;
+  for (const auto& p : lifted) {
+    if (p.exact) continue;
+    for (int k = 0; k < 3; ++k) {
+      envelope.displacement[k] = std::max(envelope.displacement[k], std::abs(p.displacement[k]));
+    }
+  }
+  const double* low = box.bounds.low.data();
+  const double* high = box.bounds.high.data();
+  const Tet extremes{{{low, &envelope}, {high}, {low}, {high}}};
+  return layer_detail::common_distance_error(extremes, extremes);
+}
+
+// Returns -1 outside, 0 on the boundary, and 1 in the interior. This checks
+// the rounded position independently of any known exact stencil support.
+int rounded_site_location(const SourceCellPlanes& cell, const TetCoordinates& source,
+                          const double* point, double error) {
+  const auto p = tet_points(source);
+  int location = 1;
+  for (int k = 0; k < 4; ++k) {
+    const auto& face = kOrientedFacet[k];
+    const double* origin = p[face[0]];
+    if (error > 0.0) {
+      const double distance = layer_detail::projected_distance(cell.normals[k].data(), origin, point);
+      if (distance > error) continue;
+      if (distance < -error) return -1;
+    }
+    const int side = orient3d(origin, p[face[1]], p[face[2]], point);
+    if (side < 0) return -1;
+    if (side == 0) location = 0;
+  }
+  return location;
+}
+
+bool make_source_planes(const TetMesh& mesh, const AdaptInput& input,
+                        std::span<TetCoordinates> points, std::span<SourceCellPlanes> cells) {
+  bool adjacent = true;
+  for (std::size_t row = 0; row < cells.size(); ++row) {
+    const auto& tet = mesh.tet(mesh.cell_slot(input.cell_ids[row]));
+    auto& cell = cells[row];
+    std::copy_n(input.source_cells.data() + 4 * row, 4, cell.vertices.begin());
+    std::sort(cell.vertices.begin(), cell.vertices.end());
+    for (int k = 0; k < 4; ++k) std::copy_n(mesh.point(tet.v[k]), 3, points[row].data() + 3 * k);
+    const auto p = tet_points(points[row]);
+    for (int k = 0; k < 4; ++k) {
+      const auto& face = kOrientedFacet[k];
+      double u[3], v[3];
+      geometry::difference(p[face[1]], p[face[0]], u);
+      geometry::difference(p[face[2]], p[face[0]], v);
+      geometry::cross(u, v, cell.normals[k].data());
+      cell.neighbors[k] = -1;
+      const auto slot = tet.n[k];
+      if (is_ghost(mesh.tet(slot))) continue;
+      const Id id = mesh.cell_id(slot);
+      const auto at = std::lower_bound(input.cell_ids.begin(), input.cell_ids.end(), id);
+      if (at == input.cell_ids.end() || *at != id) {
+        adjacent = false;
+        continue;
+      }
+      cell.neighbors[k] = static_cast<std::int32_t>(at - input.cell_ids.begin());
+    }
+  }
+  return adjacent;
+}
+
+std::vector<SourceSite> bind_source_sites(const MetricBoxGrid& grid, const AdaptInput& input,
+                                         std::span<const TetCoordinates> points,
+                                         std::span<const SourceCellPlanes> cells, double error) {
+  // The source cap keeps all four incidences per cell in the int32 range.
+  // A stencil can only be supported by a cell incident to its first row.
+  std::vector<std::int32_t> first(input.source_vertex_ids.size(), -1);
+  std::vector<std::int32_t> next(input.source_cells.size());
+  for (std::int32_t at = 0; at < static_cast<std::int32_t>(next.size()); ++at) {
+    next[at] = std::exchange(first[input.source_cells[at]], at);
+  }
+  std::vector<SourceSite> sites(grid.vertices.size());
+  for (std::size_t row = 0; row < grid.vertices.size(); ++row) {
+    const auto& vertex = grid.vertices[row];
+    for (auto at = first[vertex.rows[0]]; at >= 0; at = next[at]) {
+      const auto owner = at / 4;
+      if (!cells[owner].supports(vertex)) continue;
+      const int location = rounded_site_location(cells[owner], points[owner], vertex.point.data(),
+                                                error);
+      sites[row] = {owner, location >= 0, location > 0 && vertex.size == 4};
+      if (location >= 0) break;
+    }
+  }
+  return sites;
+}
+
+bool singleton_ancestor(std::int32_t owner, const std::array<std::int32_t, 4>& vertices,
+                        const MetricBoxGrid& grid, std::span<const SourceSite> sites,
+                        const SourceCellPlanes& cell, const TetCoordinates& points, double error) {
+  // write_vertices proved that every exact stencil is convex. Inclusion of
+  // its support proves exact containment; independently check every rounded
+  // site not already tested against this cell. A target tet of positive
+  // volume contained in one source tet has no other positive ancestor.
+  for (const auto row : vertices) {
+    const auto& site = sites[row];
+    if (site.owner == owner) {
+      if (!site.closed) return false;
+    } else if (grid.vertices[row].size == 4 || !cell.supports(grid.vertices[row])) {
+      return false;
+    }
+  }
+  for (const auto row : vertices) {
+    if (sites[row].owner != owner &&
+        rounded_site_location(cell, points, grid.vertices[row].point.data(), error) < 0) return false;
+  }
+  return true;
+}
+
+struct FaceEvidence {
+  layer_detail::Contact contact = layer_detail::Contact::kEdges;
+  unsigned neighbors = 15;
+};
+
+FaceEvidence source_face_evidence(const SourceCellPlanes& cell, const TetCoordinates& source,
+                                  const Tet& target, double error) {
+  using layer_detail::Contact;
+  if (error == 0.0) return {};
+  const auto p = tet_points(source);
+  FaceEvidence evidence;
+  unsigned strict = 15;
+  bool centroid_inside = true;
+  double distance[4][4];
+  for (int k = 0; k < 4; ++k) {
+    auto& d = distance[k];
+    const double* origin = p[kOrientedFacet[k][0]];
+    unsigned inside = 0, outside = 0;
+    for (int j = 0; j < 4; ++j) {
+      d[j] = layer_detail::projected_distance(cell.normals[k].data(), origin, target[j].rounded);
+      if (d[j] > error) inside |= 1U << j;
+      if (d[j] < -error) outside |= 1U << j;
+    }
+    if (outside == 15) return {Contact::kDisjoint, 0};
+    // Both target hulls are entirely on the owner's side of this plane.
+    if (inside == 15) evidence.neighbors &= ~(1U << k);
+    strict &= inside;
+    centroid_inside = centroid_inside && ((d[0] + d[1]) + (d[2] + d[3]) > 8.0 * error);
+  }
+  if (strict != 0 || centroid_inside || layer_detail::certified_crossing(distance, error)) {
+    evidence.contact = Contact::kPositive;
+  }
+  return evidence;
+}
+
 Bounds expanded_bounds(Bounds box, const Tet& target) {
   for (const auto& point : target) {
     if (point.stencil == nullptr) continue;
@@ -707,7 +883,7 @@ Bounds expanded_bounds(Bounds box, const Tet& target) {
 }
 
 bool collect_ancestor(TetrahedronClipper& clipper, const TetCoordinates& source,
-                      const TetCoordinates& rounded_target, const Tet& exact_target,
+                      const Tet& exact_target,
                       bool native_boxes_overlap, Id ancestor,
                       std::vector<Id>& native_ancestry, std::vector<Id>& exact_ancestry) {
   const auto p = tet_points(source);
@@ -718,6 +894,10 @@ bool collect_ancestor(TetrahedronClipper& clipper, const TetCoordinates& source,
   if (!native_boxes_overlap) return true;
   bool native_positive = positive;
   if (!signs.same()) {
+    TetCoordinates rounded_target;
+    for (int k = 0; k < 4; ++k) {
+      std::copy_n(exact_target[k].rounded, 3, rounded_target.data() + 3 * k);
+    }
     const auto status = clipper.overlaps(source.data(), rounded_target.data(), native_positive);
     if (status == PHX_MC_ALLOCATION_FAILURE) throw std::bad_alloc();
     if (status == PHX_MC_INDEX_RANGE_ERROR) throw std::length_error("Intersection index overflow.");
@@ -728,16 +908,16 @@ bool collect_ancestor(TetrahedronClipper& clipper, const TetCoordinates& source,
   return true;
 }
 
-bool write_cell_ancestry(const TetMesh& mesh, const MetricLayerGrid& grid, const AdaptInput& input,
+bool write_cell_ancestry(const TetMesh& mesh, const MetricBoxGrid& grid, const AdaptInput& input,
                          const SourceBox& source, std::span<const StencilPoint> lifted,
                          TetEdit& edit, AdaptOutput& output) {
-  std::vector<TetCoordinates> source_points;
-  source_points.reserve(input.cell_ids.size());
-  for (Id id : input.cell_ids) {
-    const auto& tet = mesh.tet(mesh.cell_slot(id));
-    auto& points = source_points.emplace_back();
-    for (int k = 0; k < 4; ++k) std::copy_n(mesh.point(tet.v[k]), 3, points.data() + 3 * k);
-  }
+  std::vector<TetCoordinates> source_points(input.cell_ids.size());
+  std::vector<SourceCellPlanes> planes(input.cell_ids.size());
+  const bool adjacent = make_source_planes(mesh, input, source_points, planes);
+  const double face_error = box_face_error(source.box, lifted);
+  const auto sites = bind_source_sites(grid, input, source_points, planes, face_error);
+  std::vector<std::size_t> seen(planes.size());
+  std::vector<std::pair<std::int32_t, unsigned>> queue;
   CellIndex index;
   index.build(source_points);
   TetrahedronClipper clipper;
@@ -752,27 +932,87 @@ bool write_cell_ancestry(const TetMesh& mesh, const MetricLayerGrid& grid, const
   output.ancestry_kinds.assign(count, kRetessellated);
   output.cell_relocated.assign(count, 0);
   for (std::size_t row = 0; row < count; ++row) {
-    TetCoordinates rounded;
+    const auto& vertices = grid.cells[row];
+    TetPoints rounded;
     Tet target;
     for (int k = 0; k < 4; ++k) {
-      const auto vertex = grid.cells[row][k];
-      std::copy_n(grid.vertices[vertex].point.data(), 3, rounded.data() + 3 * k);
-      target[k] = {rounded.data() + 3 * k, lifted[vertex].exact ? nullptr : &lifted[vertex]};
+      const auto vertex = vertices[k];
+      rounded[k] = grid.vertices[vertex].point.data();
+      target[k] = {rounded[k], lifted[vertex].exact ? nullptr : &lifted[vertex]};
     }
     // The rounded and exact shells are homotopic inside the same box strata
     // because their vertices differ only in free coordinates. Positive exact
     // cells and the already-proven shell degree prove the exact cover too.
     layer_detail::CommonSigns signs;
     if (signs.orientation(target[0], target[1], target[2], target[3]) <= 0) return false;
-    const Bounds native_box = tet_bounds(tet_points(rounded));
+    std::int32_t seed = -1;
+    bool strict_seed = false;
+    for (const auto vertex : vertices) {
+      const auto& site = sites[vertex];
+      if (site.interior) {
+        seed = site.owner;
+        strict_seed = true;
+        break;
+      }
+      if (seed < 0 && site.closed) seed = site.owner;
+    }
     TetEditCell& cell = edit.replacement_cells[row];
     exact_ancestry.clear();
-    if (!index.visit(expanded_bounds(native_box, target), [&](std::size_t candidate,
-                                                               const Bounds& source_box) {
-          return collect_ancestor(clipper, source_points[candidate], rounded, target,
-                                  open_overlap(native_box, source_box), input.cell_ids[candidate],
-                                  cell.ancestor_cell_ids, exact_ancestry);
-        }) || exact_ancestry.empty() || cell.ancestor_cell_ids.empty()) return false;
+    const auto append_both = [&](std::size_t candidate) {
+      const Id id = input.cell_ids[candidate];
+      cell.ancestor_cell_ids.push_back(id);
+      exact_ancestry.push_back(id);
+    };
+    if (seed >= 0 && singleton_ancestor(seed, vertices, grid, sites, planes[seed],
+                                       source_points[seed], face_error)) {
+      append_both(seed);
+    } else {
+      using layer_detail::Contact;
+      const Bounds native_box = tet_bounds(rounded);
+      const Bounds exact_box = expanded_bounds(native_box, target);
+      const auto collect = [&](std::size_t candidate, const Bounds& source_box) {
+        return collect_ancestor(clipper, source_points[candidate], target,
+                                open_overlap(native_box, source_box), input.cell_ids[candidate],
+                                cell.ancestor_cell_ids, exact_ancestry);
+      };
+      const auto seed_faces = !adjacent || seed < 0 ? FaceEvidence{} :
+          source_face_evidence(planes[seed], source_points[seed], target, face_error);
+      if (adjacent && seed >= 0 && (strict_seed || seed_faces.contact == Contact::kPositive)) {
+        // In either embedding, positive overlaps meet the open target interior.
+        // Join interior witnesses inside that convex open set by a generic
+        // path avoiding the finite source edge/vertex skeleton. It crosses
+        // source facets only in their relative interiors, so the positive
+        // cells for each embedding are face-connected to this common seed.
+        append_both(seed);
+        queue.clear();
+        queue.emplace_back(seed, seed_faces.neighbors);
+        seen[seed] = row + 1;
+        for (std::size_t at = 0; at < queue.size(); ++at) {
+          const auto [current, faces] = queue[at];
+          for (int k = 0; k < 4; ++k) {
+            const auto candidate = planes[current].neighbors[k];
+            if (!(faces & (1U << k)) || candidate < 0 || seen[candidate] == row + 1) continue;
+            seen[candidate] = row + 1;
+            const auto& bounds = index.bounds(candidate);
+            if (!open_overlap(exact_box, bounds)) continue;
+            const auto proof = source_face_evidence(planes[candidate], source_points[candidate],
+                                                    target, face_error);
+            if (proof.contact == Contact::kDisjoint) continue;
+            if (proof.contact == Contact::kPositive) {
+              append_both(candidate);
+            } else {
+              const auto before = cell.ancestor_cell_ids.size() + exact_ancestry.size();
+              if (!collect(candidate, bounds)) return false;
+              if (before == cell.ancestor_cell_ids.size() + exact_ancestry.size()) continue;
+            }
+            queue.emplace_back(candidate, proof.neighbors);
+          }
+        }
+      } else if (!index.visit(exact_box, collect)) {
+        return false;
+      }
+    }
+    if (exact_ancestry.empty() || cell.ancestor_cell_ids.empty()) return false;
     std::sort(cell.ancestor_cell_ids.begin(), cell.ancestor_cell_ids.end());
     std::sort(exact_ancestry.begin(), exact_ancestry.end());
     output.cell_ids.push_back(cell.id);
@@ -790,9 +1030,10 @@ bool fatal(TetEditStatus status) {
 
 }  // namespace
 
-std::optional<TetEditStatus> adapt_metric_layers(TetMesh& mesh, const AdaptInput& input,
-                                                const CarrierSource& source, AdaptOutput& output) {
-  if (source.cell_count() > kMaxLayerSourceCells) return std::nullopt;
+std::optional<TetEditStatus> adapt_metric_box(TetMesh& mesh, const AdaptInput& input,
+                                             const CarrierSource& source, bool scalar,
+                                             AdaptOutput& output) {
+  if (source.cell_count() > kMaxBoxSourceCells) return std::nullopt;
   if (!input.topology_operations || !input.relocation || input.exact_source != nullptr ||
       !input.protected_edges.empty() || mesh.generation() != 0 || mesh.implicit_source() ||
       mesh.periodic_identity().bound || mesh.metric_active() || !mesh.unmet_records().empty() ||
@@ -812,8 +1053,8 @@ std::optional<TetEditStatus> adapt_metric_layers(TetMesh& mesh, const AdaptInput
       !bind_original_boundary(mesh, snapshot, original) ||
       !source.matches_roundings(input.source_points, input.source_cells)) return std::nullopt;
 
-  const auto grid = propose_metric_layer_grid(input, source, original.box.bounds.low,
-                                              original.box.bounds.high);
+  const auto propose = scalar ? propose_scalar_box_grid : propose_metric_layer_grid;
+  const auto grid = propose(input, source, original.box.bounds.low, original.box.bounds.high);
   if (!grid) return std::nullopt;
   TetEditBatch batch;
   batch.expected_generation = snapshot.generation;
@@ -837,8 +1078,8 @@ std::optional<TetEditStatus> adapt_metric_layers(TetMesh& mesh, const AdaptInput
 
   AdaptOutput staged;
   std::vector<StencilPoint> lifted;
-  if (!write_vertices(*grid, input, original.box, vertices, lifted, edit, staged) ||
-      !write_cell_ancestry(mesh, *grid, input, original, lifted, edit, staged)) return std::nullopt;
+  if (!write_vertices(*grid, input, original.box, vertices, lifted, edit, staged)) return std::nullopt;
+  if (!write_cell_ancestry(mesh, *grid, input, original, lifted, edit, staged)) return std::nullopt;
   staged.status = AdaptStatus::kComplete;
   staged.passes = 1;
   staged.counters.retriangulations = 1;

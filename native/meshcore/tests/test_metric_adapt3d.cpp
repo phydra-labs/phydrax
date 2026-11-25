@@ -22,6 +22,7 @@
 #include "check.hpp"
 #include "metric_adapt3d.hpp"
 #include "metric_float.hpp"
+#include "metric_scalar_box.hpp"
 #include "plc3d.hpp"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
@@ -655,6 +656,27 @@ void tensor_adaptation_retries_after_coarse_exhaustion() {
   PHX_CHECK(measured >= kLower && measured <= kUpper);
 }
 
+void coplanar_wall_retile_preserves_the_footprint() {
+  metric::ScalarBoxField field;
+  field.low = {-1.0, -1.0, 0.0};
+  field.high = {2.0, 2.0, 2.0};
+  const std::array<metric::BoxPoint, 5> p{{
+      {0, 0, 0}, {1, 0, 0}, {0.75, 0.875, 0}, {0, 1, 0}, {0.5, 0.5, 1}}};
+  std::vector<metric::BoxCell> cells{{0, 1, 3, 4}, {1, 2, 3, 4}};
+  const std::array<std::int32_t, 1> seed{0};
+  PHX_CHECK(metric::retile_scalar_defects(field, p, cells, seed));
+  PHX_CHECK(cells.size() == 2);
+  // The local Delaunay chambers exchange the wall diagonal 1--3 for 0--2.
+  // Both cones retain their apex; no boundary point was inserted or removed.
+  for (const auto& cell : cells) {
+    for (auto v : {0, 2, 4}) PHX_CHECK(std::ranges::find(cell, v) != cell.end());
+    PHX_CHECK(orient3d(p[cell[0]].data(), p[cell[1]].data(), p[cell[2]].data(), p[cell[3]].data()) > 0);
+  }
+  const auto unchanged = cells;
+  PHX_CHECK(!metric::retile_scalar_defects(field, p, cells, seed));
+  PHX_CHECK(cells == unchanged);
+}
+
 }  // namespace
 
 int main() {
@@ -668,6 +690,7 @@ int main() {
   check_source_only_seam_relocates_across_a_primitive();
   check_source_only_seam_refuses_a_tilted_declaration();
   tensor_adaptation_retries_after_coarse_exhaustion();
+  coplanar_wall_retile_preserves_the_footprint();
   metric_worksets_ignore_physical_vertex_order();
   metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");

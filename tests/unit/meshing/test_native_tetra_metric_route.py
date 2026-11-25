@@ -78,7 +78,7 @@ def _source(
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _request(source: Any, *, layered: bool = False) -> MetricMeshAdaptation:
+def _request(source: Any, *, values: np.ndarray | None = None) -> MetricMeshAdaptation:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     scope = MeshingScope(
@@ -89,12 +89,9 @@ def _request(source: Any, *, layered: bool = False) -> MetricMeshAdaptation:
         vertices.entity_set_id,
         np.asarray(vertices.entity_ids, dtype=np.int64),
     )
-    tensor = np.diag((4.0, 3.8, 3.6))
-    values = np.broadcast_to(tensor, (vertices.entity_ids.size, 3, 3)).copy()
-    if layered:
-        values[:, 0, 0] = 6.76
-        values[:, 1, 1] = 6.76
-        values[:, 2, 2] = (3.2 + np.asarray(mesh.coordinates)[:, 2]) ** 2
+    if values is None:
+        tensor = np.diag((4.0, 3.8, 3.6))
+        values = np.broadcast_to(tensor, (vertices.entity_ids.size, 3, 3)).copy()
     return MetricMeshAdaptation(
         MeshMetricField(
             scope,
@@ -226,19 +223,38 @@ def test_only_committed_retriangulations_change_local_evidence_identity() -> Non
     assert len(identifiers) == 3
 
 
-def test_axis_graded_box_transfers_across_retired_source_cells() -> None:
+@pytest.mark.parametrize("scalar", [False, True], ids=["axis-graded", "scalar-graded"])
+def test_graded_box_transfers_across_retired_source_cells(scalar: bool) -> None:
     from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
 
     source = _source()
+    points = np.asarray(source.mesh.coordinates)
+    values = np.zeros((points.shape[0], 3, 3), dtype=np.float64)
+    if scalar:
+        rate = 4.0 + points[:, 0] + 0.5 * points[:, 2]
+        axes = np.arange(3, dtype=np.int64)
+        values[:, axes, axes] = (rate * rate)[:, None]
+    else:
+        values[:, 0, 0] = values[:, 1, 1] = 6.76
+        values[:, 2, 2] = (3.2 + points[:, 2]) ** 2
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D, relocation=True)
     result = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, _request(source, layered=True), policy=policy)
+        prepare_mesh_adaptation(source, _request(source, values=values), policy=policy)
     )
     evidence = result.evidence
     assert isinstance(evidence, TetraMetricEvidence)
     assert evidence.status is TetraMetricStatus.COMPLETE
     assert evidence.retriangulations == 1
     assert evidence.out_of_range_edges == 0
+    if scalar:
+        corners = np.asarray(result.target.mesh.coordinates)[
+            np.asarray(result.target.mesh.blocks[0].vertices)
+        ]
+        determinant = np.linalg.det(corners[:, 1:] - corners[:, :1])
+        squared_edges = 4.0 * np.sum(
+            (corners - corners.mean(axis=1, keepdims=True)) ** 2, axis=(1, 2)
+        )
+        assert np.all(12.0 * np.cbrt((0.5 * determinant) ** 2) / squared_edges >= 0.60)
     _assert_valid_metric_mesh(result)
     stencil = result.stencil
     assert stencil is not None

@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "deterministic_float.hpp"
+#include "geometry3.hpp"
 
 namespace phx::mc::metric {
 namespace {
@@ -192,6 +193,17 @@ void relative_determinant(const double* corners, double& determinant,
   }
   const double size = magnitude(determinant);
   relative = finite(size) && products_finite && largest > 0.0 ? size / largest : 0.0;
+}
+
+double geometric_shape(const double* corners, double determinant) noexcept {
+  double squares = 0.0;
+  for (std::size_t a = 0; a < 4; ++a) {
+    for (std::size_t b = a + 1; b < 4; ++b) {
+      squares += geometry::squared_distance(corners + 3 * a, corners + 3 * b);
+    }
+  }
+  const double volume_scale = deterministic::cube_root(0.5 * determinant);
+  return 12.0 * volume_scale * volume_scale / squares;
 }
 
 double log_determinant(const double* metric) noexcept {

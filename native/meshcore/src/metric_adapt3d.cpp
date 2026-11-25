@@ -100,17 +100,6 @@ double cage_distance_squared(const double* a, const double* b) {
   return (x * x + y * y) + z * z;
 }
 
-// Euclidean mean ratio of an orientation-checked tetrahedron.
-double geometric_shape(const double* corners, double determinant) {
-  double squares = 0.0;
-  for (std::size_t a = 0; a < 4; ++a) {
-    for (std::size_t b = a + 1; b < 4; ++b) {
-      squares += cage_distance_squared(corners + 3 * a, corners + 3 * b);
-    }
-  }
-  const double volume_scale = deterministic::cube_root(0.5 * determinant);
-  return 12.0 * volume_scale * volume_scale / squares;
-}
 
 constexpr std::size_t kRelocationCacheSlots = 4096;
 constexpr std::size_t kRelocationCacheStarCells = 64;
@@ -4174,8 +4163,8 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     }
   }
   bounded_tensor_search_ = tensor_field && !mesh_.implicit_source();
-  if (bounded_tensor_search_ && input_.topology_operations) {
-    const auto status = adapt_metric_layers(mesh_, input_, *carriers_, output);
+  if (input_.topology_operations && input_.relocation && carriers_ && !mesh_.implicit_source()) {
+    const auto status = adapt_metric_box(mesh_, input_, *carriers_, !tensor_field, output);
     if (status.has_value()) return *status;
   }
   separated_splits_ = input_.topology_operations && input_.relocation && carriers_ &&

@@ -99,30 +99,19 @@ class BoundedLbfgsHistory {
   std::size_t count_ = 0;
 };
 
-// The objective writes every gradient component. Its scratch may describe a
-// rejected trial on return; only position and the result record are committed.
-// value_tolerance is an absolute target merit, not a step-size threshold.
-template <class Objective>
-BoundedLbfgsResult bounded_lbfgs(std::span<double> position, double component_bound,
-                                 double initial_inverse_scale, std::int32_t maximum_steps,
-                                 double value_tolerance, Objective&& objective) {
-  using Status = BoundedLbfgsStatus;
-  constexpr double kInvalidValue = std::numeric_limits<double>::quiet_NaN();
-  constexpr std::size_t kBufferCount = 4 + 2 * BoundedLbfgsHistory::kCapacity;
-  const auto finite = [](double x) { return std::isfinite(x); };
-  if (!(component_bound > 0.0) || !finite(component_bound) || !(initial_inverse_scale > 0.0) ||
-      !finite(initial_inverse_scale) || maximum_steps < 0 || !(value_tolerance >= 0.0) ||
-      !finite(value_tolerance) ||
-      position.size() > std::numeric_limits<std::size_t>::max() / sizeof(double) / kBufferCount ||
-      !std::all_of(position.begin(), position.end(), [component_bound](double x) {
-        return x >= -component_bound && x <= component_bound;
-      })) {
-    return {Status::kInvalidObjective, 0, kInvalidValue};
-  }
+namespace bounded_lbfgs_impl {
 
+inline constexpr double kInvalidValue = std::numeric_limits<double>::quiet_NaN();
+inline constexpr std::size_t kCoreBuffers = 4 + 2 * BoundedLbfgsHistory::kCapacity;
+
+template <bool Projected, class BoundsAt, class Objective, class Stop>
+BoundedLbfgsResult solve(std::span<double> position, BoundsAt bounds_at, double initial_inverse_scale,
+                         std::int32_t maximum_steps, double projected_tolerance,
+                         std::span<double> work, Objective&& objective, Stop&& stop) {
+  using Status = BoundedLbfgsStatus;
+  constexpr double kMinimumFraction = Projected ? 0x1p-15 : 0x1p-7;
+  const auto finite = [](double x) { return std::isfinite(x); };
   const std::size_t n = position.size();
-  auto storage = std::make_unique_for_overwrite<double[]>(kBufferCount * n);
-  const std::span<double> work{storage.get(), kBufferCount * n};
   auto gradient = work.first(n);
   auto trial_gradient = work.subspan(n, n);
   const auto trial = work.subspan(2 * n, n);
@@ -135,27 +124,41 @@ BoundedLbfgsResult bounded_lbfgs(std::span<double> position, double component_bo
 
   double value = evaluate(position, gradient);
   if (!finite(value)) return {Status::kInvalidObjective, 0, kInvalidValue};
+  if (stop(value)) return {Status::kConverged, 0, value};
   for (std::int32_t steps = 0;; ++steps) {
-    if (value <= value_tolerance) return {Status::kConverged, steps, value};
-    bool can_descend = false;
-    for (std::size_t i = 0; i < n && !can_descend; ++i) {
-      can_descend = (gradient[i] > 0.0 && position[i] > -component_bound) ||
-                    (gradient[i] < 0.0 && position[i] < component_bound);
+    std::span<const double> direction_gradient = gradient;
+    if constexpr (Projected) {
+      const auto projected = work.subspan(kCoreBuffers * n, n);
+      double norm = 0.0;
+      for (std::size_t i = 0; i < n; ++i) {
+        const auto [lo, hi] = bounds_at(i);
+        projected[i] = std::clamp(gradient[i], position[i] - hi, position[i] - lo);
+        norm = std::max(norm, std::abs(projected[i]));
+      }
+      if (norm <= projected_tolerance) return {Status::kConverged, steps, value};
+      direction_gradient = projected;
+    } else {
+      bool can_descend = false;
+      for (std::size_t i = 0; i < n && !can_descend; ++i) {
+        const auto [lo, hi] = bounds_at(i);
+        can_descend = (gradient[i] > 0.0 && position[i] > lo) ||
+                      (gradient[i] < 0.0 && position[i] < hi);
+      }
+      if (!can_descend) return {Status::kConverged, steps, value};
     }
-    if (!can_descend) return {Status::kConverged, steps, value};
     if (steps == maximum_steps) return {Status::kIterationLimit, steps, value};
 
-    history.direction(gradient, initial_inverse_scale, direction);
+    history.direction(direction_gradient, initial_inverse_scale, direction);
     double next_value = kInvalidValue;
     bool invalid_trial = false;
     bool finite_trial = false;
-    bool accepted = false;
-    if (std::all_of(direction.begin(), direction.end(), finite)) {
-      for (double fraction = 1.0; fraction >= 1.0 / 128.0; fraction *= 0.5) {
+    const auto line_search = [&]() {
+      if (!std::all_of(direction.begin(), direction.end(), finite)) return false;
+      for (double fraction = 1.0; fraction >= kMinimumFraction; fraction *= 0.5) {
         double slope = 0.0;
         for (std::size_t i = 0; i < n; ++i) {
-          trial[i] = std::clamp(position[i] + fraction * direction[i],
-                                -component_bound, component_bound);
+          const auto [lo, hi] = bounds_at(i);
+          trial[i] = std::clamp(position[i] + fraction * direction[i], lo, hi);
           slope += gradient[i] * (trial[i] - position[i]);
         }
         if (!finite(slope) || !(slope < 0.0)) continue;
@@ -166,23 +169,97 @@ BoundedLbfgsResult bounded_lbfgs(std::span<double> position, double component_bo
         }
         finite_trial = true;
         // Projection changes the step, so use its actual directional derivative.
-        if (next_value < value && next_value <= value + 1e-4 * slope) {
-          accepted = true;
-          break;
+        if (next_value < value && next_value <= value + 1e-4 * slope) return true;
+      }
+      return false;
+    };
+    bool accepted = line_search();
+    if constexpr (Projected) {
+      if (!accepted) {
+        for (std::size_t i = 0; i < n; ++i) {
+          direction[i] = -initial_inverse_scale * direction_gradient[i];
         }
+        accepted = line_search();
       }
     }
     if (!accepted) {
-      return {invalid_trial && !finite_trial ? Status::kInvalidObjective : Status::kStalled,
-              steps, value};
+      if constexpr (Projected) {
+        // The scientific stop and subsequent stages consume objective scratch.
+        // Even an invalid rejected trial can have overwritten part of it.
+        if ((invalid_trial || finite_trial) && !finite(evaluate(position, gradient))) {
+          return {Status::kInvalidObjective, steps, value};
+        }
+        return {Status::kStalled, steps, value};
+      } else {
+        return {invalid_trial && !finite_trial ? Status::kInvalidObjective : Status::kStalled,
+                steps, value};
+      }
     }
-    if (steps + 1 < maximum_steps && next_value > value_tolerance) {
+    const bool satisfied = stop(next_value);
+    if (steps + 1 < maximum_steps && !satisfied) {
       history.update(position, trial, gradient, trial_gradient);
     }
     std::copy(trial.begin(), trial.end(), position.begin());
     std::swap(gradient, trial_gradient);
     value = next_value;
+    if (satisfied) return {Status::kConverged, steps + 1, value};
   }
+}
+
+}  // namespace bounded_lbfgs_impl
+
+// The objective writes every gradient component. Its scratch may describe a
+// rejected trial on return; only position and the result record are committed.
+// value_tolerance is an absolute target merit, not a step-size threshold.
+template <class Objective>
+BoundedLbfgsResult bounded_lbfgs(std::span<double> position, double component_bound,
+                                 double initial_inverse_scale, std::int32_t maximum_steps,
+                                 double value_tolerance, Objective&& objective) {
+  using namespace bounded_lbfgs_impl;
+  const auto finite = [](double x) { return std::isfinite(x); };
+  if (!(component_bound > 0.0) || !finite(component_bound) || !(initial_inverse_scale > 0.0) ||
+      !finite(initial_inverse_scale) || maximum_steps < 0 || !(value_tolerance >= 0.0) ||
+      !finite(value_tolerance) ||
+      position.size() > std::numeric_limits<std::size_t>::max() / sizeof(double) / kCoreBuffers ||
+      !std::all_of(position.begin(), position.end(), [component_bound](double x) {
+        return x >= -component_bound && x <= component_bound;
+      })) {
+    return {BoundedLbfgsStatus::kInvalidObjective, 0, kInvalidValue};
+  }
+
+  const std::size_t count = kCoreBuffers * position.size();
+  const auto storage = std::make_unique_for_overwrite<double[]>(count);
+  const auto bounds_at = [=](std::size_t) { return std::array{-component_bound, component_bound}; };
+  return solve<false>(position, bounds_at, initial_inverse_scale, maximum_steps, 0.0,
+                      {storage.get(), count}, std::forward<Objective>(objective),
+                      [=](double value) { return value <= value_tolerance; });
+}
+
+// Asymmetric intervals, projected stationarity and a projected-gradient retry.
+// stop() reads objective scratch at the initial point and after each accepted
+// trial. A stalled solve restores that scratch to the last accepted position.
+// Reusable work holds (5 + 2 * BoundedLbfgsHistory::kCapacity) doubles per DOF.
+template <class Interval, class Objective, class Stop>
+BoundedLbfgsResult projected_bounded_lbfgs(std::span<double> position, std::span<const Interval> bounds,
+                                           double initial_inverse_scale, std::int32_t maximum_steps,
+                                           double projected_tolerance, std::span<double> work,
+                                           Objective&& objective, Stop&& stop) {
+  using namespace bounded_lbfgs_impl;
+  if (bounds.size() != position.size() || position.size() > work.size() / (kCoreBuffers + 1) ||
+      !(initial_inverse_scale > 0.0) || !std::isfinite(initial_inverse_scale) || maximum_steps < 0 ||
+      !(projected_tolerance >= 0.0) || !std::isfinite(projected_tolerance)) {
+    return {BoundedLbfgsStatus::kInvalidObjective, 0, kInvalidValue};
+  }
+  for (std::size_t i = 0; i < bounds.size(); ++i) {
+    const auto [lo, hi] = bounds[i];
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !(lo <= position[i] && position[i] <= hi)) {
+      return {BoundedLbfgsStatus::kInvalidObjective, 0, kInvalidValue};
+    }
+  }
+
+  return solve<true>(position, [=](std::size_t i) { return bounds[i]; }, initial_inverse_scale,
+                     maximum_steps, projected_tolerance, work, std::forward<Objective>(objective),
+                     [&](double) { return stop(); });
 }
 
 }  // namespace phx::mc::detail

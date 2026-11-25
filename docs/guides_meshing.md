@@ -3077,11 +3077,16 @@ The route returns the exact dyadic source stencils, source-cell lineage, and
 `TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
 by the host phase schedule until native periodic local commits exist.
 
-An unprotected, single-block Cartesian box with one varying diagonal metric
-component and two constant tangential components can instead be rebuilt in
-one transaction. The native route integrates the transported metric along
-columns, repairs edge-band violations, and rechecks the actual source-bound
-vertices. Every new cell records its positive-volume source intersections;
+An unprotected, single-block Cartesian box can instead be rebuilt in one
+transaction. For one varying diagonal metric component and two constant
+tangential components, the route integrates the transported metric along
+columns. For graded scalar refinement, it spaces sites along the twelve
+seams by metric length and relaxes interior, face, and seam sites within
+their respective strata. It corrects edge lengths and tetrahedron shapes;
+a local change of connectivity must retain its oriented interface and the
+boundary of each wall patch. The scalar proposal checks mean-ratio quality
+of at least 0.60 after snapping. Both routes remeasure the strict band on
+the actual source-bound vertices. Each new cell records positive-volume source intersections;
 an edge or face contact alone is not a parent. Rounded mesh geometry and
 exact stencil geometry are checked separately when they disagree. A refusal
 leaves the original mesh available for local adaptation. The

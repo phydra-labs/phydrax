@@ -63,6 +63,9 @@ void band_quanta(double length, double& above, double& below) noexcept;
 void relative_determinant(const double* corners, double& determinant,
                           double& relative) noexcept;
 
+// Euclidean mean ratio of an orientation-checked tetrahedron.
+double geometric_shape(const double* corners, double determinant) noexcept;
+
 // Mean-ratio quality 12 (3 V_M)^(2/3) / sum l^2 of one tetrahedron: V_M is
 // the Euclidean volume times exp(mean_k log det M_k / 2) (the determinant of
 // the log-Euclidean barycentric metric) and l its six metric edge lengths in

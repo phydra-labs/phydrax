@@ -8162,7 +8162,7 @@ def _adapted_evidence(
     points = np.asarray(snapshot.points, dtype=np.float64)
     metrics = adaptation.metrics[rows]
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64).reshape((-1, 4))
-    edges = np.unique(np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0)
+    edges = sorted_unique_rows(np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)))
     reverse = snapshot_ids[edges[:, 0]] > snapshot_ids[edges[:, 1]]
     measurement_edges = edges
     if np.any(reverse):
@@ -8183,6 +8183,8 @@ def _adapted_evidence(
     unrepresentable = np.sort(adaptation.unrepresentable_edges.astype(np.int64), axis=1)
 
     def unmet(outside: np.ndarray) -> tuple[TetraMetricUnmetEdge, ...]:
+        if outside.size == 0:
+            return ()
         records = _snapshot_boundary_records(
             snapshot, state.source_face_group_rows, state.source_segment_group_rows
         )

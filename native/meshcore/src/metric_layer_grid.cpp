@@ -15,6 +15,8 @@
 #include "deterministic_float.hpp"
 #include "exact_scalar.hpp"
 #include "geometry3.hpp"
+#include "metric_box_rate.hpp"
+#include "metric_scalar_box.hpp"
 #include "metric_float.hpp"
 #include "predicates.hpp"
 
@@ -65,7 +67,7 @@ struct Field {
 
 std::optional<Field> read_field(const AdaptInput& input, const CarrierSource& source,
                                 const Point& low, const Point& high) {
-  if (source.cell_count() <= 0 || source.cell_count() > kMaxLayerSourceCells ||
+  if (source.cell_count() <= 0 || source.cell_count() > kMaxBoxSourceCells ||
       source.point_count() <= 0 || source.point_count() > 4 * source.cell_count() ||
       !geometry::point_in_domain(low) || !geometry::point_in_domain(high)) {
     return std::nullopt;
@@ -166,24 +168,7 @@ bool prepare_tet(const std::array<Point, 4>& p, const std::array<double, 4>& log
                  SourceTet& tet) {
   tet.corners = p;
   tet.anchor_log_rate = log_rate[0];
-  const auto a = geometry::difference(p[1], p[0]);
-  const auto b = geometry::difference(p[2], p[0]);
-  const auto c = geometry::difference(p[3], p[0]);
-  auto& g = tet.barycentric_grad;
-  g[1] = geometry::cross(b, c);
-  g[2] = geometry::cross(c, a);
-  g[3] = geometry::cross(a, b);
-  const double det = geometry::dot(a.data(), g[1].data());
-  const double scale = geometry::length(a) * geometry::length(b) * geometry::length(c);
-  if (!(std::abs(det) > 64 * std::numeric_limits<double>::epsilon() * scale)) return false;
-  for (int k = 0; k < 3; ++k) {
-    for (int i = 1; i < 4; ++i) g[i][k] /= det;
-    g[0][k] = -g[1][k] - g[2][k] - g[3][k];
-    tet.log_grad[k] = (log_rate[1] - log_rate[0]) * g[1][k] +
-                      (log_rate[2] - log_rate[0]) * g[2][k] +
-                      (log_rate[3] - log_rate[0]) * g[3][k];
-  }
-  return true;
+  return prepare_box_rate(p, log_rate, tet.barycentric_grad, tet.log_grad);
 }
 
 struct Interpolator {
@@ -253,11 +238,6 @@ struct ColumnHit {
   Row tetrahedron;
 };
 
-// Integral of exp(s * u) on u in [0, 1], including the nearly constant limit.
-double integrated_exponential(double s) {
-  if (std::abs(s) < 1e-4) return 1.0 + s * (0.5 + s * (1.0 / 6 + s / 24));
-  return (deterministic::exp(s) - 1.0) / s;
-}
 
 class Columns {
  public:
@@ -615,15 +595,10 @@ bool correct_star(const Field& field, const Interpolator& source, std::span<cons
                  0.5 * residual * residual);
 }
 
-bool bind_node(const AdaptInput& input, const CarrierSource& source, const Field& field,
-               const Node& node, Carrier& carrier, std::array<double, 9>& tensor) {
-  const Point goal = field.to_world(node.q);
-  auto current = goal;
-  const auto axis = static_cast<int>(std::max_element(field.extent.begin(), field.extent.end()) -
-                                     field.extent.begin());
-  current[field.axes[axis]] = node.q[axis] <= 0.5 ? field.high[field.axes[axis]] :
-                                                 field.low[field.axes[axis]];
-  auto hits = source.carriers(goal.data(), current.data(), {}, node.tetrahedron,
+bool bind_box_point(const AdaptInput& input, const CarrierSource& source, const Point& low,
+                    const Point& high, const Point& goal, const Point& current,
+                    unsigned fixed, Row hint, Carrier& carrier, std::array<double, 9>& tensor) {
+  auto hits = source.carriers(goal.data(), current.data(), {}, hint,
                               CarrierOrder::kFineFirst, 1);
   if (hits.empty()) {
     hits = source.carriers(goal.data(), current.data(), {}, -1, CarrierOrder::kFineFirst, 1);
@@ -641,11 +616,10 @@ bool bind_node(const AdaptInput& input, const CarrierSource& source, const Field
     std::copy_n(input.source_metrics.data() + 9 * row, 9, metrics.data() + 9 * i);
     std::copy_n(input.source_logarithms.data() + 9 * row, 9, logs.data() + 9 * i);
   }
-  for (int k = 0; k < 3; ++k) {
-    const int a = field.axes[k];
+  for (int a = 0; a < 3; ++a) {
     const double point = carrier.point[a];
-    if (node.q[k] != 0.0 && node.q[k] != 1.0) {
-      if (!(point > field.low[a] && point < field.high[a])) return false;
+    if ((fixed & (1U << a)) == 0) {
+      if (!(point > low[a] && point < high[a])) return false;
       continue;
     }
     if (point != goal[a]) return false;
@@ -659,7 +633,23 @@ bool bind_node(const AdaptInput& input, const CarrierSource& source, const Field
   return interpolate(carrier.size, weights.data(), metrics.data(), logs.data(), tensor.data());
 }
 
-bool verify_grid(const MetricLayerGrid& grid, std::span<const Edge> edges, double lower) {
+bool bind_node(const AdaptInput& input, const CarrierSource& source, const Field& field,
+               const Node& node, Carrier& carrier, std::array<double, 9>& tensor) {
+  const Point goal = field.to_world(node.q);
+  auto current = goal;
+  const auto axis = static_cast<int>(std::max_element(field.extent.begin(), field.extent.end()) -
+                                     field.extent.begin());
+  current[field.axes[axis]] = node.q[axis] <= 0.5 ? field.high[field.axes[axis]] :
+                                                    field.low[field.axes[axis]];
+  unsigned fixed = 0;
+  for (int k = 0; k < 3; ++k) {
+    if (node.q[k] == 0.0 || node.q[k] == 1.0) fixed |= 1U << field.axes[k];
+  }
+  return bind_box_point(input, source, field.low, field.high, goal, current, fixed,
+                        node.tetrahedron, carrier, tensor);
+}
+
+bool verify_grid(const MetricBoxGrid& grid, std::span<const Edge> edges, double lower) {
   for (const auto& [a, b] : edges) {
     const double measure = length(grid.vertices[a].point.data(), grid.vertices[b].point.data(),
                                   grid.tensors[a].data(), grid.tensors[b].data());
@@ -676,7 +666,7 @@ bool verify_grid(const MetricLayerGrid& grid, std::span<const Edge> edges, doubl
 
 }  // namespace
 
-std::optional<MetricLayerGrid> propose_metric_layer_grid(
+std::optional<MetricBoxGrid> propose_metric_layer_grid(
     const AdaptInput& input, const CarrierSource& source, const Point& low, const Point& high) {
   const double lower = std::max(input.lower, kLowerLength);
   if (!(lower < kUpperLength)) return std::nullopt;
@@ -695,7 +685,7 @@ std::optional<MetricLayerGrid> propose_metric_layer_grid(
   const std::size_t nz = interval_count(columns.mean_mass(), width);
   if (nz == 0 || 5 * nx * ny * nz > kMaxGridCells) return std::nullopt;
 
-  MetricLayerGrid grid;
+  MetricBoxGrid grid;
   grid.cells = checkerboard(nx, ny, nz);
   const auto edges = unique_edges(grid.cells);
   std::vector<Node> nodes;
@@ -719,6 +709,54 @@ std::optional<MetricLayerGrid> propose_metric_layer_grid(
     }
   }
   if (!verify_grid(grid, edges, lower)) return std::nullopt;
+  return grid;
+}
+
+std::optional<MetricBoxGrid> propose_scalar_box_grid(
+    const AdaptInput& input, const CarrierSource& source, const Point& low, const Point& high) {
+  const double lower = std::max(input.lower, kLowerLength);
+  ScalarBoxField field;
+  if (!(lower < kUpperLength) || !field.prepare(input, low, high)) return std::nullopt;
+  ScalarBoxSites sites;
+  if (!seed_scalar_box(input, field, sites) || !relax_scalar_box(field, sites, 6)) {
+    return std::nullopt;
+  }
+  if (!correct_scalar_box(field, sites, lower)) {
+    // Moving sites cannot create missing wall sites. Only rebuild when a
+    // separated, chart-bound proposal can actually fill a boundary gap.
+    if (!fill_scalar_wall_gaps(field, sites) || !relax_scalar_box(field, sites, 6) ||
+        !correct_scalar_box(field, sites, lower)) return std::nullopt;
+  }
+  MetricBoxGrid grid;
+  grid.cells = std::move(sites.cells);
+  grid.vertices.resize(sites.points.size());
+  grid.tensors.resize(sites.points.size());
+  const auto extent = geometry::difference(high, low);
+  const auto axis = std::max_element(extent.begin(), extent.end()) - extent.begin();
+  for (std::size_t row = 0; row < sites.points.size(); ++row) {
+    const auto& goal = sites.points[row];
+    auto current = goal;
+    current[axis] = goal[axis] - low[axis] <= high[axis] - goal[axis] ? high[axis] : low[axis];
+    unsigned fixed = 0;
+    for (int k = 0; k < 3; ++k) {
+      if (goal[k] == low[k] || goal[k] == high[k]) fixed |= 1U << k;
+    }
+    if (!bind_box_point(input, source, low, high, goal, current, fixed, sites.samples[row].cell,
+                        grid.vertices[row], grid.tensors[row])) return std::nullopt;
+  }
+  // The transaction checks every snapped edge in stable native-ID order.
+  // The scalar proposal additionally owns its post-snap shape floor.
+  for (const auto& cell : grid.cells) {
+    std::array<double, 12> corners;
+    for (int i = 0; i < 4; ++i) {
+      std::copy_n(grid.vertices[cell[i]].point.data(), 3, corners.data() + 3 * i);
+    }
+    double det, relative;
+    relative_determinant(corners.data(), det, relative);
+    if (!(det > 0.0 && relative > 0.0 && geometric_shape(corners.data(), det) >= 0.60)) {
+      return std::nullopt;
+    }
+  }
   return grid;
 }
 
