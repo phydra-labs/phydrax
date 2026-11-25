@@ -103,15 +103,6 @@ struct LinearModel {
   }
 };
 
-struct Node {
-  BoxPoint point;
-  ScalarBoxSample sample;
-  std::array<Row, 3> dof{-1, -1, -1};
-  double rate = 0.0;
-  double size = 0.0;
-  bool changed = false;
-};
-
 struct EdgeConstraint {
   Edge rows;
   double low_shift = 0.0, high_shift = 0.0;
@@ -132,45 +123,34 @@ struct CellGeometry {
       : u(difference(b, a)), v(difference(c, a)), w(difference(d, a)), du(cross(v, w)) {}
 };
 
-bool sample_at(const ScalarBoxField& field, const BoxPoint& x, Node& node) {
-  auto sample = node.sample;
-  if (!field.sample(x, sample)) return false;
-  if (node.rate == 0.0 || sample.log_rate != node.sample.log_rate) {
-    const double rate = deterministic::exp(sample.log_rate);
-    if (!(rate > 0.0) || !std::isfinite(rate)) return false;
-    node.rate = rate;
-  }
-  node.sample = sample;
-  node.point = x;
-  return true;
-}
-
 // exp(a) and exp(b) are cached per node. With w=(b-a)/2, the log mean
 // divided by the arithmetic mean of the endpoint rates is tanh(w)/w.
 constexpr double kNearEqual = 0.002;
 
-double mean_rate(const Node& a, const Node& b) {
-  const double gap = b.sample.log_rate - a.sample.log_rate;
+double mean_rate(double log_a, double rate_a, double log_b, double rate_b) {
+  const double gap = log_b - log_a;
   if (std::abs(gap) < kNearEqual) {
     const double w2 = (0.25 * gap) * gap;
-    return (0.5 * a.rate + 0.5 * b.rate) * (1.0 + w2 * (-1.0 / 3.0 + w2 * (2.0 / 15.0)));
+    return (0.5 * rate_a + 0.5 * rate_b) * (1.0 + w2 * (-1.0 / 3.0 + w2 * (2.0 / 15.0)));
   }
-  return (b.rate - a.rate) / gap;
+  return (rate_b - rate_a) / gap;
 }
 
-std::array<double, 2> mean_rate_gradient(const Node& a, const Node& b, double mean) {
-  const double gap = b.sample.log_rate - a.sample.log_rate;
+std::array<double, 2> mean_rate_gradient(double log_a, double rate_a, double log_b, double rate_b,
+                                         double mean) {
+  const double gap = log_b - log_a;
   if (std::abs(gap) < kNearEqual) {
     const double w = 0.5 * gap;
-    const double odd = (0.5 * a.rate + 0.5 * b.rate) * (w * (1.0 / 3.0 - w * w * (2.0 / 15.0)));
+    const double odd = (0.5 * rate_a + 0.5 * rate_b) * (w * (1.0 / 3.0 - w * w * (2.0 / 15.0)));
     return {0.5 * (mean - odd), 0.5 * (mean + odd)};
   }
-  return {(mean - a.rate) / gap, (b.rate - mean) / gap};
+  return {(mean - rate_a) / gap, (rate_b - mean) / gap};
 }
 
-bool update_edge(const Node& a, const Node& b, EdgeConstraint& edge) {
-  edge.distance = std::sqrt(geometry::squared_distance(a.point.data(), b.point.data()));
-  edge.mean_rate = mean_rate(a, b);
+bool update_edge(const BoxPoint& pa, double log_a, double rate_a,
+                 const BoxPoint& pb, double log_b, double rate_b, EdgeConstraint& edge) {
+  edge.distance = std::sqrt(geometry::squared_distance(pa.data(), pb.data()));
+  edge.mean_rate = mean_rate(log_a, rate_a, log_b, rate_b);
   edge.length = edge.distance * edge.mean_rate;
   return edge.length > 0.0 && std::isfinite(edge.length);
 }
@@ -249,6 +229,7 @@ class ScalarRepair {
     }
     return true;
   }
+  bool sample_node(std::size_t row, const BoxPoint& x);
   bool update_node(std::size_t row, std::span<const double> x, bool force);
   std::size_t select_linear_columns(std::span<Row> columns, std::vector<Row>& dofs) const;
   bool linearize(LinearModel& model, std::span<const Row> columns) const;
@@ -264,7 +245,15 @@ class ScalarRepair {
   const double shape_floor_ = kShapeFloor * std::sqrt(kShapeFloor);
   const double shape_target_ = kShapeTarget * std::sqrt(kShapeTarget);
   std::array<Band, 3> wall_interior_;
-  std::vector<Node> nodes_;
+  // Hot node fields kept contiguous for edge/cell sweeps; cold fields are
+  // touched only when a node moves or contributes a nonzero gradient.
+  std::vector<BoxPoint> points_;
+  std::vector<double> log_rates_;
+  std::vector<double> rates_;
+  std::vector<std::uint8_t> changed_;
+  std::vector<ScalarBoxSample> samples_;
+  std::vector<std::array<Row, 3>> dofs_;
+  std::vector<double> sizes_;
   std::vector<Band> bounds_;
   std::vector<EdgeConstraint> edges_;
   std::vector<ShapeConstraint> shapes_;
@@ -275,24 +264,43 @@ class ScalarRepair {
   bool interior_ = false;
 };
 
+bool ScalarRepair::sample_node(std::size_t row, const BoxPoint& x) {
+  auto sample = samples_[row];
+  if (!field_.sample(x, sample)) return false;
+  if (rates_[row] == 0.0 || sample.log_rate != log_rates_[row]) {
+    const double rate = deterministic::exp(sample.log_rate);
+    if (!(rate > 0.0) || !std::isfinite(rate)) return false;
+    rates_[row] = rate;
+    log_rates_[row] = sample.log_rate;
+  }
+  samples_[row] = sample;
+  points_[row] = x;
+  return true;
+}
+
 bool ScalarRepair::prepare(bool local, bool linearize) {
   for (int k = 0; k < 3; ++k) {
     if (!(field_.low[k] < field_.high[k])) return false;
     wall_interior_[k] = {std::nextafter(field_.low[k], field_.high[k]),
                          std::nextafter(field_.high[k], field_.low[k])};
   }
-  nodes_.resize(sites_.points.size());
-  for (std::size_t i = 0; i < nodes_.size(); ++i) {
-    auto& node = nodes_[i];
-    node.sample = sites_.samples[i];
-    const auto& origin = sites_.points[i];
-    if (!sample_at(field_, origin, node)) return false;
-    node.size = 1.0 / node.rate;
-    if (!std::isfinite(node.size)) return false;
+  const std::size_t count = sites_.points.size();
+  points_.resize(count);
+  log_rates_.assign(count, 0.0);
+  rates_.assign(count, 0.0);
+  changed_.assign(count, 0);
+  samples_.resize(count);
+  dofs_.assign(count, {-1, -1, -1});
+  sizes_.assign(count, 0.0);
+  for (std::size_t i = 0; i < count; ++i) {
+    samples_[i] = sites_.samples[i];
+    if (!sample_node(i, sites_.points[i])) return false;
+    sizes_[i] = 1.0 / rates_[i];
+    if (!std::isfinite(sizes_[i])) return false;
   }
 
-  edges_.reserve(sites_.cells.size() + 2 * nodes_.size());
-  if (!visit_box_edges(nodes_.size(), sites_.cells, [&](Edge e) { edges_.push_back({e}); })) {
+  edges_.reserve(sites_.cells.size() + 2 * count);
+  if (!visit_box_edges(count, sites_.cells, [&](Edge e) { edges_.push_back({e}); })) {
     return false;
   }
   shapes_.resize(sites_.cells.size());
@@ -302,10 +310,11 @@ bool ScalarRepair::prepare(bool local, bool linearize) {
 }
 
 bool ScalarRepair::prepare_workset(std::vector<std::uint8_t>& selected, bool linearize) {
-  selected.resize(nodes_.size());
+  selected.resize(points_.size());
   for (auto& edge : edges_) {
     const auto [a, b] = edge.rows;
-    if (!update_edge(nodes_[a], nodes_[b], edge)) return false;
+    if (!update_edge(points_[a], log_rates_[a], rates_[a],
+                     points_[b], log_rates_[b], rates_[b], edge)) return false;
     if (edge.length < target_.low || edge.length > target_.high) {
       selected[a] = selected[b] = 1;
     }
@@ -313,8 +322,7 @@ bool ScalarRepair::prepare_workset(std::vector<std::uint8_t>& selected, bool lin
   const double limit = shape_target_ + (linearize ? kLinearShapeMargin : 0.0);
   for (std::size_t row = 0; row < shapes_.size(); ++row) {
     const auto& c = sites_.cells[row];
-    const CellGeometry t(nodes_[c[0]].point, nodes_[c[1]].point,
-                         nodes_[c[2]].point, nodes_[c[3]].point);
+    const CellGeometry t(points_[c[0]], points_[c[1]], points_[c[2]], points_[c[3]]);
     auto& shape = shapes_[row];
     if (!update_shape(t, limit, shape)) return false;
     if (shape.fatness < shape_target_) {
@@ -335,7 +343,7 @@ bool ScalarRepair::prepare_workset(std::vector<std::uint8_t>& selected, bool lin
       }
     }
   }
-  for (std::size_t row = 0; row < nodes_.size(); ++row) {
+  for (std::size_t row = 0; row < points_.size(); ++row) {
     if (selected[row] == 0) continue;
     const auto& p = sites_.points[row];
     bool movable = false;
@@ -370,19 +378,19 @@ bool ScalarRepair::prepare_workset(std::vector<std::uint8_t>& selected, bool lin
 }
 
 bool ScalarRepair::select_coordinates(std::span<const std::uint8_t> selected) {
-  if (!sparse_) bounds_.reserve(3 * nodes_.size());
-  for (std::size_t row = 0; row < nodes_.size(); ++row) {
-    auto& node = nodes_[row];
+  if (!sparse_) bounds_.reserve(3 * points_.size());
+  for (std::size_t row = 0; row < points_.size(); ++row) {
     const auto& origin = sites_.points[row];
+    const double size = sizes_[row];
     const bool choose = !sparse_ || selected[row] != 0;
     for (int k = 0; k < 3; ++k) {
       if (origin[k] == field_.low[k] || origin[k] == field_.high[k]) continue;
       const auto [lo, hi] = wall_interior_[k];
       if (!(origin[k] >= lo && origin[k] <= hi)) return false;
-      const Band bound{(lo - origin[k]) / node.size, (hi - origin[k]) / node.size};
+      const Band bound{(lo - origin[k]) / size, (hi - origin[k]) / size};
       if (!std::isfinite(bound.low) || !std::isfinite(bound.high)) return false;
       if (!choose) continue;
-      node.dof[k] = static_cast<Row>(bounds_.size());
+      dofs_[row][k] = static_cast<Row>(bounds_.size());
       bounds_.push_back(bound);
     }
     if (sparse_ && choose) active_nodes_.push_back(static_cast<Row>(row));
@@ -391,32 +399,42 @@ bool ScalarRepair::select_coordinates(std::span<const std::uint8_t> selected) {
 }
 
 bool ScalarRepair::update_node(std::size_t row, std::span<const double> x, bool force) {
-  auto& node = nodes_[row];
   auto q = sites_.points[row];
+  const auto& dof = dofs_[row];
+  const double size = sizes_[row];
   for (int k = 0; k < 3; ++k) {
-    if (node.dof[k] < 0) continue;
+    if (dof[k] < 0) continue;
     const auto [lo, hi] = wall_interior_[k];
     // Projection uses the local-size units. The second clamp just guards
     // rounding in the reconstruction and preserves the original stratum.
-    q[k] = std::clamp(q[k] + node.size * x[node.dof[k]], lo, hi);
+    q[k] = std::clamp(q[k] + size * x[dof[k]], lo, hi);
   }
-  const bool moved = q != node.point;
-  node.changed = force || moved;
-  return !moved || sample_at(field_, q, node);
+  const bool moved = q != points_[row];
+  changed_[row] = static_cast<std::uint8_t>(force || moved);
+  return !moved || sample_node(row, q);
 }
 
 template <class Emit>
 void ScalarRepair::edge_gradient(const EdgeConstraint& edge, double action, Emit&& emit) const {
-  const auto& a = nodes_[edge.rows[0]];
-  const auto& b = nodes_[edge.rows[1]];
-  const auto dm = mean_rate_gradient(a, b, edge.mean_rate);
+  const auto a = static_cast<std::size_t>(edge.rows[0]);
+  const auto b = static_cast<std::size_t>(edge.rows[1]);
+  const auto dm = mean_rate_gradient(log_rates_[a], rates_[a], log_rates_[b], rates_[b],
+                                     edge.mean_rate);
   const double coordinate = (action * edge.mean_rate) / edge.distance;
   const double rate_a = (action * edge.distance) * dm[0];
   const double rate_b = (action * edge.distance) * dm[1];
+  const auto& pa = points_[a];
+  const auto& pb = points_[b];
+  const auto& dof_a = dofs_[a];
+  const auto& dof_b = dofs_[b];
+  const double size_a = sizes_[a];
+  const double size_b = sizes_[b];
+  const auto& grad_a = samples_[a].gradient;
+  const auto& grad_b = samples_[b].gradient;
   for (int k = 0; k < 3; ++k) {
-    const double direction = coordinate * (b.point[k] - a.point[k]);
-    if (a.dof[k] >= 0) emit(a.dof[k], a.size * (rate_a * a.sample.gradient[k] - direction));
-    if (b.dof[k] >= 0) emit(b.dof[k], b.size * (rate_b * b.sample.gradient[k] + direction));
+    const double direction = coordinate * (pb[k] - pa[k]);
+    if (dof_a[k] >= 0) emit(dof_a[k], size_a * (rate_a * grad_a[k] - direction));
+    if (dof_b[k] >= 0) emit(dof_b[k], size_b * (rate_b * grad_b[k] + direction));
   }
 }
 
@@ -429,8 +447,9 @@ void ScalarRepair::shape_gradient(const BoxCell& cell, const CellGeometry& t,
   const double volume = -action * shape.inverse_denominator;
   const double scale = (12.0 * action * shape.fatness) * shape.inverse_squares;
   const auto add = [&](int corner, int k, double derivative) {
-    const auto& node = nodes_[cell[corner]];
-    if (node.dof[k] >= 0) emit(node.dof[k], node.size * derivative);
+    const auto row = static_cast<std::size_t>(cell[corner]);
+    const Row dof = dofs_[row][k];
+    if (dof >= 0) emit(dof, sizes_[row] * derivative);
   };
   for (int k = 0; k < 3; ++k) {
     const double center = 0.25 * (t.u[k] + t.v[k] + t.w[k]);
@@ -446,7 +465,7 @@ double ScalarRepair::evaluate(std::span<const double> x, std::span<double> gradi
   const bool force = !cache_valid_;
   cache_valid_ = false;
   feasible_ = interior_ = false;
-  if (!visit_rows(nodes_.size(), active_nodes_, [&](std::size_t row) {
+  if (!visit_rows(points_.size(), active_nodes_, [&](std::size_t row) {
         return update_node(row, x, force);
       })) return kInvalidMerit;
   std::fill(gradient.begin(), gradient.end(), 0.0);
@@ -458,9 +477,11 @@ double ScalarRepair::evaluate(std::span<const double> x, std::span<double> gradi
   double value = 0.0;
   const auto edge_row = [&](std::size_t row) {
     auto& edge = edges_[row];
-    const auto& a = nodes_[edge.rows[0]];
-    const auto& b = nodes_[edge.rows[1]];
-    if ((a.changed || b.changed) && !update_edge(a, b, edge)) return false;
+    const auto a = static_cast<std::size_t>(edge.rows[0]);
+    const auto b = static_cast<std::size_t>(edge.rows[1]);
+    if ((changed_[a] | changed_[b]) != 0 &&
+        !update_edge(points_[a], log_rates_[a], rates_[a],
+                     points_[b], log_rates_[b], rates_[b], edge)) return false;
     feasible &= edge.length >= hard_.low && edge.length <= hard_.high;
     interior &= edge.length >= inside_low && edge.length <= inside_high;
     const double low = std::max(0.0, (target_.low + edge.low_shift) - edge.length);
@@ -474,15 +495,15 @@ double ScalarRepair::evaluate(std::span<const double> x, std::span<double> gradi
   const auto cell_row = [&](std::size_t i) {
     auto& shape = shapes_[i];
     const auto& cell = sites_.cells[i];
-    const auto& a = nodes_[cell[0]];
-    const auto& b = nodes_[cell[1]];
-    const auto& c = nodes_[cell[2]];
-    const auto& d = nodes_[cell[3]];
+    const auto c0 = static_cast<std::size_t>(cell[0]);
+    const auto c1 = static_cast<std::size_t>(cell[1]);
+    const auto c2 = static_cast<std::size_t>(cell[2]);
+    const auto c3 = static_cast<std::size_t>(cell[3]);
     const double limit = shape_target_ + shape.shift;
-    const bool changed = a.changed || b.changed || c.changed || d.changed;
+    const bool changed = (changed_[c0] | changed_[c1] | changed_[c2] | changed_[c3]) != 0;
     double action = limit - shape.fatness;
     if (changed || (!gradient.empty() && action > 0.0)) {
-      const CellGeometry t(a.point, b.point, c.point, d.point);
+      const CellGeometry t(points_[c0], points_[c1], points_[c2], points_[c3]);
       if (changed) {
         if (!update_shape(t, limit + shape_margin, shape)) return false;
         action = limit - shape.fatness;
@@ -509,7 +530,7 @@ std::size_t ScalarRepair::select_linear_columns(std::span<Row> columns, std::vec
   for (const Row dof : dofs) columns[dof] = -1;
   dofs.clear();
   const auto select = [&](Row vertex) {
-    for (Row dof : nodes_[vertex].dof) {
+    for (Row dof : dofs_[static_cast<std::size_t>(vertex)]) {
       if (dof < 0 || columns[dof] >= 0) continue;
       columns[dof] = static_cast<Row>(dofs.size());
       dofs.push_back(dof);
@@ -538,7 +559,7 @@ bool ScalarRepair::linearize(LinearModel& model, std::span<const Row> columns) c
   model.rows.clear();
   model.jacobian.clear();
   const auto moves = [&](Row row) {
-    for (Row dof : nodes_[row].dof) {
+    for (Row dof : dofs_[static_cast<std::size_t>(row)]) {
       if (dof >= 0 && columns[dof] >= 0) return true;
     }
     return false;
@@ -555,8 +576,7 @@ bool ScalarRepair::linearize(LinearModel& model, std::span<const Row> columns) c
     const auto& cell = sites_.cells[i];
     if (shape.fatness >= shape_target_ + kLinearShapeMargin ||
         std::none_of(cell.begin(), cell.end(), moves)) return true;
-    const CellGeometry t(nodes_[cell[0]].point, nodes_[cell[1]].point,
-                         nodes_[cell[2]].point, nodes_[cell[3]].point);
+    const CellGeometry t(points_[cell[0]], points_[cell[1]], points_[cell[2]], points_[cell[3]]);
     return model.add({-std::numeric_limits<double>::infinity(), shape.fatness - shape_target_},
                      columns, [&](const auto& emit) { shape_gradient(cell, t, shape, 1.0, emit); });
   };
@@ -666,18 +686,15 @@ bool ScalarRepair::retile(ScalarBoxSites& sites) const {
     seeds.push_back(static_cast<Row>(row));
   }
   if (seeds.empty()) return false;
-  std::vector<BoxPoint> moved;
-  moved.reserve(nodes_.size());
-  for (const auto& n : nodes_) moved.push_back(n.point);
-  if (!retile_scalar_defects(field_, moved, sites.cells, seeds)) return false;
+  if (!retile_scalar_defects(field_, points_, sites.cells, seeds)) return false;
   publish(sites);
   return true;
 }
 
 void ScalarRepair::publish(ScalarBoxSites& sites) const {
-  for (std::size_t i = 0; i < nodes_.size(); ++i) {
-    sites.points[i] = nodes_[i].point;
-    sites.samples[i] = nodes_[i].sample;
+  for (std::size_t i = 0; i < points_.size(); ++i) {
+    sites.points[i] = points_[i];
+    sites.samples[i] = samples_[i];
   }
 }
 
@@ -696,7 +713,8 @@ bool bounded_repair(ScalarRepair& repair, std::span<double> x, std::span<double>
 enum class RepairEnd { kAccepted, kRetiled, kLocalize, kRefused, kRetryDense };
 
 static RepairEnd repair_connectivity(const ScalarBoxField& field, ScalarBoxSites& sites,
-                                     double lower, bool allow_retile, bool local, bool linearize) {
+                                     double lower, bool allow_retile, bool local, bool linearize,
+                                     bool allow_localize) {
   if (sites.points.empty() || sites.points.size() > kMaxScalarSites ||
       sites.samples.size() != sites.points.size() || sites.cells.empty() ||
       sites.cells.size() > kMaxScalarCells || !(lower > 0.0 && lower < kUpperLength)) {
@@ -716,7 +734,7 @@ static RepairEnd repair_connectivity(const ScalarBoxField& field, ScalarBoxSites
     if (allow_retile && end == LinearEnd::kAdvanced && !repair.feasible() && repair.retile(sites)) {
       return RepairEnd::kRetiled;
     }
-    if (!local && end == LinearEnd::kAdvanced && !repair.feasible()) {
+    if (allow_localize && !repair.sparse() && end == LinearEnd::kAdvanced && !repair.feasible()) {
       // The accepted affine predictor has removed the widespread defects.
       // Rebind the true nonlinear solve at the remaining stars rather than
       // allocating a history for all site coordinates.
@@ -736,6 +754,12 @@ static RepairEnd repair_connectivity(const ScalarBoxField& field, ScalarBoxSites
     }
     if (position.empty()) return failure;
     if (allow_retile && (stage == 0 || stage == 2) && repair.retile(sites)) return RepairEnd::kRetiled;
+    if (allow_localize && !repair.sparse() && stage == 0) {
+      // Rebind after the first dense stage so remaining tail defects solve
+      // on their active stars instead of iterating over the whole mesh.
+      repair.publish(sites);
+      return RepairEnd::kLocalize;
+    }
     if (stage + 1 < kMaxStages) repair.increase_penalty();
   }
   return failure;
@@ -743,14 +767,14 @@ static RepairEnd repair_connectivity(const ScalarBoxField& field, ScalarBoxSites
 
 bool correct_scalar_box(const ScalarBoxField& field, ScalarBoxSites& sites, double lower) {
   for (int round = 0; round < 3; ++round) {
-    auto end = repair_connectivity(field, sites, lower, round < 2, round != 0, true);
+    auto end = repair_connectivity(field, sites, lower, round < 2, true, true, true);
     if (end == RepairEnd::kLocalize) {
-      end = repair_connectivity(field, sites, lower, round < 2, true, false);
+      end = repair_connectivity(field, sites, lower, round < 2, true, false, false);
     }
     // A restricted solve is a proposal, not a convergence criterion. Its
     // failure leaves sites untouched; retry from that seed with every DOF.
     if (end == RepairEnd::kRetryDense) {
-      end = repair_connectivity(field, sites, lower, round < 2, false, false);
+      end = repair_connectivity(field, sites, lower, round < 2, false, false, false);
     }
     if (end != RepairEnd::kRetiled) return end == RepairEnd::kAccepted;
   }
