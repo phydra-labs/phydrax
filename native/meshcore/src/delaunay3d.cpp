@@ -37,11 +37,14 @@
 namespace phx::mc {
 
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, bool canonical, phx_mc_mesh** mesh, int32_t parallelism) {
+                       bool weighted, bool canonical, phx_mc_mesh** mesh, int32_t parallelism,
+                       std::size_t finite_limit) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   *mesh = nullptr;
+  const bool bounded = finite_limit != std::numeric_limits<std::size_t>::max();
+  if (bounded && parallelism != 1) return PHX_MC_INVALID_ARGUMENT;
   if (point_count < 0 || !addressable(point_count, 3, sizeof(double)) ||
       !addressable(point_count, 1, sizeof(int32_t)) ||
       !addressable(point_count, 1, sizeof(double)) ||
@@ -92,7 +95,8 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
     Triangulation3D triangulation(local_points.get(), local_weights.get(),
                                   static_cast<int64_t>(count));
     triangulation.set_identities(order.data());
-    status = triangulation.build(local_order, alive, canonical ? parallelism : 1);
+    status = bounded ? triangulation.build_serial<true>(local_order, alive, finite_limit)
+                     : triangulation.build(local_order, alive, canonical ? parallelism : 1);
     if (status != PHX_MC_OK) {
       return status;
     }

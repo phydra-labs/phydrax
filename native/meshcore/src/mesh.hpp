@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <span>
@@ -444,8 +445,11 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
                        bool weighted, bool canonical, phx_mc_mesh** mesh);
 // `parallelism` workers insert in rounds when `canonical` (the cell order of a
 // non-canonical result is the sequential construction's, built on one).
+// An explicit finite-cell budget is checked during serial insertion, before
+// export. Exceeding it refuses with PHX_MC_CAPACITY_EXCEEDED and no mesh.
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
                        bool weighted, bool canonical, phx_mc_mesh** mesh,
-                       int32_t parallelism);
+                       int32_t parallelism,
+                       std::size_t finite_limit = std::numeric_limits<std::size_t>::max());
 
 }  // namespace phx::mc

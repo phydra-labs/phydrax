@@ -13,6 +13,7 @@
 
 #include "check.hpp"
 #include "fp_hazards.hpp"
+#include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -984,6 +985,18 @@ void test_parallelism() {
   PHX_CHECK(phx_mc_delaunay_3d(4, random.data(), &mesh, 0) == PHX_MC_INVALID_ARGUMENT);
 }
 
+void test_finite_cell_budget() {
+  const double points[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.125, 0.125, 0.125};
+  phx_mc_mesh* output = nullptr;
+  PHX_CHECK(triangulate_3d(5, points, nullptr, false, true, &output, 1, 3) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(output == nullptr);
+  PHX_CHECK(triangulate_3d(5, points, nullptr, false, true, &output, 1, 4) == PHX_MC_OK);
+  if (output != nullptr) {
+    PHX_CHECK(output->cell_count() == 4);
+    phx_mc_mesh_free(output);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1000,6 +1013,7 @@ int main() {
   test_regular_center_point();
   test_regular_redundant_points();
   test_status_codes();
+  test_finite_cell_budget();
   test_performance();
   test_floating_point_hazards();
   test_triangulate_options();

@@ -15,6 +15,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "key_map.hpp"
 #include "phydrax_meshcore.h"
 
 namespace phx::mc {
@@ -532,13 +533,60 @@ class CavityEdit {
     return ghosts <= 1;
   }
 
+  // A closed replacement with no inherited faces needs just the two
+  // oppositely oriented owners of each triangle. Pair in linear expected
+  // work; still report duplicates before any missing twin or label conflict.
+  EditStatus link_closed_proposal() {
+    KeyMap pairs(2 * created_.size());
+    std::vector<int32_t> twins(4 * created_.size(), -1);
+    for (std::size_t i = 0; i < created_.size(); ++i) {
+      for (int k = 0; k < 4; ++k) {
+        int32_t facet[3];
+        oriented_facet(created_[i].v, k, facet);
+        const auto [a, b, c] = FacetKey::of(facet);
+        const auto key = (static_cast<std::uint64_t>(a + 1) << 42) |
+                         (static_cast<std::uint64_t>(std::min(b, c) + 1) << 21) |
+                         static_cast<std::uint64_t>(std::max(b, c) + 1);
+        auto& prior = pairs.slot(key);
+        const int32_t owner = static_cast<int32_t>(4 * i) + k;
+        const int side = b < c;
+        if (prior == -1) {
+          prior = 2 * static_cast<std::int64_t>(owner) + side;
+        } else {
+          if (prior < 0 || (prior & 1) == side) return EditStatus::kDuplicate;
+          const auto reverse = static_cast<int32_t>(prior / 2);
+          twins[owner] = reverse;
+          twins[reverse] = owner;
+          prior = -2;
+        }
+      }
+    }
+    for (std::size_t row = 0; row < twins.size(); ++row) {
+      const auto twin = twins[row];
+      if (twin < 0) return EditStatus::kBoundaryMismatch;
+      if (proposed_constraint(static_cast<int32_t>(row)) != proposed_constraint(twin)) {
+        return EditStatus::kConstraintViolation;
+      }
+      created_[row / 4].n[row % 4] = twin / 4;
+    }
+    owners_.clear();
+    return EditStatus::kOk;
+  }
+
   template <class Positive>
   EditStatus link_proposal(const Positive& positive) {
+    bool packed_closed = created_.size() >= 512 &&
+                         created_.size() <= static_cast<std::size_t>(kMaxTetrahedronSlots) / 4 &&
+                         boundary_.empty() && inner_constraints_.empty() && preserved_.empty();
     for (const Tetrahedron& tet : created_) {
       if (!well_formed(tet.v) || (!is_ghost(tet) && !positive(tet.v))) {
         return EditStatus::kInverted;
       }
+      if (packed_closed) {
+        for (auto v : tet.v) packed_closed = packed_closed && v < (1 << 21) - 1;
+      }
     }
+    if (packed_closed) return link_closed_proposal();
     facets_.clear();
     facets_.reserve(4 * created_.size());
     for (std::size_t i = 0; i < created_.size(); ++i) {

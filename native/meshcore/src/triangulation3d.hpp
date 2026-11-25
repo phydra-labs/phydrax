@@ -210,7 +210,9 @@ class Triangulation3D {
   }
   std::size_t largest_cavity() const { return largest_cavity_; }
 
-  int32_t build(std::span<const int32_t> order, std::span<char> alive) {
+  template <bool Bounded>
+  int32_t build_serial(std::span<const int32_t> order, std::span<char> alive,
+                       std::size_t finite_limit) {
     const std::size_t count = order.size();
     if (count < 4) return PHX_MC_DEGENERATE_INPUT;
     const int32_t a = order[0];
@@ -229,6 +231,9 @@ class Triangulation3D {
     if (fourth == count) return PHX_MC_DEGENERATE_INPUT;
     const int32_t d = order[fourth];
     if (sign < 0) std::swap(b, c);
+    if constexpr (Bounded) {
+      if (finite_limit == 0) return PHX_MC_CAPACITY_EXCEEDED;
+    }
     complex_.tets.reserve(7 * count + 16);
     const int32_t initialized = initialize(a, b, c, d);
     if (initialized != PHX_MC_OK) return initialized;
@@ -240,6 +245,11 @@ class Triangulation3D {
     for (std::size_t k = 2; k < count && status == PHX_MC_OK; ++k) {
       if (k == third || k == fourth) continue;
       status = insert(order[k], alive);
+      if constexpr (Bounded) {
+        if (status == PHX_MC_OK && static_cast<std::size_t>(complex_.finite_count) > finite_limit) {
+          status = PHX_MC_CAPACITY_EXCEEDED;
+        }
+      }
     }
     building_ = false;
     return status;
@@ -260,11 +270,11 @@ class Triangulation3D {
 
   // The parallel construction produces the same regular triangulation as
   // build(); the caller canonicalizes its cell order.
-  int32_t build(std::span<const int32_t> order, std::span<char> alive, int32_t parallelism) {
+  int32_t build(std::span<const int32_t> order, std::span<char> alive, int32_t parallelism = 1) {
     constexpr std::size_t kParallelPoints = 8192;
     constexpr std::size_t kFullGridPoints = 16384;
     const std::size_t count = order.size();
-    if (parallelism <= 1 || count < kParallelPoints) return build(order, alive);
+    if (parallelism <= 1 || count < kParallelPoints) return build_serial<false>(order, alive, 0);
     const int32_t a = order[0];
     int32_t b = order[1];
     std::size_t third = 2;
