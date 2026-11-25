@@ -2543,6 +2543,8 @@ std::int64_t Adapter::shape_sweeps(std::int64_t maximum_sweeps) {
   }
   if (count == 0 || !std::isfinite(total)) return 0;
   const double reference = total / static_cast<double>(count);
+  const bool tail = maximum_sweeps != kUntilShapeStall;
+  const double threshold = 0.5 * (reference + kShapeCageFloor);
   std::vector<std::pair<std::uint64_t, int>> faces;
   std::vector<IdEdge> edges;
   std::int64_t sweeps = 0;
@@ -2553,13 +2555,15 @@ std::int64_t Adapter::shape_sweeps(std::int64_t maximum_sweeps) {
       const auto slot = static_cast<std::int32_t>(row);
       const Tetrahedron& cell = cells[row];
       if (!mesh_.complex().live(slot) || is_ghost(cell)) continue;
+      if (tail && cell_quality(slot) >= threshold) continue;
       const auto id = mesh_.cell_id(slot);
       for (int first = 0; first < 4; ++first) {
         const auto other = cell.n[first];
         if (mesh_.complex().live(other) && !is_ghost(mesh_.tet(other)) &&
-            id < mesh_.cell_id(other) &&
             mesh_.complex().constraint(slot, first) == kNoConstraint) {
-          faces.emplace_back(id, first);
+          const auto neighbor_id = mesh_.cell_id(other);
+          if (id < neighbor_id) faces.emplace_back(id, first);
+          else if (tail) faces.emplace_back(neighbor_id, neighbor_slot(mesh_.tet(other), slot));
         }
         for (int second = first + 1; second < 4; ++second) {
           edges.push_back(edge_ids(cell.v[first], cell.v[second]));
@@ -3281,14 +3285,25 @@ std::int64_t Adapter::smooth_shape(std::int64_t maximum_sweeps) {
   // Seed the interior frontier once. Local commits requeue the changed
   // star; its mean shape must increase with all spokes still in band.
   // Protected and boundary vertices are never moved here.
-  for (std::size_t row = 0; row < mesh_.vertex_slot_count(); ++row) {
-    const auto vertex = static_cast<std::int32_t>(row);
-    if (!mesh_.live_vertex(vertex) || mesh_.vertex_dimension(vertex) != 3 ||
-        dirty_flags_[kRelocatePhase][row] != 0) {
-      continue;
+  if (maximum_sweeps != kUntilShapeStall) {
+    for (auto vertex : dirty_[kRelocatePhase]) dirty_flags_[kRelocatePhase][vertex] = 0;
+    dirty_[kRelocatePhase].clear();
+    const auto& cells = mesh_.complex().tets;
+    for (std::size_t row = 0; row < cells.size(); ++row) {
+      const auto slot = static_cast<std::int32_t>(row);
+      if (!mesh_.complex().live(slot) || is_ghost(cells[row]) ||
+          cell_quality(slot) >= kShapeCageFloor) continue;
+      for (const auto vertex : cells[row].v) {
+        if (mesh_.vertex_dimension(vertex) == 3) queue(kRelocatePhase, vertex);
+      }
     }
-    dirty_flags_[kRelocatePhase][row] = 1;
-    dirty_[kRelocatePhase].push_back(vertex);
+  } else {
+    for (std::size_t row = 0; row < mesh_.vertex_slot_count(); ++row) {
+      const auto vertex = static_cast<std::int32_t>(row);
+      if (mesh_.live_vertex(vertex) && mesh_.vertex_dimension(vertex) == 3) {
+        queue(kRelocatePhase, vertex);
+      }
+    }
   }
   std::int64_t sweeps = 0;
   for (; sweeps < maximum_sweeps; ++sweeps) {
