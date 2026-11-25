@@ -2840,6 +2840,15 @@ int32_t Builder::smooth() {
   // 2. Descent on E = sum over interior faces of (1 - cos) of the angle
   // between the centroid join and the area vector, plus the skewness term;
   // cell centroids move with the mean of their vertices.
+  // Only interior vertices move during descent. A face with no free vertex
+  // in either incident cell cannot contribute to a used derivative, through
+  // its own vertices or through those cells' centroids.
+  std::vector<uint8_t> has_free_vertex(cells, 0);
+  for (const int64_t c : active_cells) {
+    const auto first = cell_vertex_list.begin() + cell_vertex_offsets[c];
+    const auto last = cell_vertex_list.begin() + cell_vertex_offsets[c + 1];
+    has_free_vertex[c] = std::any_of(first, last, [&](int32_t v) { return role[v] == 1; });
+  }
   std::vector<Vec> gradient(points), cell_gradient(cells);
   std::vector<double> trust(points, kTrust * b);
   for (int iteration = 0; iteration < kIterations; ++iteration) {
@@ -2848,7 +2857,7 @@ int32_t Builder::smooth() {
     std::fill(cell_gradient.begin(), cell_gradient.end(), Vec{0, 0, 0});
     for (const int64_t f : active_faces) {
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
-      if (n < 0) continue;
+      if (n < 0 || (!has_free_vertex[o] && !has_free_vertex[n])) continue;
       const Vec d = sub(centroid[n], centroid[o]);
       const Vec& area = face_area[f];
       const double ld = norm(d), ls = norm(area);
@@ -2862,9 +2871,11 @@ int32_t Builder::smooth() {
       cell_gradient[o] = sub(cell_gradient[o], gd);
       const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
       for (int64_t q = first; q < last; ++q) {
+        const int32_t v = mesh.face_vertices[q];
+        if (role[v] != 1) continue;
         const int64_t before = q > first ? q - 1 : last - 1, after = q + 1 < last ? q + 1 : first;
         const Vec diff = sub(point(mesh.face_vertices[before]), point(mesh.face_vertices[after]));
-        gradient[mesh.face_vertices[q]] = add(gradient[mesh.face_vertices[q]], mul(cross(gs, diff), 0.5));
+        gradient[v] = add(gradient[v], mul(cross(gs, diff), 0.5));
       }
       // Skewness s = |sv| / fd, sv = Cf - (Co + alpha d) the offset of the
       // face center from where the centroid join meets the face plane
@@ -2889,16 +2900,21 @@ int32_t Builder::smooth() {
         const Vec w = mul(sub(sv, mul(sh, dot(sv, d) / nd)), scale);
         const Vec face_share = mul(w, 1.0 / static_cast<double>(last - first));
         for (int64_t q = first; q < last; ++q) {
-          gradient[mesh.face_vertices[q]] = add(gradient[mesh.face_vertices[q]], face_share);
+          const int32_t v = mesh.face_vertices[q];
+          if (role[v] == 1) gradient[v] = add(gradient[v], face_share);
         }
         cell_gradient[n] = sub(cell_gradient[n], mul(w, alpha));
         cell_gradient[o] = sub(cell_gradient[o], mul(w, 1.0 - alpha));
       }
     }
     for (const int64_t c : active_cells) {
+      if (!has_free_vertex[c]) continue;
       const int64_t first = cell_vertex_offsets[c], last = cell_vertex_offsets[c + 1];
       const Vec share = mul(cell_gradient[c], 1.0 / static_cast<double>(last - first));
-      for (int64_t slot = first; slot < last; ++slot) gradient[cell_vertex_list[slot]] = add(gradient[cell_vertex_list[slot]], share);
+      for (int64_t slot = first; slot < last; ++slot) {
+        const int32_t v = cell_vertex_list[slot];
+        if (role[v] == 1) gradient[v] = add(gradient[v], share);
+      }
     }
     previous = mesh.points;
     std::fill(moved.begin(), moved.end(), 0);

@@ -741,6 +741,16 @@ single quiet run of the final integrated tree.
 | F8 two layers | Original sphere against eight actual `snappyHexMesh` ranks: native skewness 0.495351 versus 0.497436; both native layers meet their projected thickness floors | Native 5.115514 s beats the live 5.193225 s but misses the historical 5.066336 s limit. One-minute load 6.892→6.282 excludes quiet acceptance. The original layered quadric at eight ranks placed only 24,008 of 24,800 layer cells and had eight cells with a nonpositive independent decomposition despite passing `checkMesh` |
 | F9 prism layers | Original sphere h = 0.1 passes live Gmsh at 1/2/4/8 requests with native output invariance | cfMesh output on the other layer rows fails its own `checkMesh` gate |
 
+The F8 descent now omits derivative work that cannot reach a movable
+interior vertex. It keeps the existing validity screens and reduction
+order. On the original two-layer sphere (98,038 cells), eight-worker
+native smoothing and layer time fell from 2.003–2.017 s to 1.936–1.964 s.
+At doubled nominal sizes (20,943 cells), it took 0.412 s versus 0.429 s.
+Both comparisons retained byte-identical numerical output; the original
+native bank also matches at one and eight requested workers. The public
+candidate identity remains build-bound. These are native stage clocks,
+not acceptance against the provider construction clock.
+
 Raw receipts are in the coordination board under
 `artifacts/MAC/native-redesign/`, including the original no-op adaptation
 and unlayered sphere/quadric JSON. Provider ineligibility, timing misses,

@@ -746,6 +746,9 @@
 - Native 3D boundary edits reuse exact source-facet coverage and rim
   indexes across edits of the same mesh. Witness, orientation, coverage,
   and rollback checks are unchanged.
+- Hex-dominant smoothing omits derivative terms from faces and cells
+  without a movable interior vertex in their stencil. Reduction order
+  for movable vertices and all validity checks are unchanged.
 - Native metric relocation reuses stationary corner log determinants and
   stationary squared edge lengths within each search. Shape scoring reuses
   the orientation determinant and band spoke measurements when their
