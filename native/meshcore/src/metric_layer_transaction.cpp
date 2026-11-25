@@ -821,9 +821,16 @@ int rounded_site_location(const SourceCellPlanes& cell, const TetCoordinates& so
 
 bool make_source_planes(const TetMesh& mesh, const AdaptInput& input,
                         std::span<TetCoordinates> points, std::span<SourceCellPlanes> cells) {
+  // Source rows by cell slot; a neighbor outside the source has no row.
+  std::vector<std::int32_t> row_by_slot(mesh.complex().tets.size(), -1);
+  std::vector<std::int32_t> slots(cells.size());
+  for (std::size_t row = 0; row < cells.size(); ++row) {
+    slots[row] = mesh.cell_slot(input.cell_ids[row]);
+    row_by_slot[static_cast<std::size_t>(slots[row])] = static_cast<std::int32_t>(row);
+  }
   bool adjacent = true;
   for (std::size_t row = 0; row < cells.size(); ++row) {
-    const auto& tet = mesh.tet(mesh.cell_slot(input.cell_ids[row]));
+    const auto& tet = mesh.tet(slots[row]);
     auto& cell = cells[row];
     std::copy_n(input.source_cells.data() + 4 * row, 4, cell.vertices.begin());
     std::sort(cell.vertices.begin(), cell.vertices.end());
@@ -838,13 +845,12 @@ bool make_source_planes(const TetMesh& mesh, const AdaptInput& input,
       cell.neighbors[k] = -1;
       const auto slot = tet.n[k];
       if (is_ghost(mesh.tet(slot))) continue;
-      const Id id = mesh.cell_id(slot);
-      const auto at = std::lower_bound(input.cell_ids.begin(), input.cell_ids.end(), id);
-      if (at == input.cell_ids.end() || *at != id) {
+      const auto neighbor = row_by_slot[static_cast<std::size_t>(slot)];
+      if (neighbor < 0) {
         adjacent = false;
         continue;
       }
-      cell.neighbors[k] = static_cast<std::int32_t>(at - input.cell_ids.begin());
+      cell.neighbors[k] = neighbor;
     }
   }
   return adjacent;
@@ -1037,18 +1043,34 @@ bool write_cell_ancestry(const TetMesh& mesh, const MetricBoxGrid& grid, const A
                                 open_overlap(native_box, source_box), input.cell_ids[candidate],
                                 cell.ancestor_cell_ids, exact_ancestry);
       };
-      const auto seed_faces = !adjacent || seed < 0 ? FaceEvidence{} :
+      auto walk_seed = seed;
+      auto seed_faces = !adjacent || seed < 0 ? FaceEvidence{} :
           source_face_evidence(planes[seed], source_points[seed], target, face_error);
-      if (adjacent && seed >= 0 && (strict_seed || seed_faces.contact == Contact::kPositive)) {
+      // Another vertex owner can overlap the open target positively where the
+      // first one only touches it; any positive seed reaches the same cells.
+      if (adjacent && !strict_seed && seed_faces.contact != Contact::kPositive) {
+        for (const auto vertex : vertices) {
+          const auto& site = sites[vertex];
+          if (!site.closed || site.owner == seed) continue;
+          const auto evidence = source_face_evidence(planes[site.owner], source_points[site.owner],
+                                                     target, face_error);
+          if (evidence.contact != Contact::kPositive) continue;
+          walk_seed = site.owner;
+          seed_faces = evidence;
+          break;
+        }
+      }
+      if (adjacent && walk_seed >= 0 &&
+          (strict_seed || seed_faces.contact == Contact::kPositive)) {
         // In either embedding, positive overlaps meet the open target interior.
         // Join interior witnesses inside that convex open set by a generic
         // path avoiding the finite source edge/vertex skeleton. It crosses
         // source facets only in their relative interiors, so the positive
         // cells for each embedding are face-connected to this common seed.
-        append_both(seed);
+        append_both(walk_seed);
         queue.clear();
-        queue.emplace_back(seed, seed_faces.neighbors);
-        seen[seed] = row + 1;
+        queue.emplace_back(walk_seed, seed_faces.neighbors);
+        seen[walk_seed] = row + 1;
         for (std::size_t at = 0; at < queue.size(); ++at) {
           const auto [current, faces] = queue[at];
           for (int k = 0; k < 4; ++k) {
