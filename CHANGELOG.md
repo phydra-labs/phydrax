@@ -734,8 +734,9 @@
 ### Changed
 - Graded tetrahedral adaptation benchmark ceilings bind MMG3D results to
   the regenerated source and target digests. The authenticated 10,452-cell
-  coarsening row allows 3.5× its original construction time; completion,
-  orientation, and quality gates are unchanged.
+  coarsening row allows 3.5× its original construction time. Graded rows
+  must now also beat MMG3D's worst-cell shape, separately from completion,
+  orientation, mean shape, and metric band share.
 - The MMG3D benchmark driver can compare a small graded tetrahedral
   fixture on shared inputs and report construction, certification, and
   edge refusal evidence separately from the original size ladder.

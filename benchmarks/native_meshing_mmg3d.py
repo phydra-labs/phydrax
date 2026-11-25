@@ -226,6 +226,7 @@ def _measure_metric(directory: Path, field: str, mmg3d: str, /) -> None:
         _f6_rows,
         _f6_source,
         _f6_target,
+        _F6QualityReference,
         _measure,
     )
 
@@ -282,7 +283,11 @@ def _measure_metric(directory: Path, field: str, mmg3d: str, /) -> None:
         directory,
         frozenset({f"metric-3d-{field}"}),
         sources={count: ("feature", count)},
-        references={(field, count): (quality["share_0_7_1_4"], quality["quality_mean"])},
+        references={
+            (field, count): _F6QualityReference(
+                quality["share_0_7_1_4"], quality["quality_mean"], quality["quality_min"]
+            )
+        },
     )
     print(
         json.dumps(

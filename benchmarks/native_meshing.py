@@ -1922,16 +1922,24 @@ _F6_SIZES = {
 }
 _F6_FIELDS = ("iso", "aniso", "coarsen")
 _F6_ROWS = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
+
+
+class _F6QualityReference(NamedTuple):
+    band_share: float
+    mean_shape: float
+    minimum_shape: float
+
+
 _F6_REFERENCE = {
-    ("iso", 10_000): (0.774, 0.845),
-    ("iso", 100_000): (0.870, 0.845),
-    ("iso", 1_000_000): (0.918, 0.843),
-    ("aniso", 10_000): (0.935, 0.847),
-    ("aniso", 100_000): (0.906, 0.838),
-    ("aniso", 1_000_000): (0.912, 0.839),
-    ("coarsen", 10_000): (0.794, 0.827),
-    ("coarsen", 100_000): (0.862, 0.839),
-    ("coarsen", 1_000_000): (0.893, 0.842),
+    ("iso", 10_000): _F6QualityReference(0.774, 0.845, 0.4497603849454286),
+    ("iso", 100_000): _F6QualityReference(0.870, 0.845, 0.4477792626580644),
+    ("iso", 1_000_000): _F6QualityReference(0.918, 0.843, 0.37772211278353246),
+    ("aniso", 10_000): _F6QualityReference(0.935, 0.847, 0.33614727278988854),
+    ("aniso", 100_000): _F6QualityReference(0.906, 0.838, 0.3458181881222734),
+    ("aniso", 1_000_000): _F6QualityReference(0.912, 0.839, 0.43638662906545406),
+    ("coarsen", 10_000): _F6QualityReference(0.794, 0.827, 0.47481118457443033),
+    ("coarsen", 100_000): _F6QualityReference(0.862, 0.839, 0.4235206692485812),
+    ("coarsen", 1_000_000): _F6QualityReference(0.893, 0.842, 0.35457173515222545),
 }
 
 
@@ -2006,7 +2014,7 @@ def _f6_rows(
     /,
     *,
     sources: Mapping[int, tuple[str, int]] = _F6_SIZES,
-    references: Mapping[tuple[str, int], tuple[float, float]] = _F6_REFERENCE,
+    references: Mapping[tuple[str, int], _F6QualityReference] = _F6_REFERENCE,
 ) -> tuple[_Row, ...]:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.discretization._cell_mesh import CellBlock, CellMesh
@@ -2943,7 +2951,7 @@ def _f6_quality_values(
 
 def _f6_quality(
     field: str,
-    reference: tuple[float, float],
+    reference: _F6QualityReference,
     source_points: np.ndarray,
     coarsen_sizes: np.ndarray | None,
     result: object,
@@ -2958,15 +2966,17 @@ def _f6_quality(
     )
     missed = (
         int(quality["inverted"])
-        + int(quality["share_0_7_1_4"] < reference[0])
-        + int(quality["quality_mean"] < reference[1])
+        + int(quality["share_0_7_1_4"] < reference.band_share)
+        + int(quality["quality_mean"] < reference.mean_shape)
+        + int(not (quality["quality_min"] > reference.minimum_shape))
         + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
     )
     return missed, {
         **quality,
         "certification_and_transfer_seconds": result.finalization_seconds,
-        "reference_share": reference[0],
-        "reference_quality_mean": reference[1],
+        "reference_share": reference.band_share,
+        "reference_quality_mean": reference.mean_shape,
+        "reference_quality_min": reference.minimum_shape,
     }
 
 

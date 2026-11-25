@@ -221,11 +221,12 @@ tetrahedra, then implicit volumes, then the CAD solid.
   reports `reference_inputs_verified: false`, no pass/fail verdict, and a
   nonzero process status.
   Coarsening edge share uses the archived source sizes interpolated at target
-  edge midpoints, not the transferred output metric. Mean shape is Euclidean
-  for scalar targets and measured in the analytic centroid metric for the
-  anisotropic target. Native completion, independent quality, and construction
-  timing are separate requirements. Only the original 10,452-cell coarsening
-  row has an authorized timing allowance above its reference.
+  edge midpoints, not the transferred output metric. Mean and worst-cell shape
+  are Euclidean for scalar targets and use the analytic centroid metric for
+  anisotropic targets. The worst-cell shape must beat the unrounded MMG3D
+  reference in addition to the existing band, mean, and completion gates.
+  Construction timing is separate. Only the original 10,452-cell
+  coarsening row has an authorized timing allowance above its reference.
 - S5 STEP import and remaining exchange formats. S7 threads and devices at scale.
   `OMP_NUM_THREADS=1 python -m benchmarks.native_meshing --rows cad-step-washer`
   times construction on the literal NIST STEP washer at h=.39663 mm and a
@@ -436,15 +437,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
 
 ### Original graded coarsening
 
-The 10,452-cell coarsening row is complete under the approved 3.5×
-allowance on the authenticated 0.377 s construction reference (1.3195 s
-ceiling). The scientific gates are unchanged: native status `complete`,
-zero out-of-band edges, zero inversions, and certification and transfer
-completed. Compared with the MMG3D rerun, raw midpoint band share improved
-from 0.79391 to 0.87486 and mean shape from 0.82651 to 0.82748. Worst-cell
-shape was lower (0.03891 vs 0.47481). The rerun took 0.337 s, so this is a
-qualified timing exception, not a speed win. Phydrax measured 1.164,
-0.972, and 0.998 s in three runs (construction only).
+The 10,452-cell coarsening row clears the approved 3.5× allowance on the
+authenticated 0.377 s construction reference (1.3195 s ceiling). Native
+status is `complete`, with zero out-of-band edges or inversions, and
+certification and transfer completed. Raw midpoint band share improves
+from 0.79391 to 0.87486 and mean shape from 0.82651 to 0.82748. The row is
+not accepted: its worst-cell shape is 0.03891 versus 0.47481 for MMG3D.
+Phydrax's minimum of three was 0.972 s against the 0.337 s MMG3D rerun;
+the timing allowance does not imply a speed win or waive quality.
 
 The regenerated Gmsh 4.15.2 cube banks use source sizes 0.0782, 0.0363,
 and 0.01685. The smallest source and coarsening target match the original
@@ -476,10 +476,11 @@ edges respectively.
 
 The rounded Cartesian hull split removes all 21 iso residuals; the crop
 completes with zero inversions, mean shape 0.86120 (MMG3D 0.83983), and
-midpoint band share 0.90261 (MMG3D 0.83795). Aniso falls from 26 residuals
-to eight with no representability refusals. Mean and minimum shape improve,
-but it still stalls. These are construction and quality diagnostics, not
-MMG3D timing wins or acceptance of the archived rows.
+midpoint band share 0.90261 (MMG3D 0.83795). Worst-cell shape still loses:
+0.00241 versus 0.52073. Aniso falls from 26 residuals to eight with no
+representability refusals. Its worst shape of 0.35736 beats MMG3D's
+0.29750, but it still stalls. These are diagnostic comparisons,
+not MMG3D timing wins or acceptance of the archived rows.
 
 ### Implicit carrier remesh and proof
 
