@@ -504,13 +504,14 @@ Jacobian, determinant ratio, and analytic boundary residual on the same
 sampling lattice as the Netgen/Gmsh comparison. The sampled surface residual
 does not replace the separate bidirectional CAD fidelity or embedding proof.
 
-The macOS results across all 12 rows beat every curving clock and certified
-every cell's determinant, but no row matched all reference quality fields. The
-quadric rows met the boundary residual thresholds and missed minimum scaled
-Jacobian. Blending in the spherical chart's unit frame brought all six sphere
-rows within their boundary residual limits without losing validity or the
-curving time advantage. Minimum scaled Jacobian and determinant ratio still
-miss on all six sphere rows. Keep F5 open until the combined gates pass.
+The initial results beat the curving clocks but missed some reference shape
+thresholds. The subsequent pinned 12-row campaign passes every registered
+ceiling and exact local determinant check. Interleaved live comparisons
+against Gmsh and Netgen are faster on all 12 but pass the live quality
+thresholds on 10. The misses are fine sphere P2 determinant ratio
+(0.919151 vs 0.919453) and coarse quadric P2 minimum scaled Jacobian
+(0.277139 vs 0.277259). Both pass their registered thresholds. These live
+quality misses are not proof failures.
 
 ### Matched fixed-wall volume qualification
 
@@ -609,13 +610,14 @@ queries only.
   On the integrated locator revision, all 13 cases returned byte-identical
   native result banks and zero unmet constraints at worker requests of
   1, 2, 4, and 8. This is worker invariance, not a parallel speedup claim.
-- F13 overset remains sequential. On the same ordered binary input, it beats
-  TIOGA at 1, 2, 4, and 8 MPI ranks for all three hex and all three tet sizes
-  (three interleaved calls per row). At the largest sizes and eight ranks, the
-  prepared candidate call takes 0.274 s vs 0.649 s for hexes and 0.182 s vs
-  0.517 s for tets. All native connectivity IDs are invariant under worker
-  requests; certified donors pass the independent check. These are assembly
-  clocks, not cold process or proof times.
+- F13 overset remains sequential. In the earlier matched campaign on the
+  same ordered banks it beats TIOGA at 1, 2, 4, and 8 MPI ranks for all
+  three hex and all three tet sizes (three interleaved calls per row).
+  At the largest sizes and eight ranks the prepared candidate takes
+  0.274 s vs 0.649 s for hexes and 0.182 s vs 0.517 s for tets. Native
+  connectivity IDs are invariant and certified donors pass the independent
+  check. These are assembly clocks, not proof. The original middle tet
+  bank is unavailable for a new run; do not substitute regenerated inputs.
 - F14 conforming Voronoi construction remains sequential. The pre-centering
   matrix passed timing at all 32 size/worker combinations, 31 of 32 using
   archived quality ceilings and 29 of 32 against the fastest retained
@@ -650,3 +652,22 @@ transition, lineage, and evidence IDs. Each run completes the strict band with
 no residuals and mean shape 0.8295888232. This qualifies native output
 invariance for that input, not parallel adaptation or the separate MMG3D
 construction ceiling.
+
+### Matched-worker evidence and remaining limits
+
+These comparisons retain the original inputs and scopes. They are not a
+single quiet run of the final integrated tree.
+
+| Route | Matched comparison | Limit |
+|---|---|---|
+| F2 linear CAD | Large quadric on `cf6517191e`: all quality gates pass; native 1.180 s versus HXT 1.154 s at eight workers | Eight-worker timing miss; one worker passes |
+| F10 affine point location | `66f1c8fb45`: all eight real comparisons against libigl 2.6.3 pass; eight-worker 100k and 1M clocks are 18.019/18.783 ms and 128.148/176.247 ms | Query only; both tools have zero wrong, missed, or extra locations |
+| F6b no-op adaptation | Original Box-12/25/55, 12/12 against Omega_h 9.34.13 with attested 1/2/4/8 OpenMP teams; eight-worker native/reference minima 2.538/2.771, 14.418/17.315, and 119.839/144.523 ms | Unchanged source and metric IDs; edited F6 is separate |
+| F8 unlayered hex-dominant | Original sphere and quadric, 4/4 each against actual `snappyHexMesh` ranks with invariant native outputs | cfMesh did not run matched teams |
+| F8 two layers | Original sphere's skewness improves to 0.495351 versus 0.497436 with the thickness-floor guard | Eight-rank timing under load is not qualified; layered quadric reference fails the independent decomposition check |
+| F9 prism layers | Original sphere h = 0.1 passes live Gmsh at 1/2/4/8 requests with native output invariance | cfMesh output on the other layer rows fails its own `checkMesh` gate |
+
+Raw receipts are in the coordination board under
+`artifacts/MAC/native-redesign/`, including the original no-op adaptation
+and unlayered sphere/quadric JSON. Provider ineligibility, timing misses,
+and unresolved native proofs are separate outcomes.
