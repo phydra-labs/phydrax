@@ -751,6 +751,11 @@
   and auditing the whole mesh. The cavity is both vertex stars, and
   orientation is checked at the survivor's new carrier; verdicts and
   committed states match the batch route.
+- Tetrahedral metric adaptation queues only relocation at a deeper
+  relocation stage step, seeded by the endpoints of out-of-band edges. The
+  in-band quality stages search within two vertex rings of those endpoints
+  instead of the whole mesh. Band, orientation and stall checks are
+  unchanged; adapted meshes and evidence IDs can change.
 - Hex-dominant smoothing omits derivative terms from faces and cells
   without a movable interior vertex in their stencil. Reduction order
   for movable vertices and all validity checks are unchanged.

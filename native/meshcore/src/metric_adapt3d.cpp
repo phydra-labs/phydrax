@@ -81,6 +81,9 @@ constexpr std::size_t kShapeCageVertices = 40;
 constexpr std::size_t kShapeCageCells = 256;
 constexpr std::size_t kBandCageEdges = 16;
 constexpr std::size_t kNoCageAxis = 3;
+// Rings of in-band vertices around out-of-band spokes searched by stages 3
+// and 4.
+constexpr int kStageRegionRings = 2;
 
 bool scalar_metric(const double* tensor) {
   return tensor[0] > 0.0 && std::isfinite(tensor[0]) &&
@@ -282,6 +285,13 @@ class Adapter {
     kRelocatePhase = 3,
   };
   void touch(std::int32_t vertex);
+  void queue(Phase phase, std::int32_t vertex);
+  // Queues a relocation stage step on an unchanged mesh. See stage_region_.
+  void queue_stage_search();
+  bool in_stage_region(std::int32_t vertex) const noexcept {
+    const auto at = static_cast<std::size_t>(vertex);
+    return vertex >= 0 && at < stage_region_.size() && stage_region_[at] != 0;
+  }
   void dirty_edges(Phase phase, const std::function<bool(double)>& wanted,
                    std::vector<MeasuredEdge>& edges);
   void ensure_cell(std::int32_t slot);
@@ -542,9 +552,16 @@ class Adapter {
   // Boundary vertex relocations start once the interior stalls.
   bool boundary_moves_ = false;
   // Relocation stage: 0 out-of-band vertices, 1 deep, 2 deep and refined
-  // (both band improvements only), 3 every vertex, 4 also pairs of ends of
-  // out-of-band edges, 5 terminal boundary tangents; back to 0 after topology.
+  // (both band improvements only), 3 also in-band vertices near out-of-band
+  // edges, 4 also pairs of ends of out-of-band edges, 5 terminal boundary
+  // tangents; back to 0 after topology.
   int relocation_stage_ = 0;
+  // A stage step leaves the mesh, the gates, and the split, collapse and
+  // swap searches unchanged, so it queues only relocation. Stages 1, 2 and 5
+  // can move only a vertex with an out-of-band spoke; stages 3 and 4 also
+  // move in-band vertices, but only those within kStageRegionRings of such a
+  // vertex (this mask, set at the step).
+  std::vector<std::uint8_t> stage_region_;
   bool bounded_tensor_search_ = false;
   // Direct-mapped, bounded, and local to this adaptation call.
   std::vector<RelocationAttempt> relocation_attempts_;
@@ -592,13 +609,61 @@ void Adapter::ensure_vertex(std::int32_t slot) {
 }
 
 void Adapter::touch(std::int32_t vertex) {
+  for (std::size_t phase = 0; phase < dirty_.size(); ++phase) queue(static_cast<Phase>(phase), vertex);
+}
+
+void Adapter::queue(Phase phase, std::int32_t vertex) {
   if (vertex < 0) return;
   ensure_vertex(vertex);
   const auto at = static_cast<std::size_t>(vertex);
-  for (std::size_t phase = 0; phase < dirty_.size(); ++phase) {
-    if (dirty_flags_[phase][at] != 0) continue;
-    dirty_flags_[phase][at] = 1;
-    dirty_[phase].push_back(vertex);
+  if (dirty_flags_[phase][at] != 0) return;
+  dirty_flags_[phase][at] = 1;
+  dirty_[phase].push_back(vertex);
+}
+
+void Adapter::queue_stage_search() {
+  // An edge outside the relocation band or the completion band seeds the
+  // step; its endpoints are the only vertices with an out-of-band spoke.
+  const double lower = std::max(input_.lower, kLowerLength);
+  stage_region_.assign(mesh_.vertex_slot_count(), 0);
+  std::vector<std::int32_t> frontier;
+  const auto mark = [&](std::int32_t vertex) {
+    const auto at = static_cast<std::size_t>(vertex);
+    if (!mesh_.live_vertex(vertex) || stage_region_[at] != 0) return;
+    stage_region_[at] = 1;
+    frontier.push_back(vertex);
+  };
+  const auto& tets = mesh_.complex().tets;
+  for (std::size_t slot = 0; slot < tets.size(); ++slot) {
+    const Tetrahedron& cell = tets[slot];
+    if (cell.v[0] == kDeadVertex || is_ghost(cell)) continue;
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        const std::int32_t a = cell.v[first];
+        const std::int32_t b = cell.v[second];
+        const double value = edge_length(a, b);
+        if (!(value >= lower && value <= kUpperLength) && !protected_edge(a, b)) {
+          mark(a);
+          mark(b);
+        }
+      }
+    }
+  }
+  if (relocation_stage_ == 3 || relocation_stage_ == 4) {
+    std::vector<std::int32_t> star;
+    for (int ring = 0; ring < kStageRegionRings; ++ring) {
+      const std::vector<std::int32_t> seeds = std::move(frontier);
+      frontier.clear();
+      for (std::int32_t vertex : seeds) {
+        incidence_.collect_star(vertex, star);
+        for (std::int32_t slot : star) {
+          for (std::int32_t other : mesh_.tet(slot).v) mark(other);
+        }
+      }
+    }
+  }
+  for (std::size_t slot = 0; slot < stage_region_.size(); ++slot) {
+    if (stage_region_[slot] != 0) queue(kRelocatePhase, static_cast<std::int32_t>(slot));
   }
 }
 
@@ -3046,8 +3111,11 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, ShapeGoal go
     outside = outside || (measured[row - 1] != 0 &&
                           !(lengths[row - 1] >= lower && lengths[row - 1] <= kUpperLength));
   }
-  // Stages 3 and 4 can improve quality before the terminal band-only search.
-  if (closed_band_shape ? outside : !outside && (relocation_stage_ < 3 || tangents)) {
+  // Stages 3 and 4 can improve quality before the terminal band-only search,
+  // in-band only near the out-of-band edges of their step.
+  if (closed_band_shape ? outside
+                        : !outside && (relocation_stage_ < 3 || tangents ||
+                                       !in_stage_region(vertex))) {
     return TetEditStatus::kApplied;
   }
   const bool deep = outside && deep_stage;
@@ -4163,12 +4231,14 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // Exhaust the cheap single-vertex interior search before enabling
     // boundary moves, moving survivors and deeper searches.
     bool stalled = false;
+    bool stage_step = false;
     if (input_.relocation && !boundary_moves_) {
       boundary_moves_ = true;
     } else if (input_.topology_operations && carriers_ && !survivor_moves_) {
       survivor_moves_ = true;
     } else if (input_.relocation && carriers_ && relocation_stage_ < 5) {
       ++relocation_stage_;
+      stage_step = true;
     } else if (input_.relocation && carriers_ && exhaustion_generation != mesh_.generation()) {
       relocation_stage_ = 0;
     } else if (input_.topology_operations && !shape_searched) {
@@ -4208,8 +4278,12 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
       // A local topology reset never records a new full-sweep generation.
       exhaustion_generation = mesh_.generation();
     }
-    for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
-      if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
+    if (stage_step) {
+      queue_stage_search();
+    } else {
+      for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
+        if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
+      }
     }
   }
   write(output);
