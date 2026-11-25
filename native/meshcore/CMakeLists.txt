@@ -56,6 +56,7 @@ set(PHX_MC_SOURCES
   src/deterministic_float_capi.cpp
   src/metric_float.cpp
   src/metric_float_capi.cpp
+  src/metric_gradation.cpp
   src/deterministic_solve.cpp
   src/metric_goal.cpp
   src/metric_goal_capi.cpp
@@ -344,6 +345,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_deterministic_float)
   phx_mc_add_test(test_metric_float)
   phx_mc_add_test(test_metric_goal)
+  phx_mc_add_test(test_metric_gradation)
   phx_mc_add_test(test_deterministic_solve)
   phx_mc_add_test(test_metric_carrier)
   phx_mc_add_test(test_metric_collapse)

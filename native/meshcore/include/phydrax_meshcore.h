@@ -1110,6 +1110,23 @@ PHX_MC_API int32_t phx_mc_metric_interpolate(
 PHX_MC_API int32_t phx_mc_metric_lengths(int64_t edge_count, const int64_t* edges,
                                          int64_t point_count, const double* points,
                                          const double* metrics, double* lengths);
+/* Minimum-first physical gradation on an undirected graph. Edges are pairs of
+ * row indices; steps are nonnegative size increments (positive infinity
+ * imposes no restriction). Input and output are disjoint (rows, axes) banks.
+ * With one axis, the bank contains finite positive sizes and bounds is null.
+ * With two or three axes, it contains coordinate eigenvalues in [2^-80, 2^80];
+ * bounds is (lower eigenvalue, upper eigenvalue, maximum anisotropy), all
+ * finite and positive, with lower <= upper and anisotropy >= 1. The result is
+ * the uncapped fixed point; stats holds (nonstale pops, successful updates,
+ * changed rows, within bounds), with axis pops and updates summed. For one
+ * axis the last count is 1 and maximum_violation is 0 (size realization and
+ * certification are caller-owned). For diagonal banks maximum_violation is the
+ * maximum positive grown-to-target eigenvalue quotient minus one on all
+ * directed edges. A 32-epsilon spectral slack is used for bounds admission. */
+PHX_MC_API int32_t phx_mc_metric_grade_physical(
+    int64_t row_count, int32_t axes, const double* initial, int64_t edge_count,
+    const int64_t* edges, const double* steps, const double* bounds, double* graded,
+    int64_t* stats, double* maximum_violation);
 /* Violation of the length band [1 / fl(sqrt 2), fl(sqrt 2)] in quanta of
  * 2^-10: above[r] is max(ceil(log(length / fl(sqrt 2)) * 2^10), 1) for a
  * length above the band and 0 otherwise; below[r] likewise for

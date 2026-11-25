@@ -1952,6 +1952,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_logarithms": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_interpolate": (_I32, (_I64, _P, _P, _P, _I64, _P, _P, _P, _P)),
     "phx_mc_metric_lengths": (_I32, (_I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_metric_grade_physical": (
+        _I32,
+        (_I64, _I32, _P, _I64, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_metric_band_quanta": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_relative_determinants": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
@@ -13644,6 +13648,48 @@ def metric_lengths(
     return lengths
 
 
+def metric_grade_physical(
+    initial: np.ndarray,
+    edges: np.ndarray,
+    steps: np.ndarray,
+    bounds: tuple[float, float, float] | None = None,
+    /,
+) -> tuple[np.ndarray, int, int, int, bool, float]:
+    """Grade scalar sizes or coordinate eigenvalues with physical growth.
+
+    Return the graded bank, equivalent nonstale pops, successful relaxations,
+    changed rows, bounds admission, and the diagonal directed-edge residual.
+    """
+    values = np.ascontiguousarray(initial, dtype=np.float64)
+    if (bounds is None and values.ndim != 1) or (
+        bounds is not None and (values.ndim != 2 or values.shape[1] not in (2, 3))
+    ):
+        raise ValueError("Expected scalar sizes or a (rows, axes) diagonal metric bank.")
+    axes = 1 if bounds is None else values.shape[1]
+    rows = _metric_rows(edges, "edges", 2)
+    increments = np.ascontiguousarray(steps, dtype=np.float64)
+    if increments.shape != (rows.shape[0],):
+        raise ValueError("steps must contain one increment per edge.")
+    limits = None if bounds is None else (_F64 * 3)(*bounds)
+    graded = np.empty_like(values)
+    stats = (_I64 * 4)()
+    violation = _F64()
+    status = load_meshcore()["phx_mc_metric_grade_physical"](
+        values.shape[0],
+        axes,
+        values.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        increments.ctypes.data,
+        limits,
+        graded.ctypes.data,
+        stats,
+        ctypes.byref(violation),
+    )
+    _raise_for_call(status, "metric_grade_physical")
+    return graded, stats[0], stats[1], stats[2], bool(stats[3]), violation.value
+
+
 def metric_band_quanta(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Quanta by which each length leaves the band ``[1/sqrt(2), sqrt(2)]``.
 
@@ -15086,6 +15132,7 @@ __all__ = [
     "meshcore_identity",
     "metric_band_quanta",
     "metric_congruence_defects",
+    "metric_grade_physical",
     "metric_interpolations",
     "metric_lengths",
     "metric_hull_frame",

@@ -33,7 +33,12 @@ from phydrax.ein import contract
 from .._exact_kernels import exact_kernel_parallelism
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._jax_config import default_device_selection
-from .._meshcore import _raise_for_call, meshcore_available, parallel_for
+from .._meshcore import (
+    _raise_for_call,
+    meshcore_available,
+    metric_grade_physical,
+    parallel_for,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
@@ -494,10 +499,11 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
 
     Scalar gradation bounds determinant size by an exact minimum-first
     relaxation and realizes it by uniform log-eigenvalue shifts, which never
-    increase anisotropy. Anisotropic gradation grows and intersects metrics
-    along each edge while respecting hard size and anisotropy bounds.
-    ``relative_tolerance`` is the numerical convergence criterion; no sweep
-    quota truncates the monotone update process.
+    increase anisotropy. Coordinate-diagonal physical gradation independently
+    solves the fixed point of each axis size when the result respects hard
+    bounds. Other anisotropic gradation grows and intersects metrics along
+    each edge subject to the bounds. ``relative_tolerance`` sets the residual
+    allowed at certification; no sweep quota truncates the update process.
     """
 
     maximum_gradation: float = eqx.field(static=True)
@@ -985,9 +991,12 @@ def _grade_scalar_sizes(
         return sizes.copy(), 0, 0
     physical = kind is MetricGradationKind.PHYSICAL
     if physical:
+        step = (growth - 1.0) * lengths
+        if meshcore_available():
+            graded, pops, updates, _, _, _ = metric_grade_physical(sizes, edges, step)
+            return graded, pops, updates
         first_size = sizes[edges[:, 0]]
         second_size = sizes[edges[:, 1]]
-        step = (growth - 1.0) * lengths
         # Growth is nonnegative, so only the larger endpoint could be reduced.
         if np.all(
             np.minimum(first_size, second_size) + step
@@ -1091,6 +1100,8 @@ def _realize_mean_sizes(
     sizes: np.ndarray,
     upper: float,
     /,
+    *,
+    isotropic: bool,
 ) -> np.ndarray:
     """Uniform log-eigenvalue shifts reaching ``det(M)**(-1/(2d)) = size``.
 
@@ -1106,27 +1117,37 @@ def _realize_mean_sizes(
         return np.exp(logarithms)
     dimension = logarithms.shape[1]
     caps = np.maximum(logarithms, log_upper)
-    thresholds = caps - logarithms
-    order = np.argsort(thresholds, axis=1, kind="stable")
-    sorted_thresholds = np.take_along_axis(thresholds, order, axis=1)
-    sorted_logarithms = np.take_along_axis(logarithms, order, axis=1)
-    sorted_caps = np.take_along_axis(caps, order, axis=1)
-    shift = np.full(sizes.shape, sorted_thresholds[:, -1])
-    solved = np.zeros(sizes.shape, dtype=np.bool_)
-    for saturated in range(dimension):
-        candidate = (
-            dimension * target
-            - np.sum(sorted_caps[:, :saturated], axis=1)
-            - np.sum(sorted_logarithms[:, saturated:], axis=1)
-        ) / (dimension - saturated)
-        lower_threshold = 0.0 if saturated == 0 else sorted_thresholds[:, saturated - 1]
-        accept = (
-            ~solved
-            & (candidate >= lower_threshold)
-            & (candidate <= sorted_thresholds[:, saturated])
+    if isotropic:
+        # All saturation thresholds in a row coincide. An unsaturated
+        # solution must use the same ordered sum as the general solver;
+        # every other saturation count can only return the common cap shift.
+        threshold = caps[:, 0] - logarithms[:, 0]
+        candidate = (dimension * target - np.sum(logarithms, axis=1)) / dimension
+        shift = np.where(
+            (candidate >= 0.0) & (candidate <= threshold), candidate, threshold
         )
-        shift = np.where(accept, candidate, shift)
-        solved |= accept
+    else:
+        thresholds = caps - logarithms
+        order = np.argsort(thresholds, axis=1, kind="stable")
+        sorted_thresholds = np.take_along_axis(thresholds, order, axis=1)
+        sorted_logarithms = np.take_along_axis(logarithms, order, axis=1)
+        sorted_caps = np.take_along_axis(caps, order, axis=1)
+        shift = np.full(sizes.shape, sorted_thresholds[:, -1])
+        solved = np.zeros(sizes.shape, dtype=np.bool_)
+        for saturated in range(dimension):
+            candidate = (
+                dimension * target
+                - np.sum(sorted_caps[:, :saturated], axis=1)
+                - np.sum(sorted_logarithms[:, saturated:], axis=1)
+            ) / (dimension - saturated)
+            lower_threshold = 0.0 if saturated == 0 else sorted_thresholds[:, saturated - 1]
+            accept = (
+                ~solved
+                & (candidate >= lower_threshold)
+                & (candidate <= sorted_thresholds[:, saturated])
+            )
+            shift = np.where(accept, candidate, shift)
+            solved |= accept
     shift = np.where(unshifted, 0.0, shift)
     return np.exp(np.minimum(logarithms + shift[:, None], caps))
 
@@ -1416,7 +1437,11 @@ def _grade_eigenpairs(
             sizes, edges, lengths, growth, policy.kind
         )
         realized = _realize_mean_sizes(
-            logarithms, mean_logarithms, graded, bounds[0] ** -2
+            logarithms,
+            mean_logarithms,
+            graded,
+            bounds[0] ** -2,
+            isotropic=eigenvectors is None,
         )
         achieved = np.exp(-0.5 * np.mean(np.log(realized), axis=1))
         violation = _scalar_violation(achieved, edges, lengths, growth, policy.kind)
@@ -1482,6 +1507,7 @@ def _grade_eigenpairs(
 def _exact_cpu_physical_diagonal(
     tensors: np.ndarray,
     points: np.ndarray,
+    placement: jax.Device | str | None,
     bounds: tuple[float, float, float],
     policy: MetricGradationPolicy,
     /,
@@ -1493,8 +1519,11 @@ def _exact_cpu_physical_diagonal(
         or dimension not in (2, 3)
         or not tensors.shape[0]
         or not x64_enabled()
-        or default_device_selection() is not None
-        or jax.default_backend() != "cpu"
+        or (
+            (placement is None and jax.default_backend() != "cpu")
+            or (isinstance(placement, str) and placement != "cpu")
+            or (isinstance(placement, jax.Device) and placement.platform != "cpu")
+        )
     ):
         return None
     lower, upper = bounds[1] ** -2, bounds[0] ** -2
@@ -1519,6 +1548,41 @@ def _exact_cpu_physical_diagonal(
     return diagonal
 
 
+def _grade_physical_diagonal(
+    values: np.ndarray,
+    diagonal: np.ndarray,
+    edges: np.ndarray,
+    points: np.ndarray,
+    bounds: tuple[float, float, float],
+    policy: MetricGradationPolicy,
+    /,
+) -> tuple[np.ndarray, MetricGradationEvidence] | None:
+    """Solve the axis sizes independently, then certify the realized metric."""
+    steps = _scalar_gradation_edge_lengths(points, edges)
+    steps *= policy.maximum_gradation - 1.0
+    realized, pops, updates, modified, admitted, violation = metric_grade_physical(
+        diagonal, edges, steps, (bounds[1] ** -2, bounds[0] ** -2, bounds[2])
+    )
+    if not admitted:
+        # Bounds couple the otherwise independent axes. Use the existing
+        # constrained sweep to decide whether a bounded result can converge.
+        return None
+    if modified:
+        values = values.copy()
+        axes = np.arange(diagonal.shape[1], dtype=np.int64)
+        values[:, axes, axes] = realized
+    return values, MetricGradationEvidence(
+        policy,
+        status=MetricGradationStatus.CONVERGED
+        if violation <= policy.relative_tolerance
+        else MetricGradationStatus.NUMERICAL_STOP,
+        iterations=pops,
+        updates=updates,
+        modified_count=modified,
+        maximum_violation=violation,
+    )
+
+
 def grade_mesh_metric(
     metric: MeshMetricField,
     /,
@@ -1532,6 +1596,14 @@ def grade_mesh_metric(
     ``adjacency`` holds undirected edges between metric rows and ``coordinates``
     the row-aligned vertex positions. The returned evidence certifies every edge
     a posteriori and reports convergence.
+
+    On CPU with native meshcore, coordinate-diagonal physical growth adds
+    ``(maximum_gradation - 1) * edge_length`` to each size ``1 / sqrt(lambda)``.
+    Diagonal intersection takes the minimum size per axis, so each axis
+    reaches its own greatest graded size field (up to floating-point rounding)
+    instead of stopping at the sweep tolerance. Iterations and updates count
+    scalar label-setting work summed over the axes. If the result violates the
+    declared bounds, the bounded sweep still determines the termination.
     """
     if not isinstance(metric, MeshMetricField):
         raise TypeError("metric must be MeshMetricField.")
@@ -1543,29 +1615,36 @@ def grade_mesh_metric(
     points = _points(coordinates, rows, dimension)
     bounds = (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy)
     diagonal = (
-        _exact_cpu_physical_diagonal(values, points, bounds, policy)
+        _exact_cpu_physical_diagonal(
+            values, points, default_device_selection(), bounds, policy
+        )
         if 0 < edges.shape[0] <= np.iinfo(np.int32).max // 2
         else None
     )
-    scalars = None if policy.anisotropic else _exact_cpu_isotropic_scalars(values)
-    if diagonal is not None:
-        eigenvalues, eigenvectors = diagonal, None
-    elif scalars is None:
-        projected = _project_admitted_metric(jnp.asarray(values))
-        eigenvalues, eigenvectors = _host_spectrum(projected)
-    else:
-        eigenvalues = np.broadcast_to(scalars[:, None], (rows, dimension))
-        eigenvectors = None
-    graded, evidence = _grade_eigenpairs(
-        bounds,
-        eigenvalues,
-        eigenvectors,
-        edges,
-        points,
-        policy,
+    result = (
+        _grade_physical_diagonal(values, diagonal, edges, points, bounds, policy)
+        if diagonal is not None and meshcore_available()
+        else None
     )
+    if result is None:
+        scalars = None if policy.anisotropic else _exact_cpu_isotropic_scalars(values)
+        if diagonal is not None:
+            eigenvalues, eigenvectors = diagonal, None
+        elif scalars is None:
+            projected = _project_admitted_metric(jnp.asarray(values))
+            eigenvalues, eigenvectors = _host_spectrum(projected)
+        else:
+            eigenvalues = np.broadcast_to(scalars[:, None], (rows, dimension))
+            eigenvectors = None
+        graded, evidence = _grade_eigenpairs(
+            bounds, eigenvalues, eigenvectors, edges, points, policy
+        )
+    else:
+        graded, evidence = result
     if not evidence.converged:
         raise MetricGradationError(evidence)
+    if result is not None and not evidence.modified_count:
+        return metric, evidence
     field = MeshMetricField(
         metric.scope,
         graded,
