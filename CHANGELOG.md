@@ -22,6 +22,9 @@
   authored vertices, hole domains and constraint ancestry are retained.
 - Quadratic geometry validity prepares one ordered sparse derivative stencil
   per bank without changing exact verdicts, bounds, or geometry.
+- Tetrahedral ring reconnection rejects forbidden diagonals before searching
+  their subpolygons. It retains the same admissible triangulations, tie order,
+  quality arithmetic and edit evidence.
 - Native CAD solids with compatible hard whole-wall protection use the
   native construction and two-sided certificate, reporting the protected
   bound after proof. Newly admitted requests can change mesh identity.
@@ -762,6 +765,10 @@
   in-band quality stages search within two vertex rings of those endpoints
   instead of the whole mesh. Band, orientation and stall checks are
   unchanged; adapted meshes and evidence IDs can change.
+- For explicit scalar tetrahedral metrics, the first refinement pass sequence
+  defers splits that would immediately create a short spoke. Unrestricted
+  splitting remains available before stall. This changes edit order and can
+  change target mesh, transfer and evidence identities.
 - Hex-dominant smoothing omits derivative terms from faces and cells
   without a movable interior vertex in their stencil. Reduction order
   for movable vertices and all validity checks are unchanged.

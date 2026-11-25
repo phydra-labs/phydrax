@@ -350,6 +350,9 @@ class Adapter {
                        double* point, double& parameter) const;
   bool sync_split_facets(std::int32_t slot, std::int32_t inserted);
   TetEditStatus split(std::int32_t a, std::int32_t b, bool& applied);
+  // In a scalar field postpone inserting a midpoint with a short spoke.
+  // Reopen unrestricted splitting at the first plateau, before exhaustion.
+  bool separated_splits_ = false;
   // Constrained segment and non-hull splits use disjoint batches.
   struct PendingSplit {
     std::int32_t a = -1;
@@ -1154,6 +1157,7 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   if (!added.measured || !removed.measured) return TetEditStatus::kApplied;
   added.finish();
   if (!objective_decreases(removed, added, false)) return TetEditStatus::kApplied;
+  if (separated_splits_ && !added.short_side.empty()) return TetEditStatus::kApplied;
 
   if (*support == EdgeSupport::kBatch) {
     for (std::int32_t slot : shell) {
@@ -2304,17 +2308,41 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
   };
   std::optional<Option> best;
   std::vector<std::array<int, 3>> triangles;
-  // The two cells of a ring triangle in one orientation are evaluated once:
-  // memo[(i m + k) m + j][choice] holds state (0 unknown, 1 valid, 2 not) and
-  // the two qualities.
+  // Ordered triples i < k < j have colexicographic rank C(j,3)+C(k,2)+i.
+  // Cache each pair of oriented cone qualities once without cubic padding.
   struct Evaluated {
     int state = 0;
     double first = 0.0;
     double second = 0.0;
   };
-  std::vector<std::array<Evaluated, 2>> memo(m * m * m);
-  std::vector<int> diagonal_state(m * m, 0);
-  std::vector<double> diagonal_length(m * m, 0.0);
+  constexpr auto max_vertices = kMaxRingCells + 1;
+  constexpr auto max_triangles = max_vertices * (max_vertices - 1) * (max_vertices - 2) / 6;
+  std::array<std::array<Evaluated, 2>, max_triangles> memo{};
+  std::array<std::uint8_t, max_vertices * max_vertices> diagonal_state{};
+  std::array<double, max_vertices * max_vertices> diagonal_length;
+  const auto is_side = [&](int i, int j) {
+    return j - i == 1 || (closed && j - i == static_cast<int>(m) - 1);
+  };
+  // A subpolygon has the same base in every one of its triangulations.
+  // Refuse it before evaluating any triangles behind a forbidden diagonal.
+  const auto admissible = [&](int i, int j) {
+    if (is_side(i, j)) return true;
+    const auto key = static_cast<std::size_t>(i) * m + static_cast<std::size_t>(j);
+    auto& state = diagonal_state[key];
+    if (state == 0) {
+      state = 2;
+      const auto x = ring[static_cast<std::size_t>(i)];
+      const auto y = ring[static_cast<std::size_t>(j)];
+      if (!protected_edge(x, y) && incidence_.edge_star(x, y).empty()) {
+        const double length = edge_length(x, y);
+        diagonal_length[key] = length;
+        if ((!shape && !preserve_band) || (length >= shape_lower() && length <= kUpperLength)) {
+          state = 1;
+        }
+      }
+    }
+    return state == 1;
+  };
   const auto evaluate = [&]() {
     Option option;
     double quality = shape ? 0.0 : std::numeric_limits<double>::infinity();
@@ -2325,9 +2353,8 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
       const std::int32_t a = ring[static_cast<std::size_t>(triangle[0])];
       const std::int32_t b = ring[static_cast<std::size_t>(triangle[1])];
       const std::int32_t c = ring[static_cast<std::size_t>(triangle[2])];
-      const std::size_t key =
-          (static_cast<std::size_t>(triangle[0]) * m + static_cast<std::size_t>(triangle[1])) * m +
-          static_cast<std::size_t>(triangle[2]);
+      const auto [i, k, j] = triangle;
+      const auto key = static_cast<std::size_t>(j * (j - 1) * (j - 2) / 6 + k * (k - 1) / 2 + i);
       double first = 0.0;
       double second = 0.0;
       for (int choice : {1, -1}) {
@@ -2353,38 +2380,15 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
       }
       quality = shape ? (quality + first) + second : std::min({quality, first, second});
     }
-    // The diagonals: ring index pairs of the triangles that are not ring
-    // sides (an open ring's ends are joined by a new edge), each checked (new
-    // and unprotected) and measured once per ring.
-    std::vector<std::array<int, 2>> diagonals;
-    for (const std::array<int, 3>& triangle : triangles) {
-      for (int side = 0; side < 3; ++side) {
-        const int i = triangle[static_cast<std::size_t>(side)];
-        const int j = triangle[static_cast<std::size_t>((side + 1) % 3)];
-        const int gap = std::abs(i - j);
-        if (gap == 1 || (closed && gap == static_cast<int>(m) - 1)) continue;
-        diagonals.push_back({std::min(i, j), std::max(i, j)});
-      }
-    }
-    std::sort(diagonals.begin(), diagonals.end());
-    diagonals.erase(std::unique(diagonals.begin(), diagonals.end()), diagonals.end());
-    for (const auto& [i, j] : diagonals) {
-      const std::size_t key = static_cast<std::size_t>(i) * m + static_cast<std::size_t>(j);
-      if (diagonal_state[key] == 0) {
-        const std::int32_t x = ring[static_cast<std::size_t>(i)];
-        const std::int32_t y = ring[static_cast<std::size_t>(j)];
-        if (!protected_edge(x, y) && incidence_.edge_star(x, y).empty()) {
-          const double value = edge_length(x, y);
-          diagonal_length[key] = value;
-          const bool eligible = !(shape || preserve_band) ||
-                                (value >= shape_lower() && value <= kUpperLength);
-          diagonal_state[key] = eligible ? 1 : 2;
-        } else {
-          diagonal_state[key] = 2;
+    if (!shape) {
+      for (const auto& triangle : triangles) {
+        // The preorder traversal has one triangle per nontrivial subpolygon,
+        // hence each introduced diagonal is measured exactly once as a base.
+        const auto i = triangle[0], j = triangle[2];
+        if (!is_side(i, j)) {
+          option.added.add(diagonal_length[static_cast<std::size_t>(i) * m + static_cast<std::size_t>(j)]);
         }
       }
-      if (diagonal_state[key] != 1) return;
-      if (!shape) option.added.add(diagonal_length[key]);
     }
     if (!option.added.measured) return;
     if (!shape) option.added.finish();
@@ -2397,6 +2401,7 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
   // Triangulations of polygon [i, j] with base (i, j), recursively.
   const std::function<void(int, int, const std::function<void()>&)> triangulate =
       [&](int i, int j, const std::function<void()>& next) {
+        if (!admissible(i, j)) return;
         if (j - i < 2) {
           next();
           return;
@@ -4158,6 +4163,8 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     const auto status = adapt_metric_layers(mesh_, input_, *carriers_, output);
     if (status.has_value()) return *status;
   }
+  separated_splits_ = input_.topology_operations && input_.relocation && carriers_ &&
+                      !tensor_field && !mesh_.implicit_source();
   if (mesh_.vertex_slot_count() >= 512) {
     edge_measurements_.resize(16'384);
   }
@@ -4237,7 +4244,9 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // boundary moves, moving survivors and deeper searches.
     bool stalled = false;
     bool stage_step = false;
-    if (input_.relocation && !boundary_moves_) {
+    if (input_.topology_operations && separated_splits_) {
+      separated_splits_ = false;
+    } else if (input_.relocation && !boundary_moves_) {
       boundary_moves_ = true;
     } else if (input_.topology_operations && carriers_ && !survivor_moves_) {
       survivor_moves_ = true;
