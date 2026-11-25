@@ -666,7 +666,7 @@ single quiet run of the final integrated tree.
 
 | Route | Matched comparison | Limit |
 |---|---|---|
-| F2 linear CAD | Large quadric on `cf6517191e`: all quality gates pass; native 1.180 s versus HXT 1.154 s at eight workers | Eight-worker timing miss; one worker passes |
+| F2 linear CAD | Original large quadric on `7e00f7048c`: native 1.125606 s versus HXT 1.132836 s at eight workers, all quality gates pass | Quiet construction comparison (board `93155cbf`), not proof latency |
 | F10 affine point location | `66f1c8fb45`: all eight real comparisons against libigl 2.6.3 pass; eight-worker 100k and 1M clocks are 18.019/18.783 ms and 128.148/176.247 ms | Query only; both tools have zero wrong, missed, or extra locations |
 | F6b no-op adaptation | Original Box-12/25/55, 12/12 against Omega_h 9.34.13 with attested 1/2/4/8 OpenMP teams; eight-worker native/reference minima 2.538/2.771, 14.418/17.315, and 119.839/144.523 ms | Unchanged source and metric IDs; edited F6 is separate |
 | F8 unlayered hex-dominant | Original sphere and quadric, 4/4 each against actual `snappyHexMesh` ranks with invariant native outputs | cfMesh did not run matched teams |
