@@ -2000,7 +2000,13 @@ def _f6_stage_seconds(result: object, /) -> float:
 
 
 def _f6_rows(
-    sizes: tuple[int, ...], inputs: Path, names: frozenset[str] | None, /
+    sizes: tuple[int, ...],
+    inputs: Path,
+    names: frozenset[str] | None,
+    /,
+    *,
+    sources: Mapping[int, tuple[str, int]] = _F6_SIZES,
+    references: Mapping[tuple[str, int], tuple[float, float]] = _F6_REFERENCE,
 ) -> tuple[_Row, ...]:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.discretization._cell_mesh import CellBlock, CellMesh
@@ -2024,7 +2030,7 @@ def _f6_rows(
     from phydrax.meshing._tetra_metric import TetraMetricEvidence
 
     rows: list[_Row] = []
-    for size, (label, cell_count) in _F6_SIZES.items():
+    for size, (label, cell_count) in sources.items():
         if size not in sizes:
             continue
         points, cells, source_digests = _f6_source(inputs / f"{label}.npz", cell_count)
@@ -2125,7 +2131,7 @@ def _f6_rows(
                     quality=partial(
                         _f6_quality,
                         field,
-                        _F6_REFERENCE[field, size],
+                        references[field, size],
                         points,
                         coarsen_sizes,
                     ),
@@ -2864,21 +2870,16 @@ def _adapted_cells(result: object, /) -> int:
     return sum(block.vertices.shape[0] for block in result.outcome.target.mesh.blocks)
 
 
-def _f6_quality(
+def _f6_quality_values(
     field: str,
-    reference: tuple[float, float],
     source_points: np.ndarray,
     coarsen_sizes: np.ndarray | None,
-    result: object,
+    points: np.ndarray,
+    cells: np.ndarray,
     /,
-) -> tuple[int, dict[str, float]]:
+) -> dict[str, float]:
     # Independent F6b measurement: original midpoint field and Euclidean
     # shape, except for anisotropic shape in the centroid's target metric.
-    from phydrax.meshing import MeshAdaptationStatus
-
-    if not isinstance(result, _F6Run):
-        raise TypeError("The F6 row returns construction and finalization evidence.")
-    points, cells = _adapted_arrays(result)
     edges = _tet_edges(cells)
     vector = points[edges[:, 1]] - points[edges[:, 0]]
     midpoint = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
@@ -2932,17 +2933,37 @@ def _f6_quality(
     quality = 12.0 * np.cbrt(9.0 * volume**2) / squares * np.sign(volume)
     share = float(np.mean((length >= 0.7) & (length <= 1.4)))
     inverted = int(np.count_nonzero(volume <= 0.0))
-    missed = (
-        inverted
-        + int(share < reference[0])
-        + int(float(quality.mean()) < reference[1])
-        + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
-    )
-    return missed, {
+    return {
         "share_0_7_1_4": share,
         "quality_min": float(quality.min()),
         "quality_mean": float(quality.mean()),
         "inverted": float(inverted),
+    }
+
+
+def _f6_quality(
+    field: str,
+    reference: tuple[float, float],
+    source_points: np.ndarray,
+    coarsen_sizes: np.ndarray | None,
+    result: object,
+    /,
+) -> tuple[int, dict[str, float]]:
+    from phydrax.meshing import MeshAdaptationStatus
+
+    if not isinstance(result, _F6Run):
+        raise TypeError("The F6 row returns construction and finalization evidence.")
+    quality = _f6_quality_values(
+        field, source_points, coarsen_sizes, *_adapted_arrays(result)
+    )
+    missed = (
+        int(quality["inverted"])
+        + int(quality["share_0_7_1_4"] < reference[0])
+        + int(quality["quality_mean"] < reference[1])
+        + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
+    )
+    return missed, {
+        **quality,
         "certification_and_transfer_seconds": result.finalization_seconds,
         "reference_share": reference[0],
         "reference_quality_mean": reference[1],

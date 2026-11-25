@@ -1,4 +1,4 @@
-"""Reference driver for the `improve-sphere` rows of `benchmarks/native_meshing.py`.
+"""MMG3D comparisons for native tetrahedral improvement and metric adaptation.
 
 Runs in a reference environment with the `tetgen` package and an MMG3D
 binary (`mmg3d_O3` on PATH or `--mmg3d`), not in the package environment:
@@ -14,12 +14,21 @@ binary (`mmg3d_O3` on PATH or `--mmg3d`), not in the package environment:
       time, and the output's measured quality, as one JSON line.
 
 Interleave `time` with the row (reference, ours, repeated; minimum each).
+
+For rapid metric iteration, run in the Phydrax benchmark environment:
+
+  OMP_NUM_THREADS=1 python -m benchmarks.native_meshing_mmg3d metric DIR --field iso
+
+DIR contains the small feature.npz source and feature.FIELD.mbin target. Both
+tools read the same mesh and sampled target. This is a single paired
+diagnostic, not a pass on the archived size ladder.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,15 +62,26 @@ def _boundary(cells: np.ndarray, /) -> np.ndarray:
     return faces[first[count == 1]]
 
 
-def _write_medit(path: Path, points: np.ndarray, cells: np.ndarray, /) -> None:
-    triangles = _boundary(cells)
+def _write_medit(
+    path: Path,
+    points: np.ndarray,
+    cells: np.ndarray,
+    /,
+    *,
+    boundary: tuple[np.ndarray, np.ndarray] | None = None,
+) -> None:
+    if boundary is None:
+        triangles = _boundary(cells)
+        refs = np.ones(len(triangles), dtype=np.int32)
+    else:
+        triangles, refs = boundary
     with path.open("w", encoding="ascii") as stream:
         stream.write(f"MeshVersionFormatted 2\nDimension 3\nVertices\n{len(points)}\n")
         np.savetxt(
             stream, np.c_[points, np.zeros(len(points))], fmt="%.17g %.17g %.17g %d"
         )
         stream.write(f"Triangles\n{len(triangles)}\n")
-        np.savetxt(stream, np.c_[triangles + 1, np.ones(len(triangles))], fmt="%d")
+        np.savetxt(stream, np.c_[triangles + 1, refs], fmt="%d")
         stream.write(f"Tetrahedra\n{len(cells)}\n")
         np.savetxt(stream, np.c_[cells + 1, np.zeros(len(cells))], fmt="%d")
         stream.write("End\n")
@@ -184,15 +204,118 @@ def measure(directory: Path, level: int, mmg3d: str, /) -> None:
     )
 
 
+def _write_metric(path: Path, tensors: np.ndarray, anisotropic: bool, /) -> None:
+    if anisotropic:
+        # Medit symmetric tensor order: xx xy yy xz yz zz.
+        values = tensors[:, (0, 0, 1, 0, 1, 2), (0, 1, 1, 2, 2, 2)]
+    else:
+        values = 1.0 / np.sqrt(tensors[:, 0, 0])
+    with path.open("w", encoding="ascii") as stream:
+        stream.write(
+            f"MeshVersionFormatted 2\nDimension 3\nSolAtVertices\n{len(tensors)}\n"
+            f"1 {3 if anisotropic else 1}\n"
+        )
+        np.savetxt(stream, values, fmt="%.17g")
+        stream.write("End\n")
+
+
+def _measure_metric(directory: Path, field: str, mmg3d: str, /) -> None:
+    from benchmarks.native_meshing import (
+        _F6_FIELDS,
+        _f6_quality_values,
+        _f6_rows,
+        _f6_source,
+        _f6_target,
+        _measure,
+    )
+
+    if os.environ.get("OMP_NUM_THREADS") != "1":
+        raise RuntimeError("Run the paired metric comparison with OMP_NUM_THREADS=1.")
+    if field not in _F6_FIELDS:
+        raise ValueError(f"--field must be one of {', '.join(_F6_FIELDS)}.")
+    source = directory / "feature.npz"
+    with np.load(source, allow_pickle=False) as bank:
+        count = bank["el"].shape[0]
+        boundary = bank["bnd"], bank["bnd_ref"]
+    if not 1 <= count <= 512:
+        raise ValueError(
+            "The paired metric diagnostic requires at most 512 source tetrahedra."
+        )
+    points, cells, _ = _f6_source(source, count)
+    tensors, _ = _f6_target(
+        directory / f"feature.{field}.mbin", len(points), 6 if field == "aniso" else 1
+    )
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        mesh, sol, out = root / "source.mesh", root / "target.sol", root / "output.mesh"
+        _write_medit(mesh, points, cells, boundary=boundary)
+        _write_metric(sol, tensors, field == "aniso")
+        completed = subprocess.run(
+            [
+                mmg3d,
+                "-in",
+                str(mesh),
+                "-sol",
+                str(sol),
+                "-out",
+                str(out),
+                "-m",
+                "3800",
+                "-v",
+                "1",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        library = re.search(r"MMG3DLIB: ELAPSED TIME\s+([0-9.]+)s", completed.stdout)
+        if library is None:
+            raise RuntimeError("MMG3D did not report its library time.")
+        output_points, output_cells = _read_medit(out)
+    coarsen_sizes = 1.0 / np.sqrt(tensors[:, 0, 0]) if field == "coarsen" else None
+    quality = _f6_quality_values(
+        field, points, coarsen_sizes, output_points, output_cells
+    )
+    (row,) = _f6_rows(
+        (count,),
+        directory,
+        frozenset({f"metric-3d-{field}"}),
+        sources={count: ("feature", count)},
+        references={(field, count): (quality["share_0_7_1_4"], quality["quality_mean"])},
+    )
+    print(
+        json.dumps(
+            {
+                "field": field,
+                "source_tetrahedra": count,
+                "input_sha256": dict(row.input_sha256),
+                "mmg3d": {
+                    "elements": len(output_cells),
+                    "seconds": float(library.group(1)),
+                    "quality": quality,
+                },
+                "phydrax": _measure(row, 1),
+            }
+        ),
+        flush=True,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "time"))
+    parser.add_argument("command", choices=("prepare", "time", "metric"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("level", type=int, nargs="?", choices=LEVELS)
     parser.add_argument("--mmg3d", default="mmg3d_O3")
+    parser.add_argument(
+        "--field", default="coarsen", help="metric target (iso, aniso, coarsen)"
+    )
     arguments = parser.parse_args()
     if arguments.command == "prepare":
         prepare(arguments.directory)
+    elif arguments.command == "metric":
+        _measure_metric(arguments.directory, arguments.field, arguments.mmg3d)
     else:
         if arguments.level is None:
             parser.error("time needs LEVEL")

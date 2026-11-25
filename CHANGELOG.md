@@ -736,6 +736,9 @@
   the regenerated source and target digests. The authenticated 10,452-cell
   coarsening row allows 3.5× its original construction time; completion,
   orientation, and quality gates are unchanged.
+- The MMG3D benchmark driver can compare a small graded tetrahedral
+  fixture on shared inputs and report construction, certification, and
+  edge refusal evidence separately from the original size ladder.
 - Planar native meshing computes the same Hilbert insertion keys with
   grouped coordinate-bit transitions. Quantization, tie ordering, and
   triangulation outputs are unchanged.

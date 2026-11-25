@@ -454,6 +454,27 @@ the original quality thresholds to three decimals. Reference clocks and
 their input digests are recorded in `benchmarks/native_meshing_ceilings.json`.
 These are reference runs, not Phydrax scaling results.
 
+### Rapid graded adaptation comparison
+
+Use the 388-tetrahedron feature box in the coordination board's
+`artifacts/MAC/native-redesign/graded-metric-probe/`. It crosses the original
+F6 spherical sizing shell and anisotropic midplane. Run one target at a time:
+
+```sh
+OMP_NUM_THREADS=1 PHX_MESHCORE_THREADS=1 python -m benchmarks.native_meshing_mmg3d \
+  metric DIR --field iso --mmg3d /path/to/mmg3d_O3
+```
+
+Both tools use the same ordered source mesh and sampled target. The driver
+reports construction separately from certification and transfer, and keeps
+native completion and edge refusal evidence even when quality improves.
+The probe is for iteration, not a substitute for ladder qualification.
+On the integrated cover-fix image, the crop coarsens to completion with no
+inversions but misses MMG3D's mean shape (0.78597 vs 0.79798). Iso and aniso
+exceed both sampled quality thresholds with no inversions, but stall at 21
+and 26 residual edges respectively. Do not time larger edited inputs to
+diagnose those refusals.
+
 The F1 q30 size ladder uses h = 0.0431, 0.01362, 0.00431, and 0.001362, with the
 same points, segments, hole seeds, and equilateral area limit on both sides.
 Measure covered area, positive orientation, and maximum area as well as the
