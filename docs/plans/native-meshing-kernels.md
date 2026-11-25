@@ -536,6 +536,13 @@ share is 0.89728 vs 0.83795. There are no residuals or inversions.
 The coarsening crop retains its measured science, bit for bit. Neither
 the isotropic clock nor any larger refinement row is qualified here.
 
+Bounding the post-completion topology phase to three whole-cavity sweeps
+on the same scalar refinement route reduces the paired construction
+sample to **1.820 s vs 0.292 s**. Worst shape is unchanged at 0.60997;
+mean shape is 0.85598, midpoint band share is 0.89701, and the sample has
+zero inversions and out-of-band edges. Incomplete-band repair still uses
+the exhaustive topology search. This does not close the isotropic clock.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
@@ -731,7 +738,7 @@ single quiet run of the final integrated tree.
 | F10 affine point location | `2c2f3e5890`: all eight comparisons against libigl 2.6.3 pass; eight-worker 100k and 1M clocks are 18.229/19.586 ms and 128.491/179.771 ms | Query only; both tools have zero wrong, missed, or extra locations |
 | F6b no-op adaptation | Original Box-12/25/55, 12/12 against Omega_h 9.34.13 with attested 1/2/4/8 OpenMP teams; eight-worker native/reference minima 2.538/2.771, 14.418/17.315, and 119.839/144.523 ms | Unchanged source and metric IDs; edited F6 is separate |
 | F8 unlayered hex-dominant | Original sphere and quadric, 4/4 each against actual `snappyHexMesh` ranks with invariant native outputs | cfMesh did not run matched teams |
-| F8 two layers | Original sphere against eight actual `snappyHexMesh` ranks: native skewness 0.495351 versus 0.497436; both native layers meet their projected thickness floors | Native 5.115514 s beats the live 5.193225 s but misses the historical 5.066336 s limit. One-minute load 6.892→6.282 excludes quiet acceptance. Layered quadric reference fails the independent decomposition check |
+| F8 two layers | Original sphere against eight actual `snappyHexMesh` ranks: native skewness 0.495351 versus 0.497436; both native layers meet their projected thickness floors | Native 5.115514 s beats the live 5.193225 s but misses the historical 5.066336 s limit. One-minute load 6.892→6.282 excludes quiet acceptance. The original layered quadric at eight ranks placed only 24,008 of 24,800 layer cells and had eight cells with a nonpositive independent decomposition despite passing `checkMesh` |
 | F9 prism layers | Original sphere h = 0.1 passes live Gmsh at 1/2/4/8 requests with native output invariance | cfMesh output on the other layer rows fails its own `checkMesh` gate |
 
 Raw receipts are in the coordination board under

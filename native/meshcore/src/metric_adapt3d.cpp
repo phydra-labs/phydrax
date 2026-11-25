@@ -73,6 +73,8 @@ constexpr double kImprovement = 1e-6;
 constexpr int kSplitBits = 5;
 constexpr std::int32_t kNoBlock = -1;
 constexpr std::int64_t kScalarShapeSweeps = 4;
+constexpr std::int64_t kScalarTopologySweeps = 3;
+constexpr std::int64_t kUntilShapeStall = std::numeric_limits<std::int64_t>::max();
 constexpr double kShapeCageTarget = 0.61;
 constexpr double kShapeCageFloor = 0.60;
 constexpr std::size_t kShapeCageVertices = 40;
@@ -390,7 +392,7 @@ class Adapter {
   // Swaps: 2-3 face flips and ring reconnections (3-2 included) of interior
   // cavities, committed star-locally.
   std::int64_t swap_sweep();
-  std::int64_t shape_sweeps();
+  std::int64_t shape_sweeps(std::int64_t maximum_sweeps = kUntilShapeStall);
   std::int64_t commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
                             std::vector<IdEdge>& edges, std::optional<double> shape_reference,
                             bool preserve_band = false);
@@ -2450,7 +2452,7 @@ std::int64_t Adapter::swap_sweep() {
   return commit_swaps(faces, edges, std::nullopt);
 }
 
-std::int64_t Adapter::shape_sweeps() {
+std::int64_t Adapter::shape_sweeps(std::int64_t maximum_sweeps) {
   // The ordinary frontier contains only residual edges and poor cells.
   // A full closed-cavity sweep can improve their neighbors too. Fixing the
   // reference and vertex bank gives a finite improving topology search.
@@ -2468,7 +2470,7 @@ std::int64_t Adapter::shape_sweeps() {
   std::vector<std::pair<std::uint64_t, int>> faces;
   std::vector<IdEdge> edges;
   std::int64_t sweeps = 0;
-  for (;;) {
+  for (; sweeps < maximum_sweeps; ++sweeps) {
     faces.clear();
     edges.clear();
     for (std::size_t row = 0; row < cells.size(); ++row) {
@@ -2490,8 +2492,8 @@ std::int64_t Adapter::shape_sweeps() {
     }
     const auto applied = commit_swaps(faces, edges, reference);
     if (fatal_ != TetEditStatus::kApplied || applied == 0) return sweeps;
-    ++sweeps;
   }
+  return sweeps;
 }
 
 std::int64_t Adapter::commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
@@ -4106,21 +4108,21 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // Splits are exhausted at the changed vertices: the band may hold.
     const bool done = complete(input_.lower);
     if (done) {
+      // Bound global polishing after net scalar refinement when the local
+      // worst-cell repair will follow. Never cap an incomplete-band search.
+      const bool scalar_refinement = input_.relocation && carriers_ && !tensor_field &&
+                                    counters_.splits > counters_.collapses;
       // An edited mesh can reach the band before the shape search. This
       // pass leaves every retained edge unchanged and checks each new edge
       // against both the unit band and the caller's completion bound.
       if (input_.topology_operations && !shape_searched) {
-        const auto shaped = shape_sweeps();
+        const auto shaped = shape_sweeps(scalar_refinement ? kScalarTopologySweeps
+                                                           : kUntilShapeStall);
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
         passes += shaped;
       }
       if (input_.relocation && carriers_) {
-        // Net refinement grows the global mean frontier. Bound that optional
-        // work before lifting the worst cells; keep full polish after coarsening.
-        const bool scalar_refinement = !tensor_field && counters_.splits > counters_.collapses;
-        const auto budget = scalar_refinement ? kScalarShapeSweeps
-                                               : std::numeric_limits<std::int64_t>::max();
-        passes += smooth_shape(budget);
+        passes += smooth_shape(scalar_refinement ? kScalarShapeSweeps : kUntilShapeStall);
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
         passes += lift_shape_tail();
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
