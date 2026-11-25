@@ -670,17 +670,52 @@ bool open_overlap(const Bounds& a, const Bounds& b) {
   return true;
 }
 
+// Source cell bounds, with a bounding-volume hierarchy built on first use.
+// Face-connected ancestry walks only read the bounds; the hierarchy serves
+// targets without an adjacent seed.
 class CellIndex {
  public:
   void build(std::span<const TetCoordinates> points) {
-    const std::size_t count = points.size();
+    bounds_.clear();
+    bounds_.reserve(points.size());
+    for (const auto& cell : points) bounds_.push_back(tet_bounds(tet_points(cell)));
+    nodes_.clear();
+    order_.clear();
+  }
+
+  template <class Visit>
+  bool visit(const Bounds& box, Visit&& visitor) {
+    if (nodes_.empty()) build_hierarchy();
+    // Median bisection of an int64 item count cannot exceed 64 levels.
+    std::array<std::int64_t, 64> stack{0};
+    std::size_t size = 1;
+    while (size > 0) {
+      const Node& node = nodes_[stack[--size]];
+      if (!open_overlap(box, node.box)) continue;
+      if (node.left >= 0) {
+        stack[size++] = node.right;
+        stack[size++] = node.left;
+      } else {
+        for (auto at = node.start; at < node.stop; ++at) {
+          const auto row = order_[at];
+          if (open_overlap(box, bounds_[row]) &&
+              !visitor(static_cast<std::size_t>(row), bounds_[row])) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  const Bounds& bounds(std::size_t row) const { return bounds_[row]; }
+
+ private:
+  void build_hierarchy() {
+    const std::size_t count = bounds_.size();
     const std::size_t capacity = 2 * count;
-    bounds_.reserve(count);
     std::vector<double> low(3 * count), high(3 * count);
     for (std::size_t row = 0; row < count; ++row) {
-      const Bounds& b = bounds_.emplace_back(tet_bounds(tet_points(points[row])));
-      std::copy(b.low.begin(), b.low.end(), low.begin() + 3 * row);
-      std::copy(b.high.begin(), b.high.end(), high.begin() + 3 * row);
+      std::copy(bounds_[row].low.begin(), bounds_[row].low.end(), low.begin() + 3 * row);
+      std::copy(bounds_[row].high.begin(), bounds_[row].high.end(), high.begin() + 3 * row);
     }
     order_.resize(count);
     std::vector<std::int64_t> start(capacity), stop(capacity), left(capacity), right(capacity),
@@ -710,32 +745,6 @@ class CellIndex {
       }
     }
   }
-
-  template <class Visit>
-  bool visit(const Bounds& box, Visit&& visitor) const {
-    // Median bisection of an int64 item count cannot exceed 64 levels.
-    std::array<std::int64_t, 64> stack{0};
-    std::size_t size = 1;
-    while (size > 0) {
-      const Node& node = nodes_[stack[--size]];
-      if (!open_overlap(box, node.box)) continue;
-      if (node.left >= 0) {
-        stack[size++] = node.right;
-        stack[size++] = node.left;
-      } else {
-        for (auto at = node.start; at < node.stop; ++at) {
-          const auto row = order_[at];
-          if (open_overlap(box, bounds_[row]) &&
-              !visitor(static_cast<std::size_t>(row), bounds_[row])) return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  const Bounds& bounds(std::size_t row) const { return bounds_[row]; }
-
- private:
   struct Node {
     Bounds box;
     std::int64_t start, stop, left, right;

@@ -580,33 +580,65 @@ bool seed_scalar_box(const AdaptInput& input, const ScalarBoxField& field, Scala
   return true;
 }
 
-std::int64_t split_scalar_edges(const ScalarBoxField& field, ScalarBoxSites& sites, double separation) {
+namespace {
+
+// Site rates, then each distinct edge of sites.cells once with its metric
+// length, in first-use order. False for a malformed cell or rate.
+template <class Visit>
+bool measure_site_edges(const ScalarBoxSites& sites, std::vector<LogRate>& rates, Visit&& visit) {
   const std::size_t count = sites.points.size();
-  if (sites.samples.size() != count || count >= kMaxScalarSites || !(separation > 0.0)) return -1;
-  std::vector<LogRate> rates(count);
+  if (sites.samples.size() != count) return false;
+  rates.resize(count);
   for (std::size_t row = 0; row < count; ++row) {
     rates[row] = log_rate(sites.samples[row].log_rate);
-    if (!(rates[row].rate > 0.0) || !std::isfinite(rates[row].rate)) return -1;
+    if (!(rates[row].rate > 0.0) || !std::isfinite(rates[row].rate)) return false;
   }
-  const auto& points = sites.points;
   // A conforming tetrahedral ball has at most C + 2V distinct edges.
   KeyMap seen(sites.cells.size() + 2 * count);
-  std::vector<LongEdge> proposals;
   for (const auto& cell : sites.cells) {
     for (const auto& [i, j] : kEdges) {
       const auto a = cell[i], b = cell[j];
       if (a < 0 || b < 0 || static_cast<std::size_t>(a) >= count ||
-          static_cast<std::size_t>(b) >= count || a == b) return -1;
+          static_cast<std::size_t>(b) >= count || a == b) return false;
       const auto key = topology::undirected_edge(a, b);
       auto& slot = seen.slot(key);
       if (slot != -1) continue;
       slot = -2;
       const auto [u, v] = edge_rows(key);
-      const double length = distance(points[u], points[v]) * mean_rate(rates[u], rates[v]);
-      if (!std::isfinite(length)) return -1;
-      if (length > kUpperLength) proposals.push_back({key, length});
+      const double length = distance(sites.points[u], sites.points[v]) * mean_rate(rates[u], rates[v]);
+      if (!std::isfinite(length)) return false;
+      visit(key, length);
     }
   }
+  return true;
+}
+
+}  // namespace
+
+double scalar_long_edge_fraction(const ScalarBoxSites& sites, double threshold) {
+  std::vector<LogRate> rates;
+  std::size_t edges = 0, longer = 0;
+  if (!measure_site_edges(sites, rates, [&](EdgeKey, double length) {
+        ++edges;
+        if (length > threshold) ++longer;
+      }) || edges == 0) {
+    return -1.0;
+  }
+  return static_cast<double>(longer) / static_cast<double>(edges);
+}
+
+std::int64_t split_scalar_edges(const ScalarBoxField& field, ScalarBoxSites& sites, double separation,
+                                double threshold) {
+  const std::size_t count = sites.points.size();
+  if (count >= kMaxScalarSites || !(separation > 0.0) || !(threshold >= kUpperLength)) return -1;
+  std::vector<LogRate> rates;
+  std::vector<LongEdge> proposals;
+  if (!measure_site_edges(sites, rates, [&](EdgeKey key, double length) {
+        if (length > threshold) proposals.push_back({key, length});
+      })) {
+    return -1;
+  }
+  const auto& points = sites.points;
   if (proposals.empty()) return 0;
   std::sort(proposals.begin(), proposals.end(), [](const LongEdge& a, const LongEdge& b) {
     return a.length == b.length ? a.key < b.key : a.length > b.length;

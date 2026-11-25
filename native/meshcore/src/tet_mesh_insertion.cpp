@@ -3006,6 +3006,21 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     return chart->second.covers(carriers, facet.orientation);
   };
 
+  // A declared group gains many facets in one retessellation. Its prepared
+  // bounds only prune candidate rows and boundary edges, so each verdict is
+  // the unprepared one; preparing pays off only for repeated queries.
+  constexpr std::size_t kPreparedGroupFacets = 8;
+  std::map<std::int32_t, std::unique_ptr<TetMesh::PreparedFacetGroup>> prepared_groups;
+  if (!relocation && operation.replacement_facets.size() >= kPreparedGroupFacets) {
+    std::map<std::int32_t, std::size_t> group_facets;
+    for (const TetEditFacet& facet : operation.replacement_facets) ++group_facets[facet.source];
+    for (const auto& [source, uses] : group_facets) {
+      const auto declared = mesh.declared_groups_.find(source);
+      if (uses < kPreparedGroupFacets || declared == mesh.declared_groups_.end()) continue;
+      prepared_groups.emplace(
+          source, std::make_unique<TetMesh::PreparedFacetGroup>(mesh, declared->second));
+    }
+  }
   std::vector<TetSnapshotFacet> future_facets;
   if (!relocation) {
     future_facets.reserve(mesh.facets_.size() + operation.replacement_facets.size());
@@ -3021,7 +3036,10 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       }
       // Exact PWL refusals are invalid; interval-source undecidability remains
       // an uncertain predicate and is retained in the source refusal counters.
-      if (!chart_covers(facet) && !mesh.source_face_valid(facet)) {
+      const auto prepared = prepared_groups.find(facet.source);
+      if (!chart_covers(facet) &&
+          !mesh.source_face_valid(facet, nullptr,
+                                  prepared == prepared_groups.end() ? nullptr : prepared->second.get())) {
         return mesh.source_face_refusal_status();
       }
       TetSnapshotFacet record;

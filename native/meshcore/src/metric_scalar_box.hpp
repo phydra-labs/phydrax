@@ -61,11 +61,17 @@ bool scalar_topology_accepted(std::int32_t status);
 bool seed_scalar_box(const AdaptInput& input, const ScalarBoxField& field, ScalarBoxSites& sites);
 bool fill_scalar_wall_gaps(const ScalarBoxField& field, ScalarBoxSites& sites);
 
-// Append separated metric midpoints of the metric-long edges of sites.cells,
-// longest first, each at least `separation` in metric length from every
-// site. Returns the number appended, or -1 when the field, cells or site
-// budget refuse the proposal. sites.cells is left as given.
-std::int64_t split_scalar_edges(const ScalarBoxField& field, ScalarBoxSites& sites, double separation);
+// Append separated metric midpoints of the edges of sites.cells longer than
+// `threshold` (at least the band's upper length) in metric length, longest
+// first, each at least `separation` in metric length from every site.
+// Returns the number appended, or -1 when the field, cells or site budget
+// refuse the proposal. sites.cells is left as given.
+std::int64_t split_scalar_edges(const ScalarBoxField& field, ScalarBoxSites& sites, double separation,
+                                double threshold);
+
+// Fraction of the distinct edges of sites.cells longer than `threshold` in
+// metric length; -1 for malformed cells or rates.
+double scalar_long_edge_fraction(const ScalarBoxSites& sites, double threshold);
 
 // Alternate exact point-set triangulation with source-weighted circumcenter
 // relocation on each point's actual box stratum; leave the last *pre-move*

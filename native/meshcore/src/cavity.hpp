@@ -489,11 +489,28 @@ class CavityEdit {
   };
 
   EditStatus collect_boundary() {
-    sorted_removed_.assign(removed_.begin(), removed_.end());
-    std::sort(sorted_removed_.begin(), sorted_removed_.end());
-    if (std::adjacent_find(sorted_removed_.begin(), sorted_removed_.end()) != sorted_removed_.end()) {
-      return EditStatus::kDuplicate;
+    // Whole-region retessellations remove most cells; test their membership
+    // by slot instead of binary search. Duplicates still refuse first.
+    constexpr std::size_t kDenseMembership = 4096;
+    const bool dense = removed_.size() > kDenseMembership;
+    if (dense) {
+      removed_flags_.assign(complex_.tets.size(), 0);
+      for (int32_t t : removed_) {
+        auto& flag = removed_flags_[static_cast<std::size_t>(t)];
+        if (flag != 0) return EditStatus::kDuplicate;
+        flag = 1;
+      }
+    } else {
+      sorted_removed_.assign(removed_.begin(), removed_.end());
+      std::sort(sorted_removed_.begin(), sorted_removed_.end());
+      if (std::adjacent_find(sorted_removed_.begin(), sorted_removed_.end()) != sorted_removed_.end()) {
+        return EditStatus::kDuplicate;
+      }
     }
+    const auto removed = [&](int32_t t) {
+      return dense ? removed_flags_[static_cast<std::size_t>(t)] != 0
+                   : std::binary_search(sorted_removed_.begin(), sorted_removed_.end(), t);
+    };
     boundary_.clear();
     inner_constraints_.clear();
     for (int32_t t : removed_) {
@@ -503,7 +520,7 @@ class CavityEdit {
         if (!complex_.live(other)) return EditStatus::kNonManifold;
         const int back = neighbor_slot(complex_.tets[static_cast<std::size_t>(other)], t);
         if (back < 0) return EditStatus::kNonManifold;
-        if (!std::binary_search(sorted_removed_.begin(), sorted_removed_.end(), other)) {
+        if (!removed(other)) {
           boundary_.push_back({t, k, other, back});
         } else if (complex_.constraint(t, k) != kNoConstraint) {
           int32_t face[3];
@@ -807,6 +824,7 @@ class CavityEdit {
   std::uint64_t staging_revision_ = 0;
   int32_t cone_center_ = kNoCone;
   std::vector<int32_t> removed_, sorted_removed_;
+  std::vector<std::uint8_t> removed_flags_;
   std::vector<BoundaryFacet> boundary_;
   std::vector<Tetrahedron> created_;
   std::vector<int32_t> created_constraints_, created_regions_, owners_, ids_;
