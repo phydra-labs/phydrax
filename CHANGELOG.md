@@ -732,6 +732,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Graded tetrahedral adaptation benchmark ceilings bind MMG3D results to
+  the regenerated source and target digests. The authenticated 10,452-cell
+  coarsening row allows 3.5× its original construction time; completion,
+  orientation, and quality gates are unchanged.
 - Planar native meshing computes the same Hilbert insertion keys with
   grouped coordinate-bit transitions. Quantization, tie ordering, and
   triangulation outputs are unchanged.
