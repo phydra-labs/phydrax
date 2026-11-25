@@ -14,8 +14,8 @@
   in aligned, graded anisotropic fields. The transaction preserves wall
   identities and records exact transfer stencils and positive-volume cell
   ancestry. `TetraMetricEvidence.retriangulations` distinguishes it from
-  local tetrahedral edits; the field changes the current evidence fingerprint
-  and stored representation even when its value is zero.
+  local tetrahedral edits. The counter is always stored but contributes to
+  the evidence fingerprint only when at least one retessellation committed.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;

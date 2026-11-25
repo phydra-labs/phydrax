@@ -188,6 +188,44 @@ def test_native_metric_route_refines_a_kuhn_cube_with_exact_lineage() -> None:
     assert new_vertices > 0
 
 
+def test_only_committed_retriangulations_change_local_evidence_identity() -> None:
+    from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
+
+    def evidence(retriangulations: int) -> TetraMetricEvidence:
+        return TetraMetricEvidence(
+            status=TetraMetricStatus.COMPLETE,
+            passes=1,
+            splits=1,
+            collapses=0,
+            flips23=0,
+            flips32=0,
+            ring_reconnections=0,
+            relocations=0,
+            rejected_topology=0,
+            rejected_protected=0,
+            rejected_uncertain=0,
+            rejected_invalid=0,
+            retriangulations=retriangulations,
+            measured_edges=9,
+            out_of_range_edges=0,
+            minimum_metric_length=0.75,
+            maximum_metric_length=1.25,
+            minimum_metric_quality=0.625,
+            maximum_region_volume_error=0.0,
+            unmet_edges=(),
+        )
+
+    local = evidence(0)
+    assert local.retriangulations == 0
+    # Published local-only representation at 7a40f9ca, with identical measurements.
+    assert (
+        local.evidence_id
+        == "755ba0c1006da8970354f5283155bd653e59cef6e94a3ee1af669ea9227921ad"
+    )
+    identifiers = {local.evidence_id, evidence(1).evidence_id, evidence(2).evidence_id}
+    assert len(identifiers) == 3
+
+
 def test_axis_graded_box_transfers_across_retired_source_cells() -> None:
     from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
 

@@ -253,13 +253,12 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
             rejected_protected,
             rejected_uncertain,
             rejected_invalid,
-            retriangulations,
             measured_edges,
             out_of_range_edges,
         )
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in counts
+            for value in (*counts, retriangulations)
         ):
             raise ValueError("Tetra metric counts must be nonnegative integers.")
         if implicit_refusals is not None and (
@@ -328,6 +327,8 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
                 (edge.kind.value, edge.vertex_ids, edge.metric_length) for edge in unmet
             ),
         }
+        if retriangulations:
+            identity["retriangulations"] = retriangulations
         if implicit_refusals is not None:
             identity["implicit_refusals"] = implicit_refusals
         self.evidence_id = canonical_fingerprint(identity)

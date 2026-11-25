@@ -3086,6 +3086,9 @@ an edge or face contact alone is not a parent. Rounded mesh geometry and
 exact stencil geometry are checked separately when they disagree. A refusal
 leaves the original mesh available for local adaptation. The
 `retriangulations` evidence counter counts committed transactions, not cells.
+Its stored value is zero on local-only and no-op routes. Only a positive
+count enters the fingerprint; unchanged local evidence retains its ID.
+
 On CPU, physical gradation of an exactly diagonal binary64 tensor can fold
 its candidates in the coordinate basis. The ordered square-root products
 are retained; a componentwise maximum is not rounding-equivalent. Growth,
