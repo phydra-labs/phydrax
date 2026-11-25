@@ -2631,6 +2631,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Tetrahedral metric adaptation can split an axis-aligned hull edge when
+  the source stencil and edge parameter round to the same interior point
+  even if the exact split point is not representable. Exact facet
+  coverage and metric checks still apply. Newly split meshes can have
+  different connectivity and evidence IDs.
 - Implicit carrier remeshing checks the projected source normals on both
   sides of a sharp input edge before freezing it. Poorly shaped carrier
   faces on smooth patches can be edited instead of surviving as false

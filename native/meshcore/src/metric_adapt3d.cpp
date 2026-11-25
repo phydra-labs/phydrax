@@ -283,9 +283,10 @@ class Adapter {
   // A two-facet hull shell can commit locally. Only a declared coplanar
   // pair can use coverage of the whole pair instead of exact edge coverage.
   enum class EdgeSupport { kFree, kBatch, kHull, kDeclaredHull };
+  enum class SplitPointRule { kStencil, kExactEdge, kRoundedEdge };
   std::optional<EdgeSupport> edge_support(std::int32_t a, std::int32_t b,
                                           std::span<const std::int32_t> shell);
-  bool split_parameter(std::int32_t a, std::int32_t b, bool exact_edge, Stencil& stencil,
+  bool split_parameter(std::int32_t a, std::int32_t b, SplitPointRule rule, Stencil& stencil,
                        double* point, double& parameter) const;
   bool sync_split_facets(std::int32_t slot, std::int32_t inserted);
   TetEditStatus split(std::int32_t a, std::int32_t b, bool& applied);
@@ -845,8 +846,9 @@ std::optional<Adapter::EdgeSupport> Adapter::edge_support(
                                                        : EdgeSupport::kHull;
 }
 
-bool Adapter::split_parameter(std::int32_t a, std::int32_t b, bool exact_edge,
+bool Adapter::split_parameter(std::int32_t a, std::int32_t b, SplitPointRule rule,
                               Stencil& stencil, double* point, double& parameter) const {
+  const bool exact_edge = rule == SplitPointRule::kExactEdge;
   const double* pa = mesh_.point(a);
   const double* pb = mesh_.point(b);
   const double middle = midpoint_parameter(pa, pb, metric(a), metric(b));
@@ -862,17 +864,20 @@ bool Adapter::split_parameter(std::int32_t a, std::int32_t b, bool exact_edge,
                           stencils_[static_cast<std::size_t>(b)], t, stencil)) {
       continue;
     }
-    // The carrier is the correctly rounded exact image of the stencil. On a
-    // constrained facet or segment the point must also be the exact edge
-    // point, and representable, so the children cover the facet exactly.
+    // The carrier is the correctly rounded source stencil image. An exact
+    // edge rule additionally checks representability; the rounded edge rule
+    // checks agreement with the rounded carrier-to-carrier interpolation.
     bool admissible = true;
     for (int axis = 0; axis < 3 && admissible; ++axis) {
+      const auto edge_coordinate = [&]() {
+        return Expansion(pa[axis]) + Expansion::difference(pb[axis], pa[axis]).scaled(t);
+      };
       if (input_.exact_source != nullptr) {
         point[axis] = input_.exact_source->stencil_coordinate(stencil, axis, exact_edge, admissible);
         if (exact_edge && admissible) {
-          const Expansion edge =
-              Expansion(pa[axis]) + Expansion::difference(pb[axis], pa[axis]).scaled(t);
-          admissible = (edge - Expansion(point[axis])).is_zero();
+          admissible = (edge_coordinate() - Expansion(point[axis])).is_zero();
+        } else if (admissible && rule == SplitPointRule::kRoundedEdge) {
+          admissible = nearest_double(edge_coordinate()) == point[axis];
         }
         continue;
       }
@@ -884,9 +889,10 @@ bool Adapter::split_parameter(std::int32_t a, std::int32_t b, bool exact_edge,
       }
       const double rounded = nearest_double(image);
       if (exact_edge) {
-        const Expansion edge =
-            Expansion(pa[axis]) + Expansion::difference(pb[axis], pa[axis]).scaled(t);
-        admissible = (edge - image).is_zero() && (image - Expansion(rounded)).is_zero();
+        admissible =
+            (edge_coordinate() - image).is_zero() && (image - Expansion(rounded)).is_zero();
+      } else if (rule == SplitPointRule::kRoundedEdge) {
+        admissible = nearest_double(edge_coordinate()) == rounded;
       }
       point[axis] = rounded;
     }
@@ -929,12 +935,24 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   std::array<double, 3> point{};
   double parameter = 0.0;
   bool exact_edge = *support != EdgeSupport::kFree;
-  bool have_point = split_parameter(a, b, exact_edge, stencil, point.data(), parameter);
+  bool have_point = split_parameter(
+      a, b, exact_edge ? SplitPointRule::kExactEdge : SplitPointRule::kStencil,
+      stencil, point.data(), parameter);
   if (!have_point && *support == EdgeSupport::kDeclaredHull) {
     // Preserve exact edge witnesses where possible. Otherwise the kernel
     // proves coverage against the pair using the rounded source image.
     exact_edge = false;
-    have_point = split_parameter(a, b, false, stencil, point.data(), parameter);
+    have_point = split_parameter(a, b, SplitPointRule::kStencil, stencil, point.data(), parameter);
+  } else if (!have_point && *support == EdgeSupport::kHull) {
+    const double* pa = mesh_.point(a);
+    const double* pb = mesh_.point(b);
+    const int fixed = (pa[0] == pb[0]) + (pa[1] == pb[1]) + (pa[2] == pb[2]);
+    // Rounding the varying coordinate of an axis edge leaves the point
+    // on its exact line. The local edit still proves both child facets.
+    if (fixed == 2) {
+      have_point =
+          split_parameter(a, b, SplitPointRule::kRoundedEdge, stencil, point.data(), parameter);
+    }
   }
   if (!have_point) {
     unrepresentable_.emplace(key, current);

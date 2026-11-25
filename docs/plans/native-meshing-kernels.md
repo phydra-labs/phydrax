@@ -469,11 +469,17 @@ Both tools use the same ordered source mesh and sampled target. The driver
 reports construction separately from certification and transfer, and keeps
 native completion and edge refusal evidence even when quality improves.
 The probe is for iteration, not a substitute for ladder qualification.
-On the integrated cover-fix image, the crop coarsens to completion with no
+On the earlier cover-fix image, the crop coarsens to completion with no
 inversions but misses MMG3D's mean shape (0.78597 vs 0.79798). Iso and aniso
-exceed both sampled quality thresholds with no inversions, but stall at 21
-and 26 residual edges respectively. Do not time larger edited inputs to
-diagnose those refusals.
+exceeded both sampled quality thresholds but stalled at 21 and 26 residual
+edges respectively.
+
+The rounded Cartesian hull split removes all 21 iso residuals; the crop
+completes with zero inversions, mean shape 0.86120 (MMG3D 0.83983), and
+midpoint band share 0.90261 (MMG3D 0.83795). Aniso falls from 26 residuals
+to eight with no representability refusals. Mean and minimum shape improve,
+but it still stalls. These are construction and quality diagnostics, not
+MMG3D timing wins or acceptance of the archived rows.
 
 ### Implicit carrier remesh and proof
 

@@ -186,6 +186,35 @@ Run adapt_constant_metric(TetMesh& mesh, std::span<const double> points,
   return run;
 }
 
+void check_rounded_axis_edge_split() {
+  // The long edge ends one ulp above 1.5. Its exact midpoint is between
+  // two binary64 coordinates, both still on the edge.
+  const std::array<double, 12> points{
+      0.0, 0.0, 1.0, 0.0, 0.0, std::nextafter(1.5, 2.0),
+      0.3125, 0.0, 1.25, 0.0, 0.3125, 1.25};
+  std::array<std::int32_t, 4> cell{0, 1, 2, 3};
+  const auto point = [&](std::int32_t row) { return points.data() + 3 * row; };
+  if (orient3d(point(0), point(1), point(2), point(3)) < 0) std::swap(cell[1], cell[2]);
+  const std::array<std::int32_t, 12> faces{
+      cell[1], cell[2], cell[3], cell[0], cell[3], cell[2],
+      cell[0], cell[1], cell[3], cell[0], cell[2], cell[1]};
+  const std::array<std::int32_t, 4> groups{0, 1, 2, 3};
+  const std::array<std::int32_t, 1> regions{0};
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  const auto setup = mesh.build(points, cell, regions, faces, groups, {}, {}, {}, {});
+  PHX_CHECK(setup == PHX_MC_OK);
+  if (setup != PHX_MC_OK) return;
+  const Run run = adapt_constant_metric(mesh, points, cell, 9.0, kLower, true, false);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  PHX_CHECK(run.after.cells.size() == 2);
+  PHX_CHECK(run.after.vertices.size() == 5);
+  PHX_CHECK(std::any_of(run.after.vertices.begin(), run.after.vertices.end(),
+                        [](const auto& vertex) {
+                          return vertex.carrier == std::array<double, 3>{0.0, 0.0, 1.25};
+                        }));
+}
+
 enum class CubeBoundary { kUnbound, kFacetWitness, kSourceOnlySeam, kTiltedSourceOnlySeam };
 
 // Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
@@ -589,6 +618,7 @@ void metric_uses_the_last_available_target_cell_ids() {
 int main() {
   check_combine_stencils();
   check_refinement();
+  check_rounded_axis_edge_split();
   check_coarsening();
   check_completion_tolerance_does_not_skip_eligible_collapses();
   completed_shape_cannot_reopen_the_requested_band();
