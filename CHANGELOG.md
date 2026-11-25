@@ -2632,6 +2632,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Scalar tetrahedral metric adaptation can improve low-shape cells with
+  bounded joint relocation of their adjacent vertices. Proposals are
+  rechecked after exact carrier selection and metric transport; every
+  touched edge retains the metric band and the existing exact transaction
+  validates orientation and boundary coverage. Adapted geometry,
+  interpolation stencils, and evidence IDs can change.
 - Tetrahedral metric adaptation can split an axis-aligned hull edge when
   the source stencil and edge parameter round to the same interior point
   even if the exact split point is not representable. Exact facet

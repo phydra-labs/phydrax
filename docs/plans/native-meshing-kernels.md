@@ -437,14 +437,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
 
 ### Original graded coarsening
 
-The 10,452-cell coarsening row clears the approved 3.5× allowance on the
-authenticated 0.377 s construction reference (1.3195 s ceiling). Native
-status is `complete`, with zero out-of-band edges or inversions, and
-certification and transfer completed. Raw midpoint band share improves
-from 0.79391 to 0.87486 and mean shape from 0.82651 to 0.82748. The row is
-not accepted: its worst-cell shape is 0.03891 versus 0.47481 for MMG3D.
-Phydrax's minimum of three was 0.972 s against the 0.337 s MMG3D rerun;
-the timing allowance does not imply a speed win or waive quality.
+The original construction reference is the authenticated 0.377 s, with the
+approved 3.5× allowance (1.3195 s). The previous coarsening result missed
+worst-cell shape at 0.03891 versus MMG3D's 0.47481, despite passing time.
+With local coupled repairs, the same 10,452-cell input completes with zero
+out-of-band edges or inversions. Minimum shape is 0.60998 versus 0.47481,
+mean shape 0.83013 versus 0.82651, and midpoint band share 0.87295 versus
+0.79391. It passes the registered gates at 1.253 s in one construction
+sample. This timing exception is not a speed win over the 0.337 s MMG3D rerun.
 
 The regenerated Gmsh 4.15.2 cube banks use source sizes 0.0782, 0.0363,
 and 0.01685. The smallest source and coarsening target match the original
@@ -487,6 +487,9 @@ An independently retransported diagnostic on its unchanged connectivity
 reaches 0.58362 minimum and 0.80534 mean with zero native out-of-band edges
 and certified global embedding. It establishes feasibility, not that the
 adapter constructs the result.
+The first native coupled repair reaches 0.60329 minimum, but its
+0.78367 mean still misses the live reference. The isotropic crop reaches
+0.43866 minimum, still below 0.52073. Neither crop is accepted.
 
 ### Implicit carrier remesh and proof
 

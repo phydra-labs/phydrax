@@ -10,7 +10,10 @@
 // the measured objective.
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace phx::mc::metric {
 
@@ -99,5 +102,26 @@ std::int64_t relocation_pulls(std::int64_t count, const double* points, const do
                               bool interior, int basis_count, const double* basis,
                               const double* projector, const double* jacobian,
                               std::int64_t capacity, double* pulls);
+
+struct ShapeCagePoint {
+  std::array<double, 3> point;
+  std::array<std::int32_t, 3> variables;  // -1 = fixed; otherwise indexes displacement.
+};
+
+struct ShapeCageEdge {
+  std::array<std::size_t, 2> rows;
+  double scale;  // Frozen multiplier of Euclidean length.
+};
+
+// Each cell lists four point rows, ordered with det(p1-p0, p2-p0, p3-p0) > 0.
+// Proposes a descent step from zero for the shape and inset scalar-band
+// penalties. True writes physical displacements bounded by radius per variable;
+// false leaves displacement untouched. A proposal need not meet either goal:
+// the caller must validate the rounded cage with native predicates and metrics.
+bool propose_shape_cage(std::span<const ShapeCagePoint> points,
+                        std::span<const std::array<std::size_t, 4>> cells,
+                        std::span<const ShapeCageEdge> edges, double radius,
+                        double minimum_length, double target_shape,
+                        std::span<double> displacement);
 
 }  // namespace phx::mc::metric

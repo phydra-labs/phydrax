@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "cavity.hpp"
+#include "deterministic_float.hpp"
 #include "expansion.hpp"
 #include "metric_carrier.hpp"
 #include "metric_collapse.hpp"
@@ -71,8 +72,50 @@ constexpr double kDeterminantFloor = 0x1p-22;
 constexpr double kImprovement = 1e-6;
 constexpr int kSplitBits = 5;
 constexpr std::int32_t kNoBlock = -1;
+constexpr double kShapeCageTarget = 0.61;
+constexpr std::size_t kShapeCageVertices = 40;
+constexpr std::size_t kShapeCageCells = 256;
+
+bool scalar_metric(const double* tensor) {
+  return tensor[0] > 0.0 && std::isfinite(tensor[0]) &&
+         tensor[0] == tensor[4] && tensor[0] == tensor[8] &&
+         tensor[1] == 0.0 && tensor[2] == 0.0 && tensor[3] == 0.0 &&
+         tensor[5] == 0.0 && tensor[6] == 0.0 && tensor[7] == 0.0;
+}
+
+double cage_distance_squared(const double* a, const double* b) {
+  const double x = a[0] - b[0];
+  const double y = a[1] - b[1];
+  const double z = a[2] - b[2];
+  return (x * x + y * y) + z * z;
+}
+
+// Euclidean mean ratio of an orientation-checked tetrahedron.
+double geometric_shape(const double* corners, double determinant) {
+  double squares = 0.0;
+  for (std::size_t a = 0; a < 4; ++a) {
+    for (std::size_t b = a + 1; b < 4; ++b) {
+      squares += cage_distance_squared(corners + 3 * a, corners + 3 * b);
+    }
+  }
+  const double volume_scale = deterministic::cube_root(0.5 * determinant);
+  return 12.0 * volume_scale * volume_scale / squares;
+}
+
 constexpr std::size_t kRelocationCacheSlots = 4096;
 constexpr std::size_t kRelocationCacheStarCells = 64;
+
+// The exact stencil of a carrier: its dyadic weights as binary64 values.
+Stencil carrier_stencil(const Carrier& carrier) {
+  Stencil stencil;
+  stencil.reserve(static_cast<std::size_t>(carrier.size));
+  for (int term = 0; term < carrier.size; ++term) {
+    const auto index = static_cast<std::size_t>(term);
+    stencil.push_back({static_cast<std::int32_t>(carrier.rows[index]),
+                       std::ldexp(static_cast<double>(carrier.weights[index]), -carrier.bits)});
+  }
+  return stencil;
+}
 
 constexpr std::uint64_t kExhaustedId = std::numeric_limits<std::uint64_t>::max();
 
@@ -328,8 +371,8 @@ class Adapter {
                                          std::span<const std::int32_t> star) const;
   // The vertex lineage of a committed collapse.
   void record_collapse(std::int32_t removed, std::int32_t kept);
-  // The vertex's exact stencil and tensor after it moves to `carrier`.
-  void assign_carrier(std::int32_t vertex, const Carrier& carrier, const double* tensor);
+  // The vertex's exact stencil and transported tensor after relocation.
+  void assign_carrier(std::int32_t vertex, Stencil stencil, const double* tensor);
   std::optional<TetEditStatus> collapse_boundary(
       const CollapsePlan& plan, const TetEdit& edit,
       const LocalIncidence::Star& removed_star, const LocalIncidence::Star& kept_star);
@@ -345,7 +388,8 @@ class Adapter {
   std::int64_t swap_sweep();
   std::int64_t shape_sweeps();
   std::int64_t commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
-                            std::vector<IdEdge>& edges, std::optional<double> shape_reference);
+                            std::vector<IdEdge>& edges, std::optional<double> shape_reference,
+                            bool preserve_band = false);
   double quality(const std::array<std::int32_t, 4>& cell) const;
   // The quality of a live cell, kept until the cell or a corner changes.
   double cell_quality(std::int32_t slot);
@@ -356,9 +400,9 @@ class Adapter {
   TetEditStatus replace(TetEditKind kind, const std::vector<std::int32_t>& cavity,
                         const std::vector<std::array<std::int32_t, 4>>& cells, bool& applied);
   TetEditStatus try_ring(std::int32_t s, std::int32_t t, bool& applied,
-                         std::optional<double> shape_reference);
+                         std::optional<double> shape_reference, bool preserve_band);
   TetEditStatus try_flip23(std::int32_t slot, int face, bool& applied,
-                            std::optional<double> shape_reference);
+                            std::optional<double> shape_reference, bool preserve_band);
   // Swaps the boundary edge (s t), on the facets (s t c) and (s t d) of one
   // group, for (c d): `shell` becomes `cells` and the facets (s c d) and
   // (t c d), through LocalIncidence::swap_boundary_edge.
@@ -370,7 +414,36 @@ class Adapter {
   // Relocations of interior vertices to exact source carriers (in place).
   std::int64_t relocate_sweep(bool closed_band_shape = false);
   std::int64_t smooth_shape();
-  TetEditStatus relocate(std::int32_t vertex, bool& applied, bool closed_band_shape);
+  std::int64_t lift_shape_tail();
+  std::int64_t lift_shape_cages();
+  struct CageMover {
+    std::int32_t vertex;
+    CarrierChartView chart;
+    unsigned axes;
+    std::size_t row = 0;
+  };
+  struct ShapeCage {
+    std::vector<std::int32_t> rows;
+    std::vector<std::int32_t> slots;
+    std::vector<CageMover> movers;
+    std::vector<ShapeCagePoint> points;
+    std::vector<std::array<std::size_t, 4>> cells;
+    std::vector<ShapeCageEdge> edges;
+    std::size_t variables = 0;
+    double minimum_distance = std::numeric_limits<double>::infinity();
+    double minimum_shape = std::numeric_limits<double>::infinity();
+  };
+  double geometric_cell_shape(std::int32_t slot) const;
+  std::optional<CageMover> cage_mover(std::int32_t vertex,
+                                    const LocalIncidence::Star& star);
+  bool prepare_shape_cage(std::int32_t seed, ShapeCage& cage);
+  TetEditStatus commit_shape_cage(const ShapeCage& cage, std::int32_t seed,
+                                 double seed_shape, std::span<const double> displacement,
+                                 std::span<double> transported_scales, bool& applied);
+  TetEditStatus relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied);
+  enum class ShapeGoal { kBand, kMean, kMinimum };
+  TetEditStatus relocate(std::int32_t vertex, bool& applied, ShapeGoal goal);
+  bool clearance_pull(std::int32_t vertex, std::int32_t cell, double* pull) const;
   bool wall_ring_pull(std::int32_t vertex, const LocalIncidence::Star& star, double* pull) const;
   struct RelocationAttempt {
     std::vector<std::uint64_t> cells;
@@ -393,7 +466,8 @@ class Adapter {
   void bind_rounded_sources(const TetMeshSnapshot& snapshot);
   std::optional<CarrierChartView> carrier_chart(std::int32_t vertex,
                                                 const LocalIncidence::Star& star,
-                                                bool for_relocation = false);
+                                                bool for_relocation = false,
+                                                bool allow_ridge = false);
   bool source_seam_chart(const SourceWitness& witness, CarrierChartView chart) const;
   std::optional<SourceWitness> relocation_witness(std::int32_t vertex, const Carrier& carrier,
                                                   CarrierChartView chart = {}) const;
@@ -1858,7 +1932,7 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     cell_lineage_[static_cast<std::size_t>(slot)].relocated = plan.moved;
   }
   record_collapse(removed, kept);
-  if (plan.moved) assign_carrier(kept, plan.carrier, plan.metric.data());
+  if (plan.moved) assign_carrier(kept, carrier_stencil(plan.carrier), plan.metric.data());
   applied = true;
   return TetEditStatus::kApplied;
 }
@@ -2075,7 +2149,7 @@ std::vector<std::int32_t> order_ring_link(
 }
 
 TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
-                                 std::optional<double> shape_reference) {
+                                 std::optional<double> shape_reference, bool preserve_band) {
   applied = false;
   if (protected_edge(s, t)) return TetEditStatus::kApplied;
   const std::span<const std::int32_t> view = incidence_.edge_star(s, t);
@@ -2215,7 +2289,8 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
         if (!protected_edge(x, y) && incidence_.edge_star(x, y).empty()) {
           const double value = edge_length(x, y);
           diagonal_length[key] = value;
-          const bool eligible = !shape || (value >= shape_lower() && value <= kUpperLength);
+          const bool eligible = !(shape || preserve_band) ||
+                                (value >= shape_lower() && value <= kUpperLength);
           diagonal_state[key] = eligible ? 1 : 2;
         } else {
           diagonal_state[key] = 2;
@@ -2261,7 +2336,7 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied,
 }
 
 TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied,
-                                   std::optional<double> shape_reference) {
+                                   std::optional<double> shape_reference, bool preserve_band) {
   applied = false;
   if (!mesh_.complex().live(slot) || mesh_.complex().constraint(slot, face) != kNoConstraint) {
     return TetEditStatus::kApplied;
@@ -2303,6 +2378,9 @@ TetEditStatus Adapter::try_flip23(std::int32_t slot, int face, bool& applied,
   }
   if (cells.size() != 3) return TetEditStatus::kApplied;
   const double added_length = edge_length(s, t);
+  if (preserve_band && !(added_length >= shape_lower() && added_length <= kUpperLength)) {
+    return TetEditStatus::kApplied;
+  }
   if (shape) {
     if (!(added_length >= shape_lower() && added_length <= kUpperLength) ||
         !(shape_score(after_quality, cells.size(), *shape_reference) >
@@ -2405,7 +2483,7 @@ std::int64_t Adapter::shape_sweeps() {
 
 std::int64_t Adapter::commit_swaps(std::vector<std::pair<std::uint64_t, int>>& faces,
                                    std::vector<IdEdge>& edges,
-                                   std::optional<double> shape_reference) {
+                                   std::optional<double> shape_reference, bool preserve_band) {
   std::sort(faces.begin(), faces.end());
   faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
   std::sort(edges.begin(), edges.end());
@@ -2415,7 +2493,7 @@ std::int64_t Adapter::commit_swaps(std::vector<std::pair<std::uint64_t, int>>& f
     const auto slot = mesh_.cell_slot(id);
     if (slot < 0) continue;
     bool done = false;
-    const TetEditStatus status = try_flip23(slot, face, done, shape_reference);
+    const TetEditStatus status = try_flip23(slot, face, done, shape_reference, preserve_band);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
@@ -2427,7 +2505,7 @@ std::int64_t Adapter::commit_swaps(std::vector<std::pair<std::uint64_t, int>>& f
     const auto b = mesh_.vertex_slot(key[1]);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
     bool done = false;
-    const TetEditStatus status = try_ring(a, b, done, shape_reference);
+    const TetEditStatus status = try_ring(a, b, done, shape_reference, preserve_band);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
@@ -2625,10 +2703,12 @@ bool Adapter::source_seam_chart(const SourceWitness& witness, CarrierChartView c
 // An interior vertex has an empty view. A boundary vertex uses its one
 // source group or the shared source edges of its two groups, not live facets.
 std::optional<CarrierChartView> Adapter::carrier_chart(
-    std::int32_t vertex, const LocalIncidence::Star& star, bool for_relocation) {
+    std::int32_t vertex, const LocalIncidence::Star& star, bool for_relocation,
+    bool allow_ridge) {
   const int dimension = mesh_.vertex_dimension(vertex);
   if (dimension == 3) return CarrierChartView{};
-  if (dimension != 2 || !source_banks_match_) return std::nullopt;
+  const bool ridge = allow_ridge && dimension == 1;
+  if ((!ridge && dimension != 2) || !source_banks_match_) return std::nullopt;
   bool exterior_rounding = for_relocation && rounded_sources_;
   std::int32_t first_group = kNoConstraint;
   std::int32_t second_group = kNoConstraint;
@@ -2653,6 +2733,7 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   if (first == group_triangles_.end()) return std::nullopt;
   const SourceWitness& witness = mesh_.witness(vertex);
   if (second_group == kNoConstraint) {
+    if (ridge) return std::nullopt;
     CarrierChartView chart = first->second.view();
     chart.allow_rounded_images = exterior_rounding && witness.stratum == SourceStratum::kNone &&
                                  exact_plane_axes_.contains(first_group);
@@ -2670,6 +2751,7 @@ std::optional<CarrierChartView> Adapter::carrier_chart(
   const CarrierChart& seam = cached->second;
   if (seam.simplices.empty()) return std::nullopt;
   CarrierChartView chart = seam.view();
+  if (ridge && !source_seam_chart(witness, chart)) return std::nullopt;
   if (exterior_rounding) {
     const auto a = exact_plane_axes_.find(first_group);
     const auto b = exact_plane_axes_.find(second_group);
@@ -2838,12 +2920,42 @@ bool Adapter::wall_ring_pull(std::int32_t vertex, const LocalIncidence::Star& st
   return pull[0] != 0.0 || pull[1] != 0.0 || pull[2] != 0.0;
 }
 
-TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_band_shape) {
+bool Adapter::clearance_pull(std::int32_t vertex, std::int32_t cell, double* pull) const {
+  // A low-volume tetrahedron has its steepest signed height increase along
+  // the opposite face normal. The search checks shape and every spoke again.
+  std::array<const double*, 3> face{};
+  std::size_t count = 0;
+  for (std::int32_t v : mesh_.tet(cell).v) {
+    if (v != vertex) face[count++] = mesh_.point(v);
+  }
+  const double* point = mesh_.point(vertex);
+  double e[3], f[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    e[axis] = face[1][axis] - face[0][axis];
+    f[axis] = face[2][axis] - face[0][axis];
+  }
+  double n[3], normal2 = 0.0, separation = 0.0, base2 = 0.0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const int i = (axis + 1) % 3, j = (axis + 2) % 3;
+    n[axis] = e[i] * f[j] - e[j] * f[i];
+    normal2 += n[axis] * n[axis];
+    separation += n[axis] * (point[axis] - face[0][axis]);
+    base2 += e[axis] * e[axis] + f[axis] * f[axis];
+  }
+  if (!(normal2 > 0.0) || !std::isfinite(normal2) || separation == 0.0) return false;
+  const double scale = std::copysign(0.25 * std::sqrt(base2 / normal2), separation);
+  for (int axis = 0; axis < 3; ++axis) pull[axis] = scale * n[axis];
+  return std::isfinite(scale);
+}
+
+TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, ShapeGoal goal) {
+  const bool closed_band_shape = goal != ShapeGoal::kBand;
+  const bool mean_shape = goal == ShapeGoal::kMean;
   applied = false;
   if (!carriers_ || mesh_.protected_vertex(vertex) || mesh_.protection_radius(vertex) > 0.0) {
     return TetEditStatus::kApplied;
   }
-  if (closed_band_shape && mesh_.vertex_dimension(vertex) != 3) return TetEditStatus::kApplied;
+  if (mean_shape && mesh_.vertex_dimension(vertex) != 3) return TetEditStatus::kApplied;
   const LocalIncidence::Star star = incidence_.vertex_star(vertex);
   if (star.empty()) return TetEditStatus::kApplied;
   const auto chart = carrier_chart(vertex, star, true);
@@ -2851,7 +2963,9 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   const bool interior = chart->simplices.empty();
   const bool tangents = !closed_band_shape && relocation_stage_ == 5;
   if (tangents && interior) return TetEditStatus::kApplied;
-  if (!interior && !boundary_moves_) return TetEditStatus::kApplied;
+  if (!interior && goal == ShapeGoal::kBand && !boundary_moves_) {
+    return TetEditStatus::kApplied;
+  }
   const bool deep_stage = !closed_band_shape && (relocation_stage_ == 1 || relocation_stage_ == 2);
   RelocationAttempt* attempt = nullptr;
   unsigned mode_bit = 0;
@@ -2863,11 +2977,17 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   // Star rows: the vertex, then its link in first-seen order.
   std::vector<std::int32_t> rows{vertex};
   std::vector<std::int64_t> cells;
-  double before_quality = closed_band_shape ? 0.0 : std::numeric_limits<double>::infinity();
+  double before_quality = mean_shape ? 0.0 : std::numeric_limits<double>::infinity();
+  std::int32_t worst = -1;
   for (std::int32_t slot : star) {
     const Tetrahedron& cell = mesh_.tet(slot);
     const double value = cell_quality(slot);
-    before_quality = closed_band_shape ? before_quality + value : std::min(before_quality, value);
+    if (mean_shape) {
+      before_quality += value;
+    } else if (value < before_quality) {
+      before_quality = value;
+      worst = slot;
+    }
     for (int corner = 0; corner < 4; ++corner) {
       const auto row = static_cast<std::int64_t>(
           std::find(rows.begin(), rows.end(), cell.v[corner]) - rows.begin());
@@ -2923,8 +3043,11 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   std::vector<double> pulls(3 * (4 * spokes + 8));
   std::int64_t pull_count = -1;
   const bool regular_wall = basis_count == 2 && chart->allow_rounded_images;
-  const bool ring = regular_wall && !tangents && !deep && wall_ring_pull(vertex, star, pulls.data());
-  const std::int64_t prefix = ring ? 1 : 0;
+  const bool ring = !closed_band_shape && regular_wall && !tangents && !deep &&
+                    wall_ring_pull(vertex, star, pulls.data());
+  const bool clearance =
+      goal == ShapeGoal::kMinimum && worst >= 0 && clearance_pull(vertex, worst, pulls.data());
+  const std::int64_t prefix = ring || clearance ? 1 : 0;
   if (tangents) {
     pull_count = boundary_tangent_pulls(points, lengths, measured, metric(vertex), basis_count,
                                         basis.data(), pulls.data());
@@ -2948,6 +3071,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   mode.refine = tangents || (deep && relocation_stage_ == 2);
   mode.band_only = tangents || deep;
   mode.shape_lower = closed_band_shape ? lower : 0.0;
+  mode.minimum_shape = goal == ShapeGoal::kMinimum;
   mode.report_quality = false;
   mode.try_first_pull_once = ring;
   RelocationStar relocation_star;
@@ -2958,7 +3082,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   relocation_star.before_lengths = lengths.data();
   relocation_star.neighbor_first = neighbor_first;
   relocation_star.before_quality =
-      closed_band_shape ? before_quality / static_cast<double>(star.size()) : before_quality;
+      mean_shape ? before_quality / static_cast<double>(star.size()) : before_quality;
   relocation_star.cell_count = static_cast<std::int64_t>(cells.size() / 4);
   relocation_star.cells = cells.data();
   relocation_star.determinant_floor = kDeterminantFloor;
@@ -3024,7 +3148,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
         count_refusal(status);
         continue;
       }
-      assign_carrier(vertex, candidate.carrier, candidate.metric.data());
+      assign_carrier(vertex, carrier_stencil(candidate.carrier), candidate.metric.data());
       for (std::int32_t row : rows) touch(row);
       for (std::int32_t slot : star) {
         cell_lineage_[static_cast<std::size_t>(slot)].relocated = true;
@@ -3037,20 +3161,8 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, bool closed_
   }
 }
 
-// The exact stencil of a carrier: its dyadic weights as binary64 values.
-Stencil carrier_stencil(const Carrier& carrier) {
-  Stencil stencil;
-  for (int term = 0; term < carrier.size; ++term) {
-    const auto index = static_cast<std::size_t>(term);
-    stencil.push_back({static_cast<std::int32_t>(carrier.rows[index]),
-                       std::ldexp(static_cast<double>(carrier.weights[index]), -carrier.bits)});
-  }
-  return stencil;
-}
-
-void Adapter::assign_carrier(std::int32_t vertex, const Carrier& carrier, const double* tensor) {
-  // The new exact stencil: the carrier's dyadic weights.
-  stencils_[static_cast<std::size_t>(vertex)] = carrier_stencil(carrier);
+void Adapter::assign_carrier(std::int32_t vertex, Stencil stencil, const double* tensor) {
+  stencils_[static_cast<std::size_t>(vertex)] = std::move(stencil);
   set_metric(vertex, tensor);
   carrier_revisions_[static_cast<std::size_t>(vertex)] = mesh_.generation();
   // A move ends the relocated record of everything that continues into the
@@ -3083,6 +3195,374 @@ std::int64_t Adapter::smooth_shape() {
   }
 }
 
+std::int64_t Adapter::lift_shape_tail() {
+  constexpr double kSliverShape = 0.55;
+  const auto& cells = mesh_.complex().tets;
+  std::vector<std::pair<double, std::uint64_t>> ordered;
+  std::vector<std::pair<std::uint64_t, int>> faces;
+  std::vector<IdEdge> edges;
+  std::int64_t sweeps = 0;
+  for (; sweeps < 4; ++sweeps) {
+    bool improved = false;
+    ordered.clear();
+    faces.clear();
+    edges.clear();
+    for (std::size_t row = 0; row < cells.size(); ++row) {
+      const auto slot = static_cast<std::int32_t>(row);
+      if (!mesh_.complex().live(slot) || is_ghost(cells[row])) continue;
+      const double q = cell_quality(slot);
+      if (q < kSliverShape) ordered.emplace_back(q, mesh_.cell_id(slot));
+    }
+    std::sort(ordered.begin(), ordered.end());
+    for (const auto& entry : ordered) {
+      const auto id = entry.second;
+      const auto slot = mesh_.cell_slot(id);
+      if (!(cell_quality(slot) < kSliverShape)) continue;
+      const auto& cell = mesh_.tet(slot);
+      for (std::int32_t vertex : cell.v) {
+        bool applied = false;
+        const auto status = relocate(vertex, applied, ShapeGoal::kMinimum);
+        if (status != TetEditStatus::kApplied) {
+          fatal_ = status;
+          return sweeps;
+        }
+        improved = improved || applied;
+      }
+      if (!input_.topology_operations || !(cell_quality(slot) < kSliverShape)) continue;
+      for (int a = 0; a < 4; ++a) {
+        faces.emplace_back(id, a);
+        for (int b = a + 1; b < 4; ++b) edges.push_back(edge_ids(cell.v[a], cell.v[b]));
+      }
+    }
+    improved = commit_swaps(faces, edges, std::nullopt, true) > 0 || improved;
+    if (fatal_ != TetEditStatus::kApplied) return sweeps;
+    if (!improved) break;
+  }
+  return sweeps;
+}
+
+double Adapter::geometric_cell_shape(std::int32_t slot) const {
+  std::array<double, 12> corners;
+  for (std::size_t corner = 0; corner < 4; ++corner) {
+    std::copy_n(mesh_.point(mesh_.tet(slot).v[corner]), 3, corners.data() + 3 * corner);
+  }
+  double determinant = 0.0;
+  double relative = 0.0;
+  relative_determinant(corners.data(), determinant, relative);
+  return relative > kDeterminantFloor && determinant > 0.0
+             ? geometric_shape(corners.data(), determinant)
+             : 0.0;
+}
+
+std::optional<Adapter::CageMover> Adapter::cage_mover(
+    std::int32_t vertex, const LocalIncidence::Star& star) {
+  if (star.empty() || star.size() > kShapeCageCells || mesh_.protected_vertex(vertex) ||
+      mesh_.protection_radius(vertex) > 0.0) {
+    return std::nullopt;
+  }
+  for (std::int32_t slot : star) {
+    for (std::int32_t other : mesh_.tet(slot).v) {
+      if (!scalar_metric(metric(other)) || (other != vertex && protected_edge(vertex, other))) {
+        return std::nullopt;
+      }
+    }
+  }
+  const auto chart = carrier_chart(vertex, star, true, true);
+  if (!chart) return std::nullopt;
+  unsigned axes = 7;
+  if (!chart->simplices.empty()) {
+    axes = chart->simplices.front().projected_axes;
+    // These masks come from the exact source numerators, not an angular
+    // tolerance on live facets. Only a common Cartesian tangent is supported.
+    if (axes == 0 || !std::ranges::all_of(chart->simplices, [&](const CarrierSimplex& simplex) {
+          return simplex.projected_axes == axes;
+        })) {
+      return std::nullopt;
+    }
+  }
+  return CageMover{vertex, *chart, axes};
+}
+
+bool Adapter::prepare_shape_cage(std::int32_t seed, ShapeCage& cage) {
+  const auto vertex_id = [&](std::int32_t vertex) { return mesh_.vertex_id(vertex); };
+  const auto cell_id = [&](std::int32_t slot) { return mesh_.cell_id(slot); };
+  const auto& tetrahedron = mesh_.tet(seed);
+  std::vector<std::int32_t> candidates(tetrahedron.v, tetrahedron.v + 4);
+  std::ranges::sort(candidates, {}, vertex_id);
+  const auto in_seed = [&](std::int32_t vertex) {
+    return std::find(tetrahedron.v, tetrahedron.v + 4, vertex) != tetrahedron.v + 4;
+  };
+  std::vector<std::int32_t> star;
+  for (std::int32_t vertex : tetrahedron.v) {
+    incidence_.collect_star(vertex, star);
+    if (star.size() > kShapeCageCells) return false;
+    for (std::int32_t slot : star) {
+      for (std::int32_t other : mesh_.tet(slot).v) {
+        if (!in_seed(other)) candidates.push_back(other);
+      }
+    }
+  }
+  // Seed corners are considered first, followed by their one-ring in
+  // persistent vertex order. Only whole stars may enter the capped overlay.
+  std::ranges::sort(std::span(candidates).subspan(4), {}, vertex_id);
+  candidates.erase(std::unique(candidates.begin() + 4, candidates.end()), candidates.end());
+  std::vector<std::int32_t> united;
+  for (std::int32_t vertex : candidates) {
+    const auto local = incidence_.vertex_star(vertex);
+    auto mover = cage_mover(vertex, local);
+    if (!mover) continue;
+    united.clear();
+    std::set_union(cage.slots.begin(), cage.slots.end(), local.begin(), local.end(),
+                   std::back_inserter(united),
+                   [&](std::int32_t a, std::int32_t b) { return cell_id(a) < cell_id(b); });
+    if (united.size() > kShapeCageCells) continue;
+    cage.slots.swap(united);
+    cage.movers.push_back(*mover);
+    if (cage.movers.size() == kShapeCageVertices) break;
+  }
+  if (cage.movers.size() < 2 ||
+      std::ranges::find(cage.slots, seed) == cage.slots.end()) {
+    return false;
+  }
+  for (std::int32_t slot : cage.slots) {
+    const auto& cell = mesh_.tet(slot);
+    cage.rows.insert(cage.rows.end(), cell.v, cell.v + 4);
+    const double quality = geometric_cell_shape(slot);
+    if (!(quality > 0.0) || !std::isfinite(quality)) return false;
+    cage.minimum_shape = std::min(cage.minimum_shape, quality);
+  }
+  std::ranges::sort(cage.rows, {}, vertex_id);
+  cage.rows.erase(std::unique(cage.rows.begin(), cage.rows.end()), cage.rows.end());
+  const auto row_of = [&](std::int32_t vertex) {
+    return static_cast<std::size_t>(
+        std::ranges::lower_bound(cage.rows, vertex_id(vertex), {}, vertex_id) - cage.rows.begin());
+  };
+  cage.points.resize(cage.rows.size());
+  for (std::size_t row = 0; row < cage.rows.size(); ++row) {
+    auto& point = cage.points[row];
+    std::copy_n(mesh_.point(cage.rows[row]), 3, point.point.data());
+    point.variables.fill(-1);
+  }
+  for (auto& mover : cage.movers) {
+    mover.row = row_of(mover.vertex);
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      if ((mover.axes & (1U << axis)) != 0) {
+        cage.points[mover.row].variables[axis] = static_cast<std::int32_t>(cage.variables++);
+      }
+    }
+  }
+  const auto movable = [&](std::size_t row) {
+    return std::ranges::any_of(cage.points[row].variables, [](auto index) { return index >= 0; });
+  };
+  std::vector<std::array<std::size_t, 2>> edges;
+  cage.cells.reserve(cage.slots.size());
+  for (std::int32_t slot : cage.slots) {
+    const auto& cell = mesh_.tet(slot);
+    const std::array corners{row_of(cell.v[0]), row_of(cell.v[1]),
+                             row_of(cell.v[2]), row_of(cell.v[3])};
+    cage.cells.push_back(corners);
+    for (std::size_t a = 0; a < 4; ++a) {
+      for (std::size_t b = a + 1; b < 4; ++b) {
+        if (!movable(corners[a]) && !movable(corners[b])) continue;
+        edges.push_back({std::min(corners[a], corners[b]), std::max(corners[a], corners[b])});
+      }
+    }
+  }
+  std::sort(edges.begin(), edges.end());
+  edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+  cage.edges.reserve(edges.size());
+  for (const auto& edge : edges) {
+    const auto [a, b] = edge;
+    const double physical = std::sqrt(
+        cage_distance_squared(cage.points[a].point.data(), cage.points[b].point.data()));
+    const double measured = edge_length(cage.rows[a], cage.rows[b]);
+    if (!(physical > 0.0 && std::isfinite(physical)) ||
+        !(measured >= shape_lower() && measured <= kUpperLength)) {
+      return false;
+    }
+    const double scale = measured / physical;
+    if (!(scale > 0.0) || !std::isfinite(scale)) return false;
+    cage.minimum_distance = std::min(cage.minimum_distance, physical);
+    cage.edges.push_back({edge, scale});
+  }
+  return !cage.edges.empty();
+}
+
+TetEditStatus Adapter::commit_shape_cage(
+    const ShapeCage& cage, std::int32_t seed, double seed_shape,
+    std::span<const double> displacement, std::span<double> transported_scales, bool& applied) {
+  struct Move {
+    std::array<double, 3> point;
+    Stencil stencil;
+    std::array<double, 9> metric;
+  };
+  std::vector<Move> moves;
+  moves.reserve(cage.movers.size());
+  std::vector<Move*> overlay(cage.rows.size(), nullptr);
+  TetEdit edit;
+  edit.kind = TetEditKind::kRelocate;
+  edit.changed_vertices.reserve(cage.movers.size());
+  for (const auto& mover : cage.movers) {
+    const auto& origin = cage.points[mover.row];
+    auto goal = origin.point;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const auto index = origin.variables[axis];
+      if (index >= 0) goal[axis] += displacement[static_cast<std::size_t>(index)];
+    }
+    if (goal == origin.point) continue;
+    const auto carriers = carriers_->carriers(goal.data(), origin.point.data(), mover.chart, -1,
+                                              CarrierOrder::kFineFirst, 2);
+    for (const auto& carrier : carriers) {
+      bool on_chart = true;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (origin.variables[axis] < 0 && carrier.point[axis] != origin.point[axis]) {
+          on_chart = false;
+        }
+      }
+      if (!on_chart) continue;
+      const auto witness = relocation_witness(mover.vertex, carrier, mover.chart);
+      if (!witness) continue;
+      std::array<double, 9> tensor;
+      auto stencil = carrier_stencil(carrier);
+      if (!vertex_metric(stencil, tensor.data()) || !scalar_metric(tensor.data())) {
+        continue;
+      }
+      moves.push_back({carrier.point, std::move(stencil), tensor});
+      overlay[mover.row] = &moves.back();
+      TetEditVertex changed;
+      changed.id = mesh_.vertex_id(mover.vertex);
+      changed.carrier = carrier.point;
+      changed.witness = *witness;
+      changed.edge_witness_supplied = true;
+      edit.changed_vertices.push_back(changed);
+      break;
+    }
+  }
+  if (moves.empty()) return TetEditStatus::kApplied;
+  const auto point = [&](std::size_t row) {
+    return overlay[row] ? overlay[row]->point.data() : cage.points[row].point.data();
+  };
+  const auto tensor = [&](std::size_t row) {
+    return overlay[row] ? overlay[row]->metric.data() : metric(cage.rows[row]);
+  };
+  bool in_band = true;
+  for (std::size_t index = 0; index < cage.edges.size(); ++index) {
+    // Rows are already in the persistent endpoint order of edge_length().
+    const auto [a, b] = cage.edges[index].rows;
+    const double physical = std::sqrt(cage_distance_squared(point(a), point(b)));
+    const double value = length(point(a), point(b), tensor(a), tensor(b));
+    if (!(physical > 0.0) || !std::isfinite(physical) || !std::isfinite(value)) {
+      return TetEditStatus::kApplied;
+    }
+    transported_scales[index] = value / physical;
+    in_band = in_band && value >= shape_lower() && value <= kUpperLength;
+  }
+  if (!in_band) return TetEditStatus::kApplied;
+  std::vector<std::int32_t> changed_cells;
+  changed_cells.reserve(cage.cells.size());
+  edit.removed_cell_ids.reserve(cage.cells.size());
+  for (std::size_t i = 0; i < cage.cells.size(); ++i) {
+    const auto& cell = cage.cells[i];
+    const auto slot = cage.slots[i];
+    std::array<double, 12> corners;
+    bool changed = false;
+    for (std::size_t corner = 0; corner < 4; ++corner) {
+      changed = changed || overlay[cell[corner]] != nullptr;
+      std::copy_n(point(cell[corner]), 3, corners.data() + 3 * corner);
+    }
+    double determinant = 0.0;
+    double relative = 0.0;
+    relative_determinant(corners.data(), determinant, relative);
+    const double quality = geometric_shape(corners.data(), determinant);
+    if (!(determinant > 0.0 && relative > kDeterminantFloor) ||
+        !(quality > cage.minimum_shape + kImprovement) ||
+        (slot == seed && !(quality > seed_shape + kImprovement))) {
+      return TetEditStatus::kApplied;
+    }
+    if (changed) {
+      changed_cells.push_back(slot);
+      edit.removed_cell_ids.push_back(mesh_.cell_id(slot));
+    }
+  }
+  TetEditStatus status = TetEditStatus::kRejectedTopology;
+  if (!mesh_.apply_relocation_edit(edit, status)) status = TetEditStatus::kRejectedTopology;
+  if (status != TetEditStatus::kApplied) {
+    if (fatal(status)) return status;
+    count_refusal(status);
+    return TetEditStatus::kApplied;
+  }
+  for (const auto& mover : cage.movers) {
+    if (auto* move = overlay[mover.row]) {
+      assign_carrier(mover.vertex, std::move(move->stencil), move->metric.data());
+    }
+  }
+  for (auto slot : changed_cells) {
+    for (std::int32_t vertex : mesh_.tet(slot).v) touch(vertex);
+    cell_lineage_[static_cast<std::size_t>(slot)].relocated = true;
+    cell_quality_[static_cast<std::size_t>(slot)] = std::numeric_limits<double>::quiet_NaN();
+  }
+  counters_.relocations += static_cast<std::int64_t>(moves.size());
+  applied = true;
+  return TetEditStatus::kApplied;
+}
+
+TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied) {
+  applied = false;
+  ShapeCage cage;
+  if (!prepare_shape_cage(seed, cage)) return TetEditStatus::kApplied;
+  std::vector<double> displacement(cage.variables);
+  std::vector<double> scales(cage.edges.size());
+  const double radius = 0.5 * cage.minimum_distance;
+  for (int correction = 0; correction < 5; ++correction) {
+    if (!propose_shape_cage(cage.points, cage.cells, cage.edges, radius,
+                            shape_lower(), kShapeCageTarget, displacement)) {
+      break;
+    }
+    std::ranges::fill(scales, 0.0);
+    const auto status = commit_shape_cage(cage, seed, seed_shape, displacement, scales, applied);
+    if (status != TetEditStatus::kApplied || applied) return status;
+    if (!std::ranges::all_of(scales, [](double scale) { return scale > 0.0; })) break;
+    // Correct the proposal model with the exact candidate's transported
+    // endpoint sizes, not a relaxed limit on its measured edges.
+    for (std::size_t i = 0; i < scales.size(); ++i) {
+      cage.edges[i].scale += 0.75 * (scales[i] - cage.edges[i].scale);
+    }
+  }
+  return TetEditStatus::kApplied;
+}
+
+std::int64_t Adapter::lift_shape_cages() {
+  std::vector<std::pair<double, std::uint64_t>> ordered;
+  const auto& complex = mesh_.complex();
+  for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+    const auto slot = static_cast<std::int32_t>(row);
+    const auto& cell = complex.tets[row];
+    if (!complex.live(slot) || is_ghost(cell) ||
+        !std::ranges::all_of(cell.v, [&](std::int32_t vertex) { return scalar_metric(metric(vertex)); })) {
+      continue;
+    }
+    const double quality = geometric_cell_shape(slot);
+    if (quality > 0.0 && quality < kShapeCageTarget) {
+      ordered.emplace_back(quality, mesh_.cell_id(slot));
+    }
+  }
+  std::sort(ordered.begin(), ordered.end());
+  bool applied = false;
+  for (const auto& [prior, id] : ordered) {
+    const auto slot = mesh_.cell_slot(id);
+    const double quality = applied ? geometric_cell_shape(slot) : prior;
+    if (!(quality > 0.0 && quality < kShapeCageTarget)) continue;
+    bool done = false;
+    const auto status = relocate_shape_cage(slot, quality, done);
+    if (status != TetEditStatus::kApplied) {
+      fatal_ = status;
+      return applied ? 1 : 0;
+    }
+    applied = applied || done;
+  }
+  return applied ? 1 : 0;
+}
+
 std::int64_t Adapter::relocate_sweep(bool closed_band_shape) {
   std::vector<std::int32_t> vertices(dirty_[kRelocatePhase].begin(), dirty_[kRelocatePhase].end());
   for (std::int32_t vertex : vertices) dirty_flags_[kRelocatePhase][static_cast<std::size_t>(vertex)] = 0;
@@ -3092,7 +3572,8 @@ std::int64_t Adapter::relocate_sweep(bool closed_band_shape) {
   for (std::int32_t vertex : vertices) {
     if (!mesh_.live_vertex(vertex)) continue;
     bool done = false;
-    const TetEditStatus status = relocate(vertex, done, closed_band_shape);
+    const auto goal = closed_band_shape ? ShapeGoal::kMean : ShapeGoal::kBand;
+    const TetEditStatus status = relocate(vertex, done, goal);
     if (status != TetEditStatus::kApplied) {
       fatal_ = status;
       return applied;
@@ -3223,8 +3704,8 @@ TetEditStatus Adapter::relocate_pair(std::int32_t u, std::int32_t v, bool& appli
           count_refusal(status);
           continue;
         }
-        assign_carrier(u, move_u, tensor_u.data());
-        assign_carrier(v, move_v, tensor_v.data());
+        assign_carrier(u, carrier_stencil(move_u), tensor_u.data());
+        assign_carrier(v, carrier_stencil(move_v), tensor_v.data());
         for (std::int32_t slot : cavity) {
           for (std::int32_t w : mesh_.tet(slot).v) touch(w);
           cell_lineage_[static_cast<std::size_t>(slot)].relocated = true;
@@ -3404,6 +3885,10 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
       }
       if (input_.relocation && carriers_) {
         passes += smooth_shape();
+        if (fatal_ != TetEditStatus::kApplied) return fatal_;
+        passes += lift_shape_tail();
+        if (fatal_ != TetEditStatus::kApplied) return fatal_;
+        passes += lift_shape_cages();
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
       }
       status = AdaptStatus::kComplete;

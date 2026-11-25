@@ -178,7 +178,7 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
   }
   quality_logs_.front() = log_determinant(metric);
 
-  // The usual merit is the minimum; the closed-band shape sweep uses the mean.
+  const bool mean_shape = shape && !mode_.minimum_shape;
   double corners[12];
   double tensors[36];
   double logs[4];
@@ -195,15 +195,15 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
       logs[slot] = quality_logs_[static_cast<std::size_t>(row)];
     }
     const double value = tetra_quality(corners, tensors, logs);
-    if (shape) {
-      if (!std::isfinite(value)) return Verdict::kRejected;
+    if (shape && !std::isfinite(value)) return Verdict::kRejected;
+    if (mean_shape) {
       measure += value;
     } else {
       if (value != value) undefined = true;
       if (cell == 0 || value < measure) measure = value;
     }
   }
-  if (shape) measure /= static_cast<double>(cell_count_);
+  if (mean_shape) measure /= static_cast<double>(cell_count_);
   quality = undefined ? std::numeric_limits<double>::quiet_NaN() : measure;
   if (equal && !(quality > before_quality_ + improvement_)) return Verdict::kRejected;
   return Verdict::kAdmitted;

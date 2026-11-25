@@ -75,6 +75,8 @@ struct RelocationMode {
   // Positive only for the completed-band shape sweep. Every spoke must
   // retain this lower bound as well as the unit band.
   double shape_lower = 0.0;
+  // The closed-band tail sweep improves the star minimum, not its mean.
+  bool minimum_shape = false;
   // Keep the quality of strict band improvements only for callers that
   // consume it. Equal-band acceptance always checks quality.
   bool report_quality = true;

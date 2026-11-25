@@ -12,6 +12,7 @@
 #include <limits>
 #include <vector>
 
+#include "bounded_lbfgs.hpp"
 #include "deterministic_float.hpp"
 #include "metric_float.hpp"
 
@@ -497,6 +498,140 @@ std::int64_t relocation_pulls(std::int64_t count, const double* points, const do
     }
   }
   return overflow ? -1 : written;
+}
+
+bool propose_shape_cage(std::span<const ShapeCagePoint> points,
+                        std::span<const std::array<std::size_t, 4>> cells,
+                        std::span<const ShapeCageEdge> edges, double radius,
+                        double minimum_length, double target_shape,
+                        std::span<double> displacement) {
+  constexpr double kInset = 0.001;
+  const double lower = minimum_length + kInset;
+  constexpr double kUpper = kUpperLength - kInset;
+  if (displacement.empty() || cells.empty() || !(radius > 0.0) || !finite(radius) ||
+      !(minimum_length > 0.0 && lower <= kUpper) ||
+      !(target_shape > 0.0) || !finite(target_shape)) {
+    return false;
+  }
+  for (const ShapeCagePoint& p : points) {
+    if (!finite3(p.point.data())) return false;
+    for (const std::int32_t index : p.variables) {
+      if (index < -1 || (index >= 0 && static_cast<std::size_t>(index) >= displacement.size())) {
+        return false;
+      }
+    }
+  }
+  for (const auto& cell : cells) {
+    for (const std::size_t row : cell) {
+      if (row >= points.size()) return false;
+    }
+  }
+  for (const ShapeCageEdge& edge : edges) {
+    if (edge.rows[0] >= points.size() || edge.rows[1] >= points.size() ||
+        !(edge.scale > 0.0) || !finite(edge.scale)) {
+      return false;
+    }
+  }
+
+  using Point = std::array<double, 3>;
+  std::vector<Point> trial(points.size());
+  std::vector<double> position(displacement.size(), 0.0);
+  const auto difference = [](const Point& a, const Point& b) -> Point {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+  };
+  const auto cross = [](const Point& a, const Point& b) -> Point {
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]};
+  };
+  constexpr double kInvalid = std::numeric_limits<double>::quiet_NaN();
+  const auto merit = [&](std::span<const double> x, std::span<double> gradient) {
+    for (std::size_t row = 0; row < points.size(); ++row) {
+      const ShapeCagePoint& p = points[row];
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        const std::int32_t index = p.variables[axis];
+        trial[row][axis] =
+            index < 0 ? p.point[axis] : p.point[axis] + radius * x[static_cast<std::size_t>(index)];
+      }
+      if (!finite3(trial[row].data())) return kInvalid;
+    }
+    std::fill(gradient.begin(), gradient.end(), 0.0);
+    const auto add_gradient = [&](std::size_t row, const Point& direction, double weight) {
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        const std::int32_t index = points[row].variables[axis];
+        if (index >= 0) {
+          gradient[static_cast<std::size_t>(index)] += (radius * weight) * direction[axis];
+        }
+      }
+    };
+
+    double value = 0.0;
+    for (const ShapeCageEdge& edge : edges) {
+      const auto [a, b] = edge.rows;
+      const Point delta = difference(trial[a], trial[b]);
+      const double length = edge.scale * std::sqrt(dot3(delta.data(), delta.data()));
+      if (!(length > 0.0) || !finite(length)) return kInvalid;
+      const double residual = length - std::clamp(length, lower, kUpper);
+      if (residual == 0.0) continue;
+      constexpr double kEdgeWeight = 16.0;
+      value += kEdgeWeight * residual * residual;
+      const double weight = (2.0 * kEdgeWeight * residual) * edge.scale * edge.scale / length;
+      add_gradient(a, delta, weight);
+      add_gradient(b, delta, -weight);
+    }
+    for (const auto& cell : cells) {
+      const Point& a = trial[cell[0]];
+      const Point ab = difference(trial[cell[1]], a);
+      const Point ac = difference(trial[cell[2]], a);
+      const Point ad = difference(trial[cell[3]], a);
+      std::array<Point, 4> d_volume{Point{}, cross(ac, ad), cross(ad, ab), cross(ab, ac)};
+      const double volume = dot3(ab.data(), d_volume[1].data());  // Six times signed volume.
+      if (!(volume > 0.0) || !finite(volume)) return kInvalid;
+
+      double squared = 0.0;
+      for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t j = i + 1; j < 4; ++j) {
+          squared += squared_distance(trial[cell[i]].data(), trial[cell[j]].data());
+        }
+      }
+      if (!(squared > 0.0) || !finite(squared)) return kInvalid;
+      const double shape = 12.0 * deterministic::cube_root(volume * volume * 0.25) / squared;
+      if (!(shape > 0.0) || !finite(shape)) return kInvalid;
+      const double residual = shape - target_shape;
+      if (residual >= 0.0) continue;
+      value += residual * residual;
+
+      // q is proportional to volume^(2/3) / squared. Differentiate both factors.
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        d_volume[0][axis] = -((d_volume[1][axis] + d_volume[2][axis]) + d_volume[3][axis]);
+      }
+      for (std::size_t i = 0; i < 4; ++i) {
+        Point d_squared{};
+        for (std::size_t j = 0; j < 4; ++j) {
+          if (i == j) continue;
+          for (std::size_t axis = 0; axis < 3; ++axis) {
+            d_squared[axis] += 2.0 * (trial[cell[i]][axis] - trial[cell[j]][axis]);
+          }
+        }
+        Point d_shape;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          d_shape[axis] =
+              shape * (2.0 * d_volume[i][axis] / (3.0 * volume) - d_squared[axis] / squared);
+        }
+        add_gradient(cell[i], d_shape, 2.0 * residual);
+      }
+    }
+    return value;
+  };
+  const auto result = detail::bounded_lbfgs(position, 1.0, 0.15, 96, 1e-9, merit);
+  // Each accepted step strictly decreases finite merit. A later stall or
+  // invalid trial does not invalidate the last accepted position.
+  if (result.steps == 0 || !finite(result.value)) return false;
+  for (double& component : position) component *= radius;
+  if (std::none_of(position.begin(), position.end(), [](double x) { return x != 0.0; })) {
+    return false;
+  }
+  std::copy(position.begin(), position.end(), displacement.begin());
+  return true;
 }
 
 }  // namespace phx::mc::metric
