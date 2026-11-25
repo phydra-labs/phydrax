@@ -616,6 +616,24 @@ crop, construction took .076769 s at best versus .206 s, worst shape
 times per field on the same crop inputs; each final output mesh matched
 the independently scored reference file byte-for-byte.
 
+On the same verified 10,452-cell source and metric bytes, three alternating
+single-thread pairs with **serial Omega_h** timed gradation and construction.
+Both outputs were scored with the same independent midpoint and shape
+measurements. No Phydrax certification or transfer time is in either
+construction column. The two tools need not produce the same number of cells.
+
+| Field | Construction, Phydrax / Omega_h (s) | Cells, Phydrax / Omega_h | Worst shape | Mean shape | Midpoint band share |
+|---|---:|---:|---:|---:|---:|
+| Scalar | 1.952453 / 10.412130 | 216,819 / 274,146 | .603730 / .300013 | .867248 / .781607 | .824690 / .759292 |
+| Tensor | .678714 / .866610 | 17,280 / 21,754 | .438163 / .185327 | .858165 / .791272 | .980082 / .902577 |
+| Coarsening | 1.091869 / .112671 | 1,842 / 2,203 | .609989 / .300203 | .831027 / .730574 | .870894 / .800198 |
+
+All three Phydrax outputs completed with zero strict-band misses; neither
+tool produced an inverted cell. The coarsening result is higher quality
+but 9.69 times slower to construct than Omega_h's. Separate Phydrax
+certification/transfer on the final pair took 9.243, 1.639 and 1.033 s.
+This is a one-size, single-thread comparison, not the final quiet matrix.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
