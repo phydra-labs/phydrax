@@ -349,6 +349,9 @@ class Adapter {
                        double* point, double& parameter) const;
   bool sync_split_facets(std::int32_t slot, std::int32_t inserted);
   TetEditStatus split(std::int32_t a, std::int32_t b, bool& applied);
+  // In a scalar field postpone inserting a midpoint with a short spoke.
+  // Reopen unrestricted splitting at the first plateau, before exhaustion.
+  bool separated_splits_ = false;
   // Constrained segment and non-hull splits use disjoint batches.
   struct PendingSplit {
     std::int32_t a = -1;
@@ -1153,6 +1156,7 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   if (!added.measured || !removed.measured) return TetEditStatus::kApplied;
   added.finish();
   if (!objective_decreases(removed, added, false)) return TetEditStatus::kApplied;
+  if (separated_splits_ && !added.short_side.empty()) return TetEditStatus::kApplied;
 
   if (*support == EdgeSupport::kBatch) {
     for (std::int32_t slot : shell) {
@@ -4153,6 +4157,8 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     }
   }
   bounded_tensor_search_ = tensor_field && !mesh_.implicit_source();
+  separated_splits_ = input_.topology_operations && input_.relocation && carriers_ &&
+                      !tensor_field && !mesh_.implicit_source();
   if (mesh_.vertex_slot_count() >= 512) {
     edge_measurements_.resize(16'384);
   }
@@ -4232,7 +4238,9 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // boundary moves, moving survivors and deeper searches.
     bool stalled = false;
     bool stage_step = false;
-    if (input_.relocation && !boundary_moves_) {
+    if (input_.topology_operations && separated_splits_) {
+      separated_splits_ = false;
+    } else if (input_.relocation && !boundary_moves_) {
       boundary_moves_ = true;
     } else if (input_.topology_operations && carriers_ && !survivor_moves_) {
       survivor_moves_ = true;

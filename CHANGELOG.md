@@ -756,6 +756,10 @@
   in-band quality stages search within two vertex rings of those endpoints
   instead of the whole mesh. Band, orientation and stall checks are
   unchanged; adapted meshes and evidence IDs can change.
+- For explicit scalar tetrahedral metrics, the first refinement pass sequence
+  defers splits that would immediately create a short spoke. Unrestricted
+  splitting remains available before stall. This changes edit order and can
+  change target mesh, transfer and evidence identities.
 - Hex-dominant smoothing omits derivative terms from faces and cells
   without a movable interior vertex in their stencil. Reduction order
   for movable vertices and all validity checks are unchanged.

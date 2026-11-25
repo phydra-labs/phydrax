@@ -543,6 +543,15 @@ mean shape is 0.85598, midpoint band share is 0.89701, and the sample has
 zero inversions and out-of-band edges. Incomplete-band repair still uses
 the exhaustive topology search. This does not close the isotropic clock.
 
+On the original 10,452-cell isotropic input, deferring insertions that
+introduce short spokes until the other edits stall produces 251,195 cells
+instead of 308,339. The registered row completes with zero inversions or
+out-of-band edges. Minimum shape is 0.55531 (MMG3D 0.44976), mean is
+0.87119 (0.84458), and midpoint-band share is 0.85053 (0.77444). One
+construction sample took 33.821 s versus the 2.020 s MMG3D reference;
+the quality gates pass and the timing gate fails. This placement rule is
+for scalar metrics, not the tensor route.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
