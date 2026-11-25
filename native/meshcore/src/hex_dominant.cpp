@@ -2622,8 +2622,8 @@ int32_t Builder::smooth() {
   };
   // All workers see the same coordinates. Complete the face bank before
   // updating cell centroids, with the original reduction order inside a row.
+  constexpr std::size_t chunk_size = 2048;
   const auto visit = [&](std::size_t count, const auto& row) -> int32_t {
-    constexpr std::size_t chunk_size = 2048;
     if (in.parallelism == 1 || count <= chunk_size) {
       for (std::size_t i = 0; i < count; ++i) row(i);
       return PHX_MC_OK;
@@ -2706,6 +2706,7 @@ int32_t Builder::smooth() {
       }
     }
   };
+  std::vector<uint8_t> cached_screens;
   const auto settle = [&]() -> int32_t {
     check.clear();
     next.clear();
@@ -2744,8 +2745,28 @@ int32_t Builder::smooth() {
         }
         for (const int32_t c : check) cell_geometry(c);
       }
-      for (const int32_t c : check) {
-        if (stamp[c] != epoch ? cell_valid_cached(c) : cell_valid_float(mesh, t, c)) {
+      // Screen the immutable pass geometry before any rollback. If an
+      // earlier rollback touches a cell, its epoch forces a fresh read
+      // at exactly the same point in the ordered replay as before.
+      const bool parallel_screen = in.parallelism != 1 && check.size() > chunk_size;
+      if (parallel_screen) {
+        cached_screens.resize(check.size());
+        const int32_t screened = visit(check.size(), [&](std::size_t i) {
+          cached_screens[i] = cell_valid_cached(check[i]);
+        });
+        if (screened != PHX_MC_OK) return screened;
+      }
+      for (std::size_t i = 0; i < check.size(); ++i) {
+        const int32_t c = check[i];
+        bool acceptable;
+        if (stamp[c] == epoch) {
+          acceptable = cell_valid_float(mesh, t, c);
+        } else if (parallel_screen) {
+          acceptable = cached_screens[i] != 0;
+        } else {
+          acceptable = cell_valid_cached(c);
+        }
+        if (acceptable) {
           valid[c] = 1;
           continue;
         }

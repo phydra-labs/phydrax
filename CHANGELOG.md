@@ -749,6 +749,9 @@
 - Hex-dominant smoothing omits derivative terms from faces and cells
   without a movable interior vertex in their stencil. Reduction order
   for movable vertices and all validity checks are unchanged.
+- Hex-dominant smoothing screens independent cells in parallel before
+  replaying the existing ordered rollbacks. Cells touched by a rollback
+  are still rechecked on the changed geometry.
 - Native metric relocation reuses stationary corner log determinants and
   stationary squared edge lengths within each search. Shape scoring reuses
   the orientation determinant and band spoke measurements when their

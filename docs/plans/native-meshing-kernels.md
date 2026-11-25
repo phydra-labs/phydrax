@@ -751,6 +751,14 @@ native bank also matches at one and eight requested workers. The public
 candidate identity remains build-bound. These are native stage clocks,
 not acceptance against the provider construction clock.
 
+The settlement step now screens immutable pass geometry in parallel and
+replays rollbacks in their original order. A cell touched by an earlier
+rollback is read again on the changed geometry. On the same layered
+sphere the native smoothing/laying stage took 1.551 s versus 1.941 s
+at eight workers; the smaller request took 0.335 s versus 0.412 s.
+The numerical banks match the preceding implementation exactly at both
+sizes and match between one and eight workers on the original sphere.
+
 Raw receipts are in the coordination board under
 `artifacts/MAC/native-redesign/`, including the original no-op adaptation
 and unlayered sphere/quadric JSON. Provider ineligibility, timing misses,
