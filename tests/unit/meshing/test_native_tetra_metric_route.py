@@ -78,7 +78,7 @@ def _source(
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _request(source: Any) -> MetricMeshAdaptation:
+def _request(source: Any, *, layered: bool = False) -> MetricMeshAdaptation:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     scope = MeshingScope(
@@ -91,6 +91,10 @@ def _request(source: Any) -> MetricMeshAdaptation:
     )
     tensor = np.diag((4.0, 3.8, 3.6))
     values = np.broadcast_to(tensor, (vertices.entity_ids.size, 3, 3)).copy()
+    if layered:
+        values[:, 0, 0] = 6.76
+        values[:, 1, 1] = 6.76
+        values[:, 2, 2] = (3.2 + np.asarray(mesh.coordinates)[:, 2]) ** 2
     return MetricMeshAdaptation(
         MeshMetricField(
             scope,
@@ -182,6 +186,36 @@ def test_native_metric_route_refines_a_kuhn_cube_with_exact_lineage() -> None:
         assert all(value.denominator.bit_count() == 1 for value in exact)
         new_vertices += int(target_ids[row]) not in source_ids
     assert new_vertices > 0
+
+
+def test_axis_graded_box_transfers_across_retired_source_cells() -> None:
+    from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
+
+    source = _source()
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D, relocation=True)
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, _request(source, layered=True), policy=policy)
+    )
+    evidence = result.evidence
+    assert isinstance(evidence, TetraMetricEvidence)
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.retriangulations == 1
+    assert evidence.out_of_range_edges == 0
+    _assert_valid_metric_mesh(result)
+    stencil = result.stencil
+    assert stencil is not None
+    transferred = stencil.apply(source.mesh.vertex_global_ids, source.mesh.coordinates)
+    target_rows = key_rows(
+        np.asarray(result.target.mesh.vertex_global_ids)[:, None],
+        np.asarray(stencil.target_global_ids)[:, None],
+    )
+    assert np.all(target_rows >= 0)
+    np.testing.assert_allclose(
+        transferred,
+        np.asarray(result.target.mesh.coordinates)[target_rows],
+        rtol=0.0,
+        atol=4 * np.finfo(np.float64).eps,
+    )
 
 
 @pytest.mark.parametrize("dimension", [0, 3], ids=["vertex", "cell"])

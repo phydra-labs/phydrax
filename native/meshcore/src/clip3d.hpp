@@ -56,6 +56,10 @@ class TetrahedronClipper {
   int32_t clip(const double* tetrahedron, const double* normals, const double* offsets,
                int32_t plane_count, ClippedPolytope& out);
 
+  // Face, edge and point contacts have no positive volume. Reuse the same
+  // exact clipping workspace without constructing a fan or integrating it.
+  int32_t overlaps(const double* first, const double* second, bool& positive_volume);
+
   int32_t clip_power(const double* tetrahedron, const double* sites, const double* weights,
                      int32_t site, const int32_t* neighbors, int32_t plane_count,
                      ClippedPolytope& out,

@@ -609,8 +609,12 @@ class TetMesh {
   // `sizes`.
   TetEditStatus export_snapshot(const phx_mc_tet_mesh_snapshot_request& request,
                                 const std::int64_t* sizes) const;
+  // Passing the full source ID bank binds a single whole-volume
+  // retriangulation to the immutable original coordinates. Only that edit
+  // may retain interpolation ancestry of a vertex it retires.
   TetEditStatus apply_edit_batch(const TetEditBatch& batch,
-                                 std::vector<TetEditResult>& results);
+                                 std::vector<TetEditResult>& results,
+                                 std::span<const std::uint64_t> original_vertex_ids = {});
   // Exact refusal probe of a single-operation flip, ring reconnection or collapse batch
   // against this unbound, nonperiodic state: true with `status` when
   // apply_edit_batch would refuse it with that status (mutating nothing but
@@ -925,9 +929,10 @@ class TetMesh {
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
                                    const std::set<std::uint64_t>& kept_edges,
                                    const TetSegmentIndex* segment_index) const;
-  TetEditStatus apply_one_edit(const TetEdit& operation, TetEditResult& result);
+  TetEditStatus apply_one_edit(const TetEdit& operation, TetEditResult& result,
+                               bool original_retessellation);
   TetEditStatus validate_and_commit(TetMesh& staged, const TetEdit& operation,
-                                    TetEditResult& result);
+                                    TetEditResult& result, bool original_retessellation);
   void copy_state_to(TetMesh& destination) const;
   void swap_state(TetMesh& other) noexcept;
   int32_t build_state(std::span<const double> points,

@@ -1850,9 +1850,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         ),
     ),
     "phx_mc_metric_adaptation_sizes": (_I32, (_P, _P)),
-    "phx_mc_metric_adaptation_read": (
+    "phx_mc_metric_adaptation_export": (
         _I32,
-        (_P, ctypes.POINTER(_MetricAdaptationOutput)),
+        (_P, ctypes.POINTER(_MetricAdaptationOutput), _I64),
     ),
     "phx_mc_metric_adaptation_free": (None, (_P,)),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
@@ -12654,7 +12654,7 @@ class TetMesh3D:
         vertices, terms, cells, ancestors, relations, unrepresentable = sizes.tolist()
         status = np.zeros(1, dtype=np.int32)
         passes = np.zeros(1, dtype=np.int64)
-        counters = np.zeros(10, dtype=np.int64)
+        counters = np.empty(11, dtype=np.int64)
         out = {
             "vertex_ids": np.zeros(vertices, dtype=np.uint64),
             "vertex_target_ids": np.zeros(vertices, dtype=np.uint64),
@@ -12681,8 +12681,10 @@ class TetMesh3D:
             *(array.ctypes.data for array in out.values()),
         )
         _raise_for_call(
-            self._library["phx_mc_metric_adaptation_read"](handle, ctypes.byref(banks)),
-            "metric_adaptation_read",
+            self._library["phx_mc_metric_adaptation_export"](
+                handle, ctypes.byref(banks), counters.size
+            ),
+            "metric_adaptation_export",
         )
         return TetMeshMetricAdaptation(
             int(status[0]),

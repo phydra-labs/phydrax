@@ -863,6 +863,7 @@ def _route_decision(
                 + evidence.flips32
                 + evidence.ring_reconnections
                 + evidence.relocations
+                + evidence.retriangulations
             )
             status = tetra_status[evidence.status]
             return applied > 0, status, MeshTransitionKind.REMESH, False

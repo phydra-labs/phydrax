@@ -149,9 +149,11 @@ int32_t phx_mc_metric_adaptation_sizes(const phx_mc_metric_adaptation* result, i
   return PHX_MC_OK;
 }
 
-int32_t phx_mc_metric_adaptation_read(const phx_mc_metric_adaptation* result,
-                                      const phx_mc_metric_adaptation_output* banks) {
-  if (result == nullptr || banks == nullptr || banks->counters == nullptr ||
+int32_t phx_mc_metric_adaptation_export(const phx_mc_metric_adaptation* result,
+                                        const phx_mc_metric_adaptation_output* banks,
+                                        int64_t counter_capacity) {
+  if (counter_capacity < PHX_MC_METRIC_ADAPTATION_COUNTERS ||
+      result == nullptr || banks == nullptr || banks->counters == nullptr ||
       banks->status == nullptr || banks->passes == nullptr || banks->stencil_offsets == nullptr ||
       banks->ancestry_offsets == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -182,7 +184,9 @@ int32_t phx_mc_metric_adaptation_read(const phx_mc_metric_adaptation* result,
                               counters.flips23,          counters.flips32,
                               counters.ring_reconnections, counters.relocations,
                               counters.rejected_topology, counters.rejected_protected,
-                              counters.rejected_uncertain, counters.rejected_invalid};
+                              counters.rejected_uncertain, counters.rejected_invalid,
+                              counters.retriangulations};
+    static_assert(std::size(values) == PHX_MC_METRIC_ADAPTATION_COUNTERS);
     std::copy(std::begin(values), std::end(values), banks->counters);
     copy_output_bank(output.vertex_ids, banks->vertex_ids);
     copy_output_bank(output.vertex_target_ids, banks->vertex_target_ids);

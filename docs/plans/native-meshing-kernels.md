@@ -712,6 +712,17 @@ queries only.
   output banks are invariant under worker requests. This does not qualify
   fixed-boundary volume refinement against threaded HXT.
 
+### Aligned anisotropic refinement
+
+On the registered 10,452-cell affine box, whole-source retessellation produces
+17,280 tetrahedra with no inversions or out-of-band edges. Independent worst
+shape is 0.438163 versus MMG3D's 0.336147; mean shape 0.858165 versus
+0.847227; midpoint share 0.980082 versus 0.934636. Single-thread construction,
+including physical gradation and source ancestry, took 1.250177, 0.940649 and
+0.811317 s versus the matched MMG3D minimum of 1.204 s. The separate final
+certification and transfer took 4.950588 s. This result qualifies one
+refinement field and one source size, not the entire F6 ladder.
+
 ### Sequential adaptation worker invariance
 
 F6 native metric edits remain sequential: committing a cavity changes the

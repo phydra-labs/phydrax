@@ -7596,6 +7596,7 @@ def _finish_tetra_metric_route(
         + evidence.flips32
         + evidence.ring_reconnections
         + evidence.relocations
+        + evidence.retriangulations
     )
     if applied == 0:
         return _unchanged(prepared, evidence, None, status=status)

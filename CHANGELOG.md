@@ -10,6 +10,12 @@
   inside declared Cartesian facets and on exactly witnessed Cartesian seams.
   Derived seam primitives do not add live constraints. Relocation retains
   source stencils, stable identities, and the existing metric band.
+- Native metric adaptation can retessellate single-region Cartesian boxes
+  in aligned, graded anisotropic fields. The transaction preserves wall
+  identities and records exact transfer stencils and positive-volume cell
+  ancestry. `TetraMetricEvidence.retriangulations` distinguishes it from
+  local tetrahedral edits; the field changes the current evidence fingerprint
+  and stored representation even when its value is zero.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;

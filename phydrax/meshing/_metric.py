@@ -1154,28 +1154,52 @@ def _intersect(first: Array, second: Array, /) -> Array:
     return 0.5 * (combined + jnp.swapaxes(combined, -1, -2))
 
 
+def _inverse_diagonal_root(root: Array, /) -> Array:
+    # Keep the division by the rounded square root, not an rsqrt rewrite.
+    return 1.0 / jax.lax.optimization_barrier(root)
+
+
+def _intersect_diagonal(first: Array, second: Array, /) -> Array:
+    # A coordinate eigenbasis removes the zero terms in the dense products.
+    # The two ordered products on each side of the maximum still round.
+    root = jnp.sqrt(first)
+    inverse = _inverse_diagonal_root(root)
+    reduced = (inverse * second) * inverse
+    combined = (root * jnp.maximum(reduced, 1.0)) * root
+    return 0.5 * (combined + combined)
+
+
 def _canonical_intersection(candidates: Array, valid: Array, /) -> Array:
-    """Order-independent fold of ``(n, k, d, d)`` metrics under row validity.
+    """Canonical fold of dense or coordinate-diagonal metrics under slot validity.
 
     The binary intersection is not associative, so candidates are folded in the
     canonical lexicographic order of their upper-triangular entries (invalid
     slots last). Permuting the inputs therefore cannot change the result.
     """
-    dimension = candidates.shape[-1]
-    rows, columns = np.triu_indices(dimension)
-    entries = candidates[..., rows, columns]
+    diagonal = candidates.ndim == 3
+    if diagonal:
+        # Every omitted upper-triangular key was the same zero.
+        entries = candidates
+    else:
+        rows, columns = np.triu_indices(candidates.shape[-1])
+        entries = candidates[..., rows, columns]
+    extra_axes = (Ellipsis, None) if diagonal else (Ellipsis, None, None)
     keys = tuple(
         jnp.where(valid, entries[..., index], jnp.inf)
-        for index in reversed(range(rows.size))
+        for index in reversed(range(entries.shape[-1]))
     ) + (~valid,)
     order = jnp.lexsort(keys, axis=-1)
-    ordered = jnp.take_along_axis(candidates, order[..., None, None], axis=1)
+    ordered = jnp.take_along_axis(candidates, order[extra_axes], axis=1)
     ordered_valid = jnp.take_along_axis(valid, order, axis=1)
 
     def fold(accumulated: Any, slot: Any) -> Any:
         tensor, active = slot
-        combined = _intersect(accumulated, tensor)
-        return jnp.where(active[:, None, None], combined, accumulated), None
+        combined = (
+            _intersect_diagonal(accumulated, tensor)
+            if diagonal
+            else _intersect(accumulated, tensor)
+        )
+        return jnp.where(active[extra_axes], combined, accumulated), None
 
     result, _ = jax.lax.scan(
         fold,
@@ -1252,11 +1276,18 @@ def _anisotropic_gradation_kernel(
     rows = metrics.shape[0]
     always = jnp.ones((rows, 1), dtype=jnp.bool_)
     candidate_valid = jnp.concatenate((always, slot_valid), axis=1)
+    diagonal = metrics.ndim == 2
+    metric_axes = (1,) if diagonal else (1, 2)
+    extra_axes = (Ellipsis, None) if diagonal else (Ellipsis, None, None)
 
-    def body(state: Any) -> Any:
-        current, sweeps, updates, _, _ = state
+    def dense(bank: Array) -> Array:
+        if not diagonal:
+            return bank
+        return bank[..., None, :] * jnp.eye(bank.shape[-1], dtype=bank.dtype)
+
+    def grow_dense(current: Array) -> Array:
         spectrum = HermitianSpectrum(current)
-        grown = _grow_metrics(
+        return _grow_metrics(
             spectrum.eigenvalues,
             spectrum.eigenvectors,
             current,
@@ -1265,14 +1296,24 @@ def _anisotropic_gradation_kernel(
             log_growth,
             kind,
         )
+
+    def body(state: Any) -> Any:
+        current, sweeps, updates, _, _ = state
+        current_dense = dense(current)
+        grown = grow_dense(current_dense)
+        if diagonal:
+            grown = jnp.diagonal(grown, axis1=-2, axis2=-1)
         candidates = jnp.concatenate((current[:, None], grown[slots]), axis=1)
         combined = _canonical_intersection(candidates, candidate_valid)
-        needs_growth = _maximum_growth(current, combined) > 1.0 + tolerance
-        within_bounds = _within_bounds(combined, bounds)
+        # Only the candidate fold is compact. Use the original dense growth
+        # quotient and bounds witness for every threshold decision.
+        combined_dense = dense(combined)
+        needs_growth = _maximum_growth(current_dense, combined_dense) > 1.0 + tolerance
+        within_bounds = _within_bounds(combined_dense, bounds)
         accept = (
-            needs_growth & within_bounds & jnp.any(combined != current, axis=(-2, -1))
+            needs_growth & within_bounds & jnp.any(combined != current, axis=metric_axes)
         )
-        updated = jnp.where(accept[:, None, None], combined, current)
+        updated = jnp.where(accept[extra_axes], combined, current)
         blocked = jnp.any(needs_growth & ~within_bounds)
         return (
             updated,
@@ -1296,16 +1337,8 @@ def _anisotropic_gradation_kernel(
             jnp.asarray(False),
         ),
     )
-    spectrum = HermitianSpectrum(final)
-    grown = _grow_metrics(
-        spectrum.eigenvalues,
-        spectrum.eigenvectors,
-        final,
-        sources,
-        deltas,
-        log_growth,
-        kind,
-    )
+    final = dense(final)
+    grown = grow_dense(final)
     violation = jnp.max(
         jnp.maximum(_maximum_growth(final[targets], grown) - 1.0, 0.0),
         initial=0.0,
@@ -1405,12 +1438,13 @@ def _grade_eigenpairs(
         tensors = np.zeros((rows, dimension, dimension), dtype=np.float64)
         tensors[:, diagonal, diagonal] = 0.5 * (realized + realized)
         return tensors, evidence
-    if eigenvectors is None:
-        raise RuntimeError("Anisotropic gradation requires a prepared eigenbasis.")
     sources = np.concatenate((edges[:, 0], edges[:, 1]))
     targets = np.concatenate((edges[:, 1], edges[:, 0]))
     slots, slot_valid = _incoming_slots(targets, rows)
-    initial = _compose(eigenvalues, eigenvectors)
+    # An admitted diagonal bank carries its values in coordinate order, with
+    # the exact coordinate eigenbasis implicit.
+    initial = eigenvalues if eigenvectors is None else _compose(eigenvalues, eigenvectors)
+    diagonal = eigenvectors is None
     final, sweeps, updates, bounds_conflict, violation = _anisotropic_gradation_kernel(
         jnp.asarray(initial),
         jnp.asarray(sources, dtype=jnp.int32),
@@ -1424,7 +1458,8 @@ def _grade_eigenpairs(
         kind=policy.kind.value,
     )
     graded = np.asarray(final)
-    modified = np.any(graded != initial, axis=(1, 2))
+    observed = graded.diagonal(axis1=1, axis2=2) if diagonal else graded
+    modified = np.any(observed != initial, axis=1 if diagonal else (1, 2))
     maximum_violation = float(np.asarray(violation))
     status = (
         MetricGradationStatus.CONVERGED
@@ -1442,6 +1477,46 @@ def _grade_eigenpairs(
         maximum_violation=maximum_violation,
     )
     return graded, evidence
+
+
+def _exact_cpu_physical_diagonal(
+    tensors: np.ndarray,
+    points: np.ndarray,
+    bounds: tuple[float, float, float],
+    policy: MetricGradationPolicy,
+    /,
+) -> np.ndarray | None:
+    dimension = tensors.shape[1]
+    if (
+        not policy.anisotropic
+        or policy.kind is not MetricGradationKind.PHYSICAL
+        or dimension not in (2, 3)
+        or not tensors.shape[0]
+        or not x64_enabled()
+        or default_device_selection() is not None
+        or jax.default_backend() != "cpu"
+    ):
+        return None
+    lower, upper = bounds[1] ** -2, bounds[0] ** -2
+    # Keep both the grown and reduced diagonal spectra inside CPU LAPACK's
+    # non-rescaling range, including every accepted update. The lower-to-upper
+    # ratio keeps the bounds slack from masking a near-zero eigenvalue.
+    if (
+        not (2.0**-80 <= lower <= upper <= 2.0**80)
+        or lower < 2.0**-44 * upper
+        or policy.maximum_gradation > 2.0**40
+    ):
+        return None
+    diagonal = tensors.diagonal(axis1=1, axis2=2)
+    if not np.all((diagonal >= 2.0**-80) & (diagonal <= 2.0**80)):
+        return None
+    for row in range(1, dimension):
+        for column in range(row):
+            if np.any(tensors[:, row, column]) or np.any(tensors[:, column, row]):
+                return None
+    if np.any(np.abs(points) > 2.0**40):
+        return None
+    return diagonal
 
 
 def grade_mesh_metric(
@@ -1466,15 +1541,23 @@ def grade_mesh_metric(
     rows, dimension = values.shape[0], values.shape[-1]
     edges = _edges(adjacency, rows)
     points = _points(coordinates, rows, dimension)
+    bounds = (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy)
+    diagonal = (
+        _exact_cpu_physical_diagonal(values, points, bounds, policy)
+        if 0 < edges.shape[0] <= np.iinfo(np.int32).max // 2
+        else None
+    )
     scalars = None if policy.anisotropic else _exact_cpu_isotropic_scalars(values)
-    if scalars is None:
+    if diagonal is not None:
+        eigenvalues, eigenvectors = diagonal, None
+    elif scalars is None:
         projected = _project_admitted_metric(jnp.asarray(values))
         eigenvalues, eigenvectors = _host_spectrum(projected)
     else:
         eigenvalues = np.broadcast_to(scalars[:, None], (rows, dimension))
         eigenvectors = None
     graded, evidence = _grade_eigenpairs(
-        (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
+        bounds,
         eigenvalues,
         eigenvectors,
         edges,

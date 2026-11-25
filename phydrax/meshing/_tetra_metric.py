@@ -69,6 +69,7 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock
+from ..discretization._topology import row_positions, sorted_rows, sorted_unique_rows
 from ..linalg._exact import solve_exact
 from ..typing import ConvertibleToArray
 from ._lineage import EntityLineageKind
@@ -199,6 +200,7 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
     rejected_protected: int = eqx.field(static=True)
     rejected_uncertain: int = eqx.field(static=True)
     rejected_invalid: int = eqx.field(static=True)
+    retriangulations: int = eqx.field(static=True)
     measured_edges: int = eqx.field(static=True)
     out_of_range_edges: int = eqx.field(static=True)
     minimum_metric_length: float = eqx.field(static=True)
@@ -227,6 +229,7 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         rejected_protected: int,
         rejected_uncertain: int,
         rejected_invalid: int,
+        retriangulations: int,
         measured_edges: int,
         out_of_range_edges: int,
         minimum_metric_length: float,
@@ -250,6 +253,7 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
             rejected_protected,
             rejected_uncertain,
             rejected_invalid,
+            retriangulations,
             measured_edges,
             out_of_range_edges,
         )
@@ -303,6 +307,7 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         self.rejected_protected = rejected_protected
         self.rejected_uncertain = rejected_uncertain
         self.rejected_invalid = rejected_invalid
+        self.retriangulations = retriangulations
         self.measured_edges = measured_edges
         self.out_of_range_edges = out_of_range_edges
         self.minimum_metric_length = minimum_metric_length
@@ -405,6 +410,7 @@ class _EditCounters(NamedTuple):
     rejected_protected: int = 0
     rejected_uncertain: int = 0
     rejected_invalid: int = 0
+    retriangulations: int = 0
 
 
 @final
@@ -1956,6 +1962,7 @@ def strict_plain_tetra_metric_noop(
         rejected_protected=0,
         rejected_uncertain=0,
         rejected_invalid=0,
+        retriangulations=0,
         measured_edges=edges.shape[0],
         out_of_range_edges=0,
         minimum_metric_length=minimum_length,
@@ -7724,6 +7731,7 @@ def _metric_evidence(
         rejected_protected=int(counters["rejected_protected"]),
         rejected_uncertain=int(counters["rejected_uncertain"]),
         rejected_invalid=int(counters["rejected_invalid"]),
+        retriangulations=int(counters["retriangulations"]),
         measured_edges=int(values.size),
         out_of_range_edges=int(np.count_nonzero(~inside)),
         minimum_metric_length=float(np.min(values)),
@@ -7889,16 +7897,8 @@ def _id_relations(
     /,
 ) -> EntityRelations:
     """Distinct single-ID relations ordered by (source, target, kind)."""
-    records = np.unique(
-        np.stack(
-            (
-                sources.astype(np.int64),
-                targets.astype(np.int64),
-                kinds.astype(np.int64),
-            ),
-            axis=1,
-        ).reshape((-1, 3)),
-        axis=0,
+    records = sorted_unique_rows(
+        np.stack((sources, targets, kinds), axis=1, dtype=np.int64)
     )
     return EntityRelations(
         dimension,
@@ -7912,17 +7912,6 @@ def _tetra_key_records(keys: np.ndarray, /) -> np.ndarray:
     """View fixed-width keys as records ordered by numeric vertex IDs."""
     dtype = np.dtype([(f"v{axis}", np.int64) for axis in range(keys.shape[1])])
     return np.ascontiguousarray(keys).view(dtype).reshape(-1)
-
-
-def _tetra_key_matches(
-    source_records: np.ndarray, queries: np.ndarray, /
-) -> np.ndarray:
-    records = _tetra_key_records(queries)
-    rows = np.searchsorted(source_records, records)
-    present = rows < source_records.size
-    present[present] = source_records[rows[present]] == records[present]
-    rows[~present] = -1
-    return rows
 
 
 def _tetra_incident_key_rows(
@@ -7956,10 +7945,8 @@ def _tetra_intermediate_relations(
     """Explicit edge or facet lineage from canonical native tetra stencils."""
     width = dimension + 1
     target_keys = target_vertex_ids[target_rows]
-    source_keys = entity_keys(source, dimension)
-    source_keys = source_keys[np.lexsort(source_keys.T[::-1])]
-    source_records = _tetra_key_records(source_keys)
-    identity = _tetra_key_matches(source_records, target_keys)
+    source_keys = sorted_rows(entity_keys(source, dimension))
+    identity = row_positions(source_keys, target_keys)
     preserved = np.flatnonzero(identity >= 0)
 
     # Terms of a native stencil are distinct. A single over-width stencil
@@ -7989,7 +7976,7 @@ def _tetra_intermediate_relations(
         queries = support_keys[members, :size]
         targets = support_targets[members]
         if size == width:
-            sources = _tetra_key_matches(source_records, queries)
+            sources = row_positions(source_keys, queries)
         else:
             sources, query_rows = _tetra_incident_key_rows(source_keys, queries)
             targets = targets[query_rows]
@@ -8069,11 +8056,11 @@ def _adapted_edit(
         block_cells.append(cells[members])
         block_ids.append(cell_target_ids[members])
     # Vertex rows already follow ascending target IDs.
-    edge_rows = np.unique(
-        np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0
+    edge_rows = sorted_unique_rows(
+        np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2))
     )
-    face_rows = np.unique(
-        np.sort(cells[:, _TETRA_FACES], axis=2).reshape((-1, 3)), axis=0
+    face_rows = sorted_unique_rows(
+        np.sort(cells[:, _TETRA_FACES], axis=2).reshape((-1, 3))
     )
 
     relation_sources = adaptation.vertex_relations[:, 0].astype(np.int64)

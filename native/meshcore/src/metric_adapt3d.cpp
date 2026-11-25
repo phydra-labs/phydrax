@@ -24,6 +24,7 @@
 #include "metric_relocation.hpp"
 #include "metric_float.hpp"
 #include "metric_goal.hpp"
+#include "metric_layer_grid.hpp"
 #include "predicates.hpp"
 #include "source_construction.hpp"
 
@@ -4153,6 +4154,10 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     }
   }
   bounded_tensor_search_ = tensor_field && !mesh_.implicit_source();
+  if (bounded_tensor_search_ && input_.topology_operations) {
+    const auto status = adapt_metric_layers(mesh_, input_, *carriers_, output);
+    if (status.has_value()) return *status;
+  }
   if (mesh_.vertex_slot_count() >= 512) {
     edge_measurements_.resize(16'384);
   }

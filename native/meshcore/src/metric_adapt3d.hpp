@@ -68,6 +68,7 @@ struct AdaptCounters {
   std::int64_t rejected_protected = 0;
   std::int64_t rejected_uncertain = 0;
   std::int64_t rejected_invalid = 0;
+  std::int64_t retriangulations = 0;
 };
 
 // The exact P1 source and the starting state of the live mesh.

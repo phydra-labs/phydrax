@@ -16,6 +16,7 @@
 #include <tuple>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <unordered_set>
@@ -99,6 +100,122 @@ Dyadic exact_oriented_determinant(const TetMesh& mesh,
   return first[0] * (second[1] * third[2] - second[2] * third[1]) -
          first[1] * (second[0] * third[2] - second[2] * third[0]) +
          first[2] * (second[0] * third[1] - second[1] * third[0]);
+}
+
+Dyadic projected_twice_area(const double* a, const double* b, const double* c,
+                            int u, int v) {
+  const Dyadic au(a[u]), av(a[v]);
+  return (Dyadic(b[u]) - au) * (Dyadic(c[v]) - av) -
+         (Dyadic(b[v]) - av) * (Dyadic(c[u]) - au);
+}
+
+Dyadic boundary_determinant(const TetMesh& mesh, const std::int32_t* face) {
+  const double* a = mesh.point(face[0]);
+  const double* b = mesh.point(face[1]);
+  const double* c = mesh.point(face[2]);
+  for (int axis = 0; axis < 3; ++axis) {
+    if (a[axis] != b[axis] || a[axis] != c[axis]) continue;
+    if (a[axis] == 0.0) return {};
+    return Dyadic(a[axis]) * projected_twice_area(a, b, c, (axis + 1) % 3, (axis + 2) % 3);
+  }
+  const Dyadic first[3]{Dyadic(a[0]), Dyadic(a[1]), Dyadic(a[2])};
+  const Dyadic second[3]{Dyadic(b[0]), Dyadic(b[1]), Dyadic(b[2])};
+  const Dyadic third[3]{Dyadic(c[0]), Dyadic(c[1]), Dyadic(c[2])};
+  return exact::det3(first, second, third);
+}
+
+struct RectangularSourceChart {
+  std::array<double, 3> low;
+  std::array<double, 3> high;
+  int axis;
+  int orientation;
+
+  bool covers(const double* const* points, int direction) const {
+    if (direction != 1 && direction != -1) return false;
+    for (int corner = 0; corner < 3; ++corner) {
+      for (int coordinate = 0; coordinate < 3; ++coordinate) {
+        if (!(low[coordinate] <= points[corner][coordinate] &&
+              points[corner][coordinate] <= high[coordinate])) return false;
+      }
+    }
+    const int u = (axis + 1) % 3;
+    const int v = (axis + 2) % 3;
+    const double a[2]{points[0][u], points[0][v]};
+    const double b[2]{points[1][u], points[1][v]};
+    const double c[2]{points[2][u], points[2][v]};
+    return orient2d(a, b, c) == direction * orientation;
+  }
+};
+
+using ChartEdge = std::pair<SortedEdge, bool>;
+
+// Certify the immutable primitive chain, not just the AABB of the group.
+// Its triangles have one orientation, and all nonperimeter edges cancel.
+// Thus the coverage multiplicity is constant in the open rectangle; the
+// exact area fixes that multiplicity to one. Any subject with three corners
+// in the closed rectangle is contained by convexity.
+std::optional<RectangularSourceChart> rectangular_source_chart(
+    std::span<const double> points, std::span<const SortedFace> triangles,
+    std::vector<ChartEdge>& edges) {
+  const auto point = [&](std::int32_t slot) {
+    return points.data() + 3 * static_cast<std::size_t>(slot);
+  };
+  const double* first = point(triangles.front()[0]);
+  RectangularSourceChart chart{{first[0], first[1], first[2]},
+                               {first[0], first[1], first[2]}, -1, 0};
+  for (const auto& triangle : triangles) {
+    for (std::int32_t slot : triangle) {
+      const double* p = point(slot);
+      for (int axis = 0; axis < 3; ++axis) {
+        chart.low[axis] = std::min(chart.low[axis], p[axis]);
+        chart.high[axis] = std::max(chart.high[axis], p[axis]);
+      }
+    }
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    if (chart.low[axis] != chart.high[axis]) continue;
+    if (chart.axis >= 0) return std::nullopt;
+    chart.axis = axis;
+  }
+  if (chart.axis < 0) return std::nullopt;
+  const int u = (chart.axis + 1) % 3;
+  const int v = (chart.axis + 2) % 3;
+  const auto on_rim = [&](const double* a, const double* b, int axis) {
+    return a[axis] == b[axis] &&
+           (a[axis] == chart.low[axis] || a[axis] == chart.high[axis]);
+  };
+  edges.clear();
+  edges.reserve(3 * triangles.size());
+  Dyadic area;
+  for (const auto& triangle : triangles) {
+    const double* a = point(triangle[0]);
+    const double* b = point(triangle[1]);
+    const double* c = point(triangle[2]);
+    const Dyadic twice = projected_twice_area(a, b, c, u, v);
+    const int orientation = twice.sign();
+    if (orientation == 0 || (chart.orientation != 0 && orientation != chart.orientation)) {
+      return std::nullopt;
+    }
+    chart.orientation = orientation;
+    area = area + twice;
+    for (int k = 0; k < 3; ++k) {
+      const std::int32_t start = triangle[k], end = triangle[(k + 1) % 3];
+      if (on_rim(point(start), point(end), u) || on_rim(point(start), point(end), v)) continue;
+      edges.emplace_back(sorted_edge(start, end), start < end);
+    }
+  }
+  const Dyadic rectangle = (Dyadic(chart.high[u]) - Dyadic(chart.low[u])) *
+                           (Dyadic(chart.high[v]) - Dyadic(chart.low[v])) *
+                           Dyadic(2.0 * chart.orientation);
+  if (!(area - rectangle).is_zero()) return std::nullopt;
+  std::sort(edges.begin(), edges.end());
+  if (edges.size() % 2 != 0) return std::nullopt;
+  for (std::size_t row = 0; row < edges.size(); row += 2) {
+    if (edges[row].first != edges[row + 1].first || edges[row].second == edges[row + 1].second) {
+      return std::nullopt;
+    }
+  }
+  return chart;
 }
 
 
@@ -279,7 +396,7 @@ bool collect_source_regions(
     const std::int32_t slot = static_cast<std::int32_t>(row);
     if (!complex.live(slot)) continue;
     const Tetrahedron& cell = mesh.tet(slot);
-    if (is_ghost(cell)) continue;
+    if (cell.constrained == 0 || is_ghost(cell)) continue;
     for (int face_slot = 0; face_slot < 4; ++face_slot) {
       const std::int32_t source = complex.constraint(slot, face_slot);
       if (source < 0) continue;
@@ -319,7 +436,8 @@ int TetMesh::metric_insphere(const double* a, const double* b, const double* c,
 }
 
 TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
-                                        std::vector<TetEditResult>& results) {
+                                        std::vector<TetEditResult>& results,
+                                        std::span<const std::uint64_t> original_vertex_ids) {
   clear_implicit_facet_refusal();
   try {
     if (batch.expected_generation != generation_ ||
@@ -331,6 +449,18 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
       for (TetEditResult& result : stale) result.status = TetEditStatus::kStaleGeneration;
       results.swap(stale);
       return TetEditStatus::kStaleGeneration;
+    }
+    const bool original_retessellation = !original_vertex_ids.empty();
+    if (original_retessellation &&
+        (batch.operations.size() != 1 ||
+         batch.operations.front().kind != TetEditKind::kRetriangulate ||
+         batch.operations.front().removed_cell_ids.size() !=
+             static_cast<std::size_t>(complex_.finite_count) ||
+         !std::ranges::equal(original_vertex_ids, vertex_ids_) ||
+         points_ != source_points_ || !cell_ancestry_.empty() || !vertex_ancestry_.empty() ||
+         std::ranges::find(vertex_live_, 0) != vertex_live_.end())) {
+      results.assign(batch.operations.size(), TetEditResult{});
+      return TetEditStatus::kRejectedTopology;
     }
     if (batch.operations.empty()) {
       results.clear();
@@ -355,7 +485,8 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
     for (std::size_t index = 0; index < batch.operations.size(); ++index) {
       staged.clear_implicit_facet_refusal();
       TetEditResult result;
-      const TetEditStatus status = staged.apply_one_edit(batch.operations[index], result);
+      const TetEditStatus status =
+          staged.apply_one_edit(batch.operations[index], result, original_retessellation);
       result.status = status;
       if (status != TetEditStatus::kApplied) {
         implicit_facet_refusal_ = staged.implicit_facet_refusal_;
@@ -399,9 +530,10 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
   }
 }
 
-TetEditStatus TetMesh::apply_one_edit(const TetEdit& operation, TetEditResult& result) {
+TetEditStatus TetMesh::apply_one_edit(const TetEdit& operation, TetEditResult& result,
+                                      bool original_retessellation) {
   if (!validate_periodic_closure(operation)) return TetEditStatus::kRejectedTopology;
-  return validate_and_commit(*this, operation, result);
+  return validate_and_commit(*this, operation, result, original_retessellation);
 }
 
 TetEditStatus TetMesh::split_edge(
@@ -2139,7 +2271,10 @@ TetEditStatus TetMesh::unconstrained_split_point_status(std::int32_t a, std::int
 bool TetMesh::validate_regions_and_constraints(
     const TetEdit& operation, std::span<const std::int32_t> removed_slots,
     std::span<const TetSnapshotFacet> candidate_facets) const {
-  std::unordered_set<std::int32_t> removed(removed_slots.begin(), removed_slots.end());
+  const bool all_finite_removed =
+      removed_slots.size() == static_cast<std::size_t>(complex_.finite_count);
+  std::unordered_set<std::int32_t> removed;
+  if (!all_finite_removed) removed.insert(removed_slots.begin(), removed_slots.end());
   const auto replacement_face = [&](const SortedFace& key, std::int32_t expected_region,
                                     bool check_region) {
     bool found = false;
@@ -2265,16 +2400,26 @@ bool TetMesh::validate_regions_and_constraints(
   // the future facets (validate_and_commit).
   std::set<SortedFace> retired_boundary;
   if (operation.split_edges.empty()) {
-    for (std::uint64_t id : operation.removed_facet_ids) {
-      const auto found = std::find_if(facets_.begin(), facets_.end(),
-          [&](const TetSnapshotFacet& facet) { return facet.id == id; });
-      if (found == facets_.end()) return false;
+    const auto bind_retired = [&](const TetSnapshotFacet& facet) {
       std::int32_t local[3];
       for (int corner = 0; corner < 3; ++corner) {
-        local[corner] = vertex_slot(found->vertices[corner]);
+        local[corner] = vertex_slot(facet.vertices[corner]);
         if (local[corner] < 0) return false;
       }
       retired_boundary.insert(sorted_face(local));
+      return true;
+    };
+    if (operation.removed_facet_ids.size() == facets_.size()) {
+      // The caller has already resolved every retired ID and checked uniqueness.
+      for (const TetSnapshotFacet& facet : facets_) {
+        if (!bind_retired(facet)) return false;
+      }
+    } else {
+      for (std::uint64_t id : operation.removed_facet_ids) {
+        const auto found = std::find_if(facets_.begin(), facets_.end(),
+            [&](const TetSnapshotFacet& facet) { return facet.id == id; });
+        if (found == facets_.end() || !bind_retired(*found)) return false;
+      }
     }
   }
   for (std::int32_t slot : removed_slots) {
@@ -2282,8 +2427,10 @@ bool TetMesh::validate_regions_and_constraints(
     const Tetrahedron& cell = tet(slot);
     for (int face_slot = 0; face_slot < 4; ++face_slot) {
       const std::int32_t neighbor = cell.n[face_slot];
-      if (removed.contains(neighbor)) continue;
-      if (is_ghost(tet(neighbor)) && !retired_boundary.empty()) {
+      if (!all_finite_removed && removed.contains(neighbor)) continue;
+      const bool ghost_neighbor = is_ghost(tet(neighbor));
+      if (all_finite_removed && !ghost_neighbor) continue;
+      if (ghost_neighbor && !retired_boundary.empty()) {
         std::int32_t face[3];
         oriented_facet(cell.v, face_slot, face);
         if (retired_boundary.contains(sorted_face(face))) continue;
@@ -2309,6 +2456,8 @@ bool TetMesh::validate_regions_and_constraints(
     }
     if (!facet_by_face.emplace(sorted_face(local), &facet).second) return false;
   }
+  std::unordered_set<std::uint64_t> unbound_facets;
+  for (const TetEditFacet& facet : operation.replacement_facets) unbound_facets.insert(facet.id);
   for (const TetEditCell& cell : operation.replacement_cells) {
     std::int32_t local[4];
     for (int corner = 0; corner < 4; ++corner) {
@@ -2317,11 +2466,22 @@ bool TetMesh::validate_regions_and_constraints(
     }
     for (int face_slot = 0; face_slot < 4; ++face_slot) {
       const std::int32_t source = cell.facet_sources[face_slot];
-      if (source < 0) continue;
+      if (source < 0 && operation.replacement_facets.empty()) continue;
       std::int32_t face[3];
       oriented_facet(local, face_slot, face);
       const auto record = facet_by_face.find(sorted_face(face));
-      if (record == facet_by_face.end() || record->second->source != source) return false;
+      if (record == facet_by_face.end()) {
+        if (source >= 0) return false;
+        continue;
+      }
+      if (source < 0) {
+        // An adjacent replacement facet must be marked by every owner.
+        // The later candidate-face consistency check enforces this as well.
+        if (unbound_facets.contains(record->second->id)) return false;
+        continue;
+      }
+      if (record->second->source != source) return false;
+      unbound_facets.erase(record->second->id);
       std::int32_t facet_vertices[3];
       for (int corner = 0; corner < 3; ++corner) {
         facet_vertices[corner] = vertex_slot(record->second->vertices[corner]);
@@ -2335,33 +2495,7 @@ bool TetMesh::validate_regions_and_constraints(
     }
   }
 
-  for (const TetEditFacet& facet : operation.replacement_facets) {
-    std::int32_t local_face[3];
-    for (int corner = 0; corner < 3; ++corner) {
-      local_face[corner] = vertex_slot(facet.vertices[corner]);
-      if (local_face[corner] < 0) return false;
-    }
-    bool adjacent = false;
-    for (const TetEditCell& cell : operation.replacement_cells) {
-      std::int32_t local[4];
-      for (int corner = 0; corner < 4; ++corner) {
-        local[corner] = vertex_slot(cell.vertices[corner]);
-        if (local[corner] < 0) return false;
-      }
-      for (int slot = 0; slot < 4; ++slot) {
-        std::int32_t face[3];
-        oriented_facet(local, slot, face);
-        if (sorted_face(face) != sorted_face(local_face)) continue;
-        adjacent = true;
-        const int side = (FacetKey::of(face) == FacetKey::of(local_face) ? 1 : -1) *
-                         facet.orientation;
-        const auto found = source_regions.find({facet.source, side});
-        if (found == source_regions.end() || found->second != cell.region) return false;
-      }
-    }
-    if (!adjacent) return false;
-  }
-  return true;
+  return unbound_facets.empty();
 }
 
 // Keep the staged edit's candidate banks in one scope; they share validation and
@@ -2369,7 +2503,7 @@ bool TetMesh::validate_regions_and_constraints(
 // rather than by a second mutable transaction representation.
 TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
                                            const TetEdit& operation,
-                                           TetEditResult& result) {
+                                           TetEditResult& result, bool original_retessellation) {
   TetMesh& mesh = staged;
   const bool relocation = operation.kind == TetEditKind::kRelocate;
   const bool refinement = operation.kind == TetEditKind::kRefineCell;
@@ -2414,17 +2548,37 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   std::unordered_set<std::uint64_t> removed_cell_ids;
   std::vector<std::int32_t> removed_slots;
   removed_slots.reserve(operation.removed_cell_ids.size());
+  std::vector<std::uint8_t> removed_slot_marks;
+  if (original_retessellation) removed_slot_marks.resize(mesh.complex_.tets.size());
   for (std::uint64_t id : operation.removed_cell_ids) {
     const std::int32_t slot = mesh.cell_slot(id);
-    if (slot < 0 || is_ghost(mesh.tet(slot)) || !removed_cell_ids.insert(id).second) {
+    if (slot < 0 || is_ghost(mesh.tet(slot))) return TetEditStatus::kRejectedTopology;
+    if (original_retessellation) {
+      if (removed_slot_marks[slot] != 0) return TetEditStatus::kRejectedTopology;
+      removed_slot_marks[slot] = 1;
+    } else if (!removed_cell_ids.insert(id).second) {
       return TetEditStatus::kRejectedTopology;
     }
     removed_slots.push_back(slot);
   }
   if (removed_slots.empty() && !relocation) return TetEditStatus::kRejectedTopology;
-  std::unordered_set<std::int32_t> removed_slot_set(removed_slots.begin(), removed_slots.end());
+  std::unordered_set<std::int32_t> removed_slot_set;
+  if (!original_retessellation) removed_slot_set.insert(removed_slots.begin(), removed_slots.end());
   Dyadic removed_volume;
-  if (volume_preserving) {
+  if (original_retessellation) {
+    // All finite cells are retired. In the live complex every interior face
+    // pairs with its reverse, so only sides against ghosts survive in the
+    // boundary chain. The inward side order gives minus six times volume.
+    for (std::int32_t slot : removed_slots) {
+      const Tetrahedron& cell = mesh.tet(slot);
+      for (int side = 0; side < 4; ++side) {
+        if (!is_ghost(mesh.tet(cell.n[side]))) continue;
+        std::int32_t face[3];
+        oriented_facet(cell.v, side, face);
+        removed_volume = removed_volume + boundary_determinant(mesh, face);
+      }
+    }
+  } else if (volume_preserving) {
     for (std::int32_t slot : removed_slots) {
       removed_volume = removed_volume +
                        exact_oriented_determinant(mesh, mesh.tet(slot).v);
@@ -2441,6 +2595,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     }
     if (!removed_vertex_ids.insert(id).second) return TetEditStatus::kRejectedTopology;
     removed_vertex_slots.push_back(slot);
+    // A full set of unique finite parents already contains every such star.
+    if (removed_slots.size() == static_cast<std::size_t>(mesh.complex_.finite_count)) continue;
     for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
       const std::int32_t cell = static_cast<std::int32_t>(t);
       if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell)) ||
@@ -2448,7 +2604,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       if (!removed_slot_set.contains(cell)) return TetEditStatus::kRejectedTopology;
     }
   }
-  if (retriangulation) {
+  if (retriangulation && !original_retessellation) {
     for (const TetEditVertex& vertex : operation.changed_vertices) {
       for (const TetVertexAncestry& ancestor : vertex.ancestry) {
         if (removed_vertex_ids.contains(ancestor.source_vertex_id)) {
@@ -2489,6 +2645,15 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   std::unordered_set<std::uint64_t> changed_vertex_ids;
   std::vector<std::int32_t> moved_vertex_slots;
   std::size_t new_count = 0;
+  std::vector<std::array<double, 3>> retained_points;
+  if (original_retessellation) {
+    for (std::size_t row = 0; row < mesh.vertex_ids_.size(); ++row) {
+      if (!mesh.vertex_live_[row] || removed_vertex_ids.contains(mesh.vertex_ids_[row])) continue;
+      const auto* p = mesh.points_.data() + 3 * row;
+      retained_points.push_back({p[0], p[1], p[2]});
+    }
+    std::sort(retained_points.begin(), retained_points.end());
+  }
   for (const TetEditVertex& vertex : operation.changed_vertices) {
     if (vertex.id == std::numeric_limits<std::uint64_t>::max()) {
       return TetEditStatus::kIndexOverflow;
@@ -2530,23 +2695,32 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       }
       ++new_count;
     }
-    TetEditVertex checked_vertex = vertex;
-    if (current_slot >= 0 && (relocation || moved_survivor) &&
-        !checked_vertex.edge_witness_supplied &&
-        !checked_vertex.has_edge_parameter &&
-        mesh.vertex_has_edge_parameter_[static_cast<std::size_t>(current_slot)] != 0) {
-      checked_vertex.has_edge_parameter = true;
-      checked_vertex.edge_endpoints =
-          mesh.vertex_edge_endpoints_[static_cast<std::size_t>(current_slot)];
-      checked_vertex.edge_parameter =
-          mesh.vertex_edge_parameters_[static_cast<std::size_t>(current_slot)];
-    }
+    const auto carrier_valid = [&] {
+      if (current_slot >= 0 && (relocation || moved_survivor) &&
+          !vertex.edge_witness_supplied && !vertex.has_edge_parameter &&
+          mesh.vertex_has_edge_parameter_[static_cast<std::size_t>(current_slot)] != 0) {
+        TetEditVertex checked_vertex = vertex;
+        checked_vertex.has_edge_parameter = true;
+        checked_vertex.edge_endpoints =
+            mesh.vertex_edge_endpoints_[static_cast<std::size_t>(current_slot)];
+        checked_vertex.edge_parameter =
+            mesh.vertex_edge_parameters_[static_cast<std::size_t>(current_slot)];
+        return mesh.source_carrier_valid(checked_vertex);
+      }
+      return mesh.source_carrier_valid(vertex);
+    };
     if (!std::isfinite(vertex.protection_radius) || vertex.protection_radius < 0.0 ||
-        !mesh.source_carrier_valid(checked_vertex)) {
+        !carrier_valid()) {
       return TetEditStatus::kInvalidGeometry;
     }
     if (vertex.protection_radius > 0.0 && !vertex.protected_vertex) {
       return TetEditStatus::kRejectedProtected;
+    }
+    if (original_retessellation && current_slot < 0) {
+      if (std::binary_search(retained_points.begin(), retained_points.end(), vertex.carrier)) {
+        return TetEditStatus::kInvalidGeometry;
+      }
+      continue;
     }
     for (std::size_t other = 0; other < mesh.vertex_ids_.size(); ++other) {
       if (!mesh.vertex_live_[other] || mesh.vertex_ids_[other] == vertex.id ||
@@ -2698,11 +2872,39 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
 
   std::unordered_set<std::uint64_t> removed_facets;
   std::vector<std::pair<std::int32_t, int>> cleared_facet_sides;
+  // A whole-source retessellation retires every finite owner. Bind its
+  // constrained sides once, not by traversing the volume for each wall.
+  std::multimap<SortedFace, std::pair<std::int32_t, int>> retired_sides;
+  std::vector<const TetSnapshotFacet*> retired_facets_by_id;
+  if (original_retessellation) {
+    retired_facets_by_id.reserve(mesh.facets_.size());
+    for (const auto& facet : mesh.facets_) retired_facets_by_id.push_back(&facet);
+    std::sort(retired_facets_by_id.begin(), retired_facets_by_id.end(),
+        [](const TetSnapshotFacet* a, const TetSnapshotFacet* b) { return a->id < b->id; });
+    for (std::int32_t cell : removed_slots) {
+      const Tetrahedron& owner = mesh.tet(cell);
+      if (owner.constrained == 0) continue;
+      for (int side = 0; side < 4; ++side) {
+        if (mesh.complex_.constraint(cell, side) == kNoConstraint) continue;
+        std::int32_t oriented[3];
+        oriented_facet(owner.v, side, oriented);
+        retired_sides.emplace(sorted_face(oriented), std::pair{cell, side});
+      }
+    }
+  }
   for (std::uint64_t id : operation.removed_facet_ids) {
     if (!removed_facets.insert(id).second) return TetEditStatus::kRejectedTopology;
-    const auto found = std::find_if(mesh.facets_.begin(), mesh.facets_.end(),
-        [&](const TetSnapshotFacet& facet) { return facet.id == id; });
-    if (found == mesh.facets_.end()) return TetEditStatus::kRejectedTopology;
+    const TetSnapshotFacet* found = nullptr;
+    if (original_retessellation) {
+      const auto it = std::lower_bound(retired_facets_by_id.begin(), retired_facets_by_id.end(), id,
+          [](const TetSnapshotFacet* facet, std::uint64_t key) { return facet->id < key; });
+      if (it != retired_facets_by_id.end() && (*it)->id == id) found = *it;
+    } else {
+      const auto it = std::find_if(mesh.facets_.begin(), mesh.facets_.end(),
+          [&](const TetSnapshotFacet& facet) { return facet.id == id; });
+      if (it != mesh.facets_.end()) found = &*it;
+    }
+    if (found == nullptr) return TetEditStatus::kRejectedTopology;
     if (found->protected_facet || mesh.policy_ == BoundaryPolicy::kFixed) {
       return TetEditStatus::kRejectedProtected;
     }
@@ -2714,6 +2916,13 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     // The facet's finite owners must all be removed cells: found among them,
     // with no kept finite cell across (a face has at most two cells).
     const SortedFace key = sorted_face(face);
+    if (original_retessellation) {
+      const auto [first, last] = retired_sides.equal_range(key);
+      if (first == last) return TetEditStatus::kRejectedTopology;
+      for (auto side = first; side != last; ++side) cleared_facet_sides.push_back(side->second);
+      retired_sides.erase(first, last);
+      continue;
+    }
     std::size_t owner_count = 0;
     for (std::int32_t cell : removed_slots) {
       const Tetrahedron& owner = mesh.tet(cell);
@@ -2731,6 +2940,40 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     }
     if (owner_count == 0) return TetEditStatus::kRejectedTopology;
   }
+  std::map<std::int32_t, RectangularSourceChart> source_charts;
+  if (original_retessellation && !mesh.implicit_source_ && !operation.replacement_facets.empty()) {
+    std::map<std::int32_t, std::vector<SortedFace>> source_triangles;
+    for (std::size_t row = 0; row < mesh.source_face_groups_.size(); ++row) {
+      const auto source = mesh.source_face_groups_[row];
+      if (mesh.declared_groups_.contains(source)) continue;
+      const auto* corners = mesh.source_faces_.data() + 3 * row;
+      source_triangles[source].push_back({corners[0], corners[1], corners[2]});
+    }
+    std::vector<ChartEdge> edges;
+    for (const auto& [source, triangles] : source_triangles) {
+      if (const auto chart = rectangular_source_chart(mesh.source_points_, triangles, edges)) {
+        source_charts.emplace(source, *chart);
+      }
+    }
+  }
+  const auto chart_covers = [&](const TetEditFacet& facet) {
+    if (facet.source < 0 || source_charts.empty()) return false;
+    const auto chart = source_charts.find(facet.source);
+    if (chart == source_charts.end()) return false;
+    const double* carriers[3];
+    for (int corner = 0; corner < 3; ++corner) {
+      const auto slot = mesh.vertex_slot(facet.vertices[corner]);
+      if (!mesh.live_vertex(slot)) return false;
+      carriers[corner] = mesh.point(slot);
+      const auto& witness = mesh.witness(slot);
+      if (witness.stratum != SourceStratum::kNone || witness.entity != -1 || witness.deviation != 0.0) {
+        return false;
+      }
+      // The canonical source record has no edge parameter or ancestry here.
+      if (!geometry::point_in_domain(carriers[corner])) return false;
+    }
+    return chart->second.covers(carriers, facet.orientation);
+  };
 
   std::vector<TetSnapshotFacet> future_facets;
   if (!relocation) {
@@ -2747,7 +2990,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       }
       // Exact PWL refusals are invalid; interval-source undecidability remains
       // an uncertain predicate and is retained in the source refusal counters.
-      if (!mesh.source_face_valid(facet)) return mesh.source_face_refusal_status();
+      if (!chart_covers(facet) && !mesh.source_face_valid(facet)) {
+        return mesh.source_face_refusal_status();
+      }
       TetSnapshotFacet record;
       record.id = facet.id;
       record.vertices = facet.vertices;
@@ -2928,17 +3173,19 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     return TetEditStatus::kApplied;
   }
 
-  for (std::int32_t slot : removed_slots) {
-    if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) {
-      return TetEditStatus::kRejectedTopology;
+  if (!original_retessellation) {
+    for (std::int32_t slot : removed_slots) {
+      if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) {
+        return TetEditStatus::kRejectedTopology;
+      }
     }
-  }
-  for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
-    const std::int32_t cell = static_cast<std::int32_t>(t);
-    if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
-    for (int corner = 0; corner < 4; ++corner) {
-      if (removed_vertex_ids.contains(mesh.vertex_id(mesh.tet(cell).v[corner])) &&
-          !removed_slot_set.contains(cell)) return TetEditStatus::kRejectedTopology;
+    for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
+      const std::int32_t cell = static_cast<std::int32_t>(t);
+      if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
+      for (int corner = 0; corner < 4; ++corner) {
+        if (removed_vertex_ids.contains(mesh.vertex_id(mesh.tet(cell).v[corner])) &&
+            !removed_slot_set.contains(cell)) return TetEditStatus::kRejectedTopology;
+      }
     }
   }
 
@@ -2946,30 +3193,43 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   std::vector<CandidateCell> candidate_cells;
   candidate_cells.reserve(static_cast<std::size_t>(mesh.complex_.finite_count) -
                           removed_slots.size() + operation.replacement_cells.size());
-  for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
-    const std::int32_t slot = static_cast<std::int32_t>(t);
-    if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot)) || removed_slot_set.contains(slot)) continue;
-    CandidateCell cell;
-    std::copy_n(mesh.tet(slot).v, 4, cell.vertices.begin());
-    for (int facet = 0; facet < 4; ++facet) cell.constraints[facet] = mesh.complex_.constraint(slot, facet);
-    cell.region = mesh.complex_.region(slot);
-    candidate_cells.push_back(cell);
+  if (!original_retessellation) {
+    for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
+      const std::int32_t slot = static_cast<std::int32_t>(t);
+      if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot)) || removed_slot_set.contains(slot)) continue;
+      CandidateCell cell;
+      std::copy_n(mesh.tet(slot).v, 4, cell.vertices.begin());
+      for (int facet = 0; facet < 4; ++facet) cell.constraints[facet] = mesh.complex_.constraint(slot, facet);
+      cell.region = mesh.complex_.region(slot);
+      candidate_cells.push_back(cell);
+    }
   }
+  const std::size_t first_replacement = candidate_cells.size();
+  const bool sorted_replacement_ids = original_retessellation &&
+      std::ranges::is_sorted(operation.replacement_cells, {}, &TetEditCell::id);
   std::unordered_set<std::uint64_t> replacement_cell_ids;
-  replacement_cell_ids.reserve(operation.replacement_cells.size());
+  if (!sorted_replacement_ids) replacement_cell_ids.reserve(operation.replacement_cells.size());
+  std::uint64_t previous_replacement_id = std::numeric_limits<std::uint64_t>::max();
   for (const TetEditCell& replacement : operation.replacement_cells) {
     if (replacement.id == std::numeric_limits<std::uint64_t>::max() ||
         mesh.cell_index_.used(replacement.id) ||
-        !replacement_cell_ids.insert(replacement.id).second) {
+        (sorted_replacement_ids ? previous_replacement_id == replacement.id
+                                : !replacement_cell_ids.insert(replacement.id).second)) {
       return TetEditStatus::kRejectedTopology;
     }
+    previous_replacement_id = replacement.id;
     if (mesh.periodic_identity_.bound && replacement.ancestor_cell_ids.empty()) {
       return TetEditStatus::kRejectedTopology;
     }
+    const bool sorted_ancestry = original_retessellation &&
+        std::is_sorted(replacement.ancestor_cell_ids.begin(), replacement.ancestor_cell_ids.end());
     for (std::size_t ancestor = 0; ancestor < replacement.ancestor_cell_ids.size(); ++ancestor) {
       const std::uint64_t id = replacement.ancestor_cell_ids[ancestor];
-      if (!has_id(operation.removed_cell_ids, id) ||
-          has_id(std::span(replacement.ancestor_cell_ids).first(ancestor), id)) {
+      const bool retired = original_retessellation ? mesh.cell_slot(id) >= 0
+                                                   : removed_cell_ids.contains(id);
+      if (!retired ||
+          (sorted_ancestry ? ancestor > 0 && replacement.ancestor_cell_ids[ancestor - 1] == id
+                           : has_id(std::span(replacement.ancestor_cell_ids).first(ancestor), id))) {
         return TetEditStatus::kRejectedTopology;
       }
     }
@@ -2985,20 +3245,17 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     cell.constraints = replacement.facet_sources;
     cell.region = replacement.region;
     cell.replacement = true;
-    if (!mesh.positive(cell.vertices.data())) return TetEditStatus::kInvalidGeometry;
+    // Whole-volume proposals are checked once, by CavityEdit itself.
+    if (!original_retessellation && !mesh.positive(cell.vertices.data())) {
+      return TetEditStatus::kInvalidGeometry;
+    }
     candidate_cells.push_back(cell);
   }
   if (candidate_cells.empty()) return TetEditStatus::kRejectedTopology;
-  if (volume_preserving) {
+  if (volume_preserving && !original_retessellation) {
     Dyadic replacement_volume;
-    for (const TetEditCell& replacement : operation.replacement_cells) {
-      std::array<std::int32_t, 4> vertices{};
-      for (int corner = 0; corner < 4; ++corner) {
-        vertices[static_cast<std::size_t>(corner)] =
-            mesh.vertex_slot(replacement.vertices[static_cast<std::size_t>(corner)]);
-      }
-      replacement_volume = replacement_volume +
-                           exact_oriented_determinant(mesh, vertices.data());
+    for (const CandidateCell& cell : std::span(candidate_cells).subspan(first_replacement)) {
+      replacement_volume = replacement_volume + exact_oriented_determinant(mesh, cell.vertices.data());
     }
     if (!(removed_volume - replacement_volume).is_zero()) {
       return TetEditStatus::kRejectedTopology;
@@ -3010,14 +3267,22 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   std::set<std::uint64_t> candidate_edges;
   for (std::size_t row = 0; row < candidate_cells.size(); ++row) {
     CandidateCell& cell = candidate_cells[row];
-    if (!mesh.positive(cell.vertices.data())) {
-      return TetEditStatus::kInvalidGeometry;
-    }
-    if (!unique_cells.insert(sorted_tet(cell.vertices.data())).second) {
-      return TetEditStatus::kInvalidGeometry;
+    if (!original_retessellation) {
+      if (!mesh.positive(cell.vertices.data()) ||
+          !unique_cells.insert(sorted_tet(cell.vertices.data())).second) {
+        return TetEditStatus::kInvalidGeometry;
+      }
     }
     for (int a = 0; a < 4; ++a) {
-      for (int b = a + 1; b < 4; ++b) candidate_edges.insert(edge_key(cell.vertices[a], cell.vertices[b]));
+      if (!future_segments.empty()) {
+        for (int b = a + 1; b < 4; ++b) {
+          candidate_edges.insert(edge_key(cell.vertices[a], cell.vertices[b]));
+        }
+      }
+      // A whole cavity has no retained finite neighbors. Only the marked
+      // sides are needed here to generate the ghosts; CavityEdit will prove
+      // uniqueness and pair every side in the complete proposal.
+      if (original_retessellation && cell.constraints[a] == kNoConstraint) continue;
       std::int32_t oriented[3];
       oriented_facet(cell.vertices.data(), a, oriented);
       const SortedFace key = sorted_face(oriented);
@@ -3073,22 +3338,18 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   }
 
 
-  std::size_t live_ghosts = 0;
-  for (const Tetrahedron& tet : mesh.complex_.tets) {
-    if (tet.v[0] != kDeadVertex && is_ghost(tet)) ++live_ghosts;
-  }
-  std::vector<std::int32_t> cavity_slots = removed_slots;
-  cavity_slots.reserve(removed_slots.size() + live_ghosts);
-  for (std::size_t slot = 0; slot < mesh.complex_.tets.size(); ++slot) {
-    const std::int32_t id = static_cast<std::int32_t>(slot);
-    if (mesh.complex_.live(id) && is_ghost(mesh.tet(id))) cavity_slots.push_back(id);
-  }
   mesh.edit_.begin();
-  for (std::int32_t slot : cavity_slots) {
+  for (std::int32_t slot : removed_slots) {
     const EditStatus status = mesh.edit_.remove(slot);
     if (status != EditStatus::kOk) {
       return translate_edit_status(status);
     }
+  }
+  for (std::size_t slot = 0; slot < mesh.complex_.tets.size(); ++slot) {
+    const auto id = static_cast<std::int32_t>(slot);
+    if (!mesh.complex_.live(id) || !is_ghost(mesh.tet(id))) continue;
+    const EditStatus status = mesh.edit_.remove(id);
+    if (status != EditStatus::kOk) return translate_edit_status(status);
   }
   for (const CandidateCell& cell : candidate_cells) {
     if (!cell.replacement) continue;
@@ -3117,18 +3378,46 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   if (validated != EditStatus::kOk) {
     return translate_edit_status(validated);
   }
+  if (original_retessellation) {
+    // Read the boundary from the linked canonical proposal. Its oppositely
+    // oriented internal sides cancel, so this is the same exact determinant
+    // sum as over all finite cells (with the inward sign used above).
+    const auto proposal = mesh.edit_.proposal();
+    Dyadic replacement_volume;
+    for (std::size_t row = 0; row < candidate_cells.size(); ++row) {
+      for (int side = 0; side < 4; ++side) {
+        const auto neighbor = static_cast<std::size_t>(proposal[row].n[side]);
+        if (neighbor >= proposal.size()) return TetEditStatus::kRejectedTopology;
+        if (neighbor >= candidate_cells.size()) {
+          std::int32_t face[3];
+          oriented_facet(proposal[row].v, side, face);
+          replacement_volume = replacement_volume + boundary_determinant(mesh, face);
+        } else if (candidate_cells[row].constraints[side] == kNoConstraint &&
+                   candidate_cells[row].region != candidate_cells[neighbor].region) {
+          return TetEditStatus::kRejectedTopology;
+        }
+      }
+    }
+    if (!(removed_volume - replacement_volume).is_zero()) return TetEditStatus::kRejectedTopology;
+  }
   const EditStatus committed = mesh.edit_.commit();
   if (committed != EditStatus::kOk) {
     return translate_edit_status(committed);
   }
 
+  const std::size_t created_cell_count = operation.replacement_cells.size();
+  result.accepted_cell_ids.reserve(created_cell_count);
+  result.accepted_vertex_ids.reserve(operation.changed_vertices.size());
+  mesh.cell_ids_.resize(mesh.complex_.tets.size(), std::numeric_limits<std::uint64_t>::max());
+  if (original_retessellation) mesh.cell_ancestry_.reserve(created_cell_count);
   for (std::uint64_t id : operation.removed_cell_ids) mesh.cell_index_.retire(id);
-  for (std::size_t i = 0; i < operation.replacement_cells.size(); ++i) {
-    const std::int32_t slot = mesh.edit_.created()[i];
-    if (mesh.cell_ids_.size() <= static_cast<std::size_t>(slot)) {
-      mesh.cell_ids_.resize(static_cast<std::size_t>(slot) + 1,
-                            std::numeric_limits<std::uint64_t>::max());
-    }
+  // Clear retired slots first: commit can reuse them for finite cells or ghosts.
+  for (std::int32_t slot : removed_slots) {
+    mesh.cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
+  }
+  const auto created_slots = mesh.edit_.created();
+  for (std::size_t i = 0; i < created_cell_count; ++i) {
+    const std::int32_t slot = created_slots[i];
     const std::uint64_t id = operation.replacement_cells[i].id;
     mesh.cell_ids_[static_cast<std::size_t>(slot)] = id;
     mesh.cell_index_.bind(id, slot);
@@ -3141,22 +3430,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
                                   std::make_shared<const std::vector<std::uint64_t>>(
                                       operation.replacement_cells[i].ancestor_cell_ids)});
   }
-  for (std::size_t i = operation.replacement_cells.size();
-       i < mesh.edit_.created().size(); ++i) {
-    const std::int32_t slot = mesh.edit_.created()[i];
-    if (mesh.cell_ids_.size() <= static_cast<std::size_t>(slot)) {
-      mesh.cell_ids_.resize(static_cast<std::size_t>(slot) + 1,
-                            std::numeric_limits<std::uint64_t>::max());
-    }
+  for (std::size_t i = created_cell_count; i < created_slots.size(); ++i) {
+    const std::int32_t slot = created_slots[i];
     mesh.cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
-  }
-  for (std::int32_t slot : removed_slots) {
-    if (std::find(mesh.edit_.created().begin(), mesh.edit_.created().end(), slot) ==
-        mesh.edit_.created().end()) {
-      if (mesh.cell_ids_.size() > static_cast<std::size_t>(slot)) {
-        mesh.cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
-      }
-    }
   }
   mesh.facets_.swap(future_facets);
   mesh.segments_.swap(future_segments);
@@ -3222,7 +3498,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         operation.replacement_periodic_entity_maps, false);
     if (periodic_status != TetEditStatus::kApplied) return periodic_status;
   }
-  if (!mesh.audit_state()) {
+  // The single whole-volume edit is audited by the owning batch before swap.
+  if (!original_retessellation && !mesh.audit_state()) {
     return TetEditStatus::kRejectedTopology;
   }
   return TetEditStatus::kApplied;

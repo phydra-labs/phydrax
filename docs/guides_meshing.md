@@ -3077,6 +3077,20 @@ The route returns the exact dyadic source stencils, source-cell lineage, and
 `TetraMetricEvidence` measured on the final mesh. A periodic lift is adapted
 by the host phase schedule until native periodic local commits exist.
 
+An unprotected, single-block Cartesian box with one varying diagonal metric
+component and two constant tangential components can instead be rebuilt in
+one transaction. The native route integrates the transported metric along
+columns, repairs edge-band violations, and rechecks the actual source-bound
+vertices. Every new cell records its positive-volume source intersections;
+an edge or face contact alone is not a parent. Rounded mesh geometry and
+exact stencil geometry are checked separately when they disagree. A refusal
+leaves the original mesh available for local adaptation. The
+`retriangulations` evidence counter counts committed transactions, not cells.
+On CPU, physical gradation of an exactly diagonal binary64 tensor can fold
+its candidates in the coordinate basis. The ordered square-root products
+are retained; a componentwise maximum is not rounding-equivalent. Growth,
+bounds decisions and the terminal certificate use the dense spectral program.
+
 For an audited single-region affine tetrahedral source without additional
 constraints, native metric measurements can establish an unchanged result
 before mutable edit state is allocated. This requires the strict unit band

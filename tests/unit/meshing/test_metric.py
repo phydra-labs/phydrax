@@ -195,6 +195,33 @@ def test_scalar_gradation_preserves_isotropic_identity_across_cpu_placement() ->
     )
 
 
+def test_diagonal_gradation_identity_across_cpu_placement() -> None:
+    if jax.default_backend() != "cpu":
+        pytest.skip("The diagonal preparation route is a CPU contract.")
+    points, edges = _grid(4)
+    values = np.zeros((points.shape[0], 2, 2), dtype=np.float64)
+    values[:, 0, 0] = np.where(points[:, 0] > 0.5, 19.0, 2.5)
+    values[:, 1, 1] = np.where(points[:, 1] > 0.5, 3.0, 21.0)
+    field = meshing.MeshMetricField(
+        _scope(points.shape[0]), values, minimum_size=0.125, maximum_size=2.0
+    )
+    policy = meshing.MetricGradationPolicy(1.15, anisotropic=True)
+    implicit, evidence = meshing.grade_mesh_metric(
+        field, policy=policy, adjacency=edges, coordinates=points
+    )
+    with default_device(jax.devices("cpu")[0]):
+        placed, placed_evidence = meshing.grade_mesh_metric(
+            field, policy=policy, adjacency=edges, coordinates=points
+        )
+    assert evidence.converged and evidence.updates > 0
+    assert placed.metric_id == implicit.metric_id
+    assert placed_evidence.evidence_id == evidence.evidence_id
+    np.testing.assert_array_equal(
+        np.asarray(placed.values).view(np.uint64),
+        np.asarray(implicit.values).view(np.uint64),
+    )
+
+
 def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:
     points, edges = _grid(6)
     count = points.shape[0]

@@ -957,12 +957,14 @@ PHX_MC_API int32_t phx_mc_tet_mesh_metric_adapt(
 /* Bank sizes of a result: live vertices, stencil terms, live cells, ancestry
  * IDs, vertex relations, unrepresentable edges. */
 #define PHX_MC_METRIC_ADAPTATION_SIZES 6
+#define PHX_MC_METRIC_ADAPTATION_COUNTERS 11
 PHX_MC_API int32_t phx_mc_metric_adaptation_sizes(
     const phx_mc_metric_adaptation* result, int64_t* sizes);
 /* The result's banks, sized by phx_mc_metric_adaptation_sizes: status (0
- * complete, 1 stalled, 2 numerical stop), passes and the ten counters
+ * complete, 1 stalled, 2 numerical stop), passes and the operation counters
  * (splits, collapses, flips 2-3, flips 3-2, ring reconnections, relocations,
- * refusals for topology, protection, uncertainty, invalidity); per vertex its
+ * topology, protection, uncertainty and invalidity refusals, then committed
+ * volume retriangulations); per vertex its
  * native and target ID, stencil (CSR, offsets of vertex count + 1) and
  * tensor (nine values); per cell its native and target ID, block, ancestry
  * (CSR) with lineage kind and whether a relocation changed it; the vertex
@@ -991,8 +993,9 @@ typedef struct phx_mc_metric_adaptation_output {
   int32_t* vertex_relation_kinds;
   uint64_t* unrepresentable_edges;
 } phx_mc_metric_adaptation_output;
-PHX_MC_API int32_t phx_mc_metric_adaptation_read(
-    const phx_mc_metric_adaptation* result, const phx_mc_metric_adaptation_output* banks);
+PHX_MC_API int32_t phx_mc_metric_adaptation_export(
+    const phx_mc_metric_adaptation* result, const phx_mc_metric_adaptation_output* banks,
+    int64_t counter_capacity);
 PHX_MC_API void phx_mc_metric_adaptation_free(phx_mc_metric_adaptation* result);
 PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 

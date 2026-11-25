@@ -1120,10 +1120,8 @@ int32_t run_clips(PolytopeClipper& clipper, bool& empty) {
   return PHX_MC_OK;
 }
 
-// `simplices` (optional) receives the cone partition of a nonempty intersection.
-int32_t intersect_tetrahedra(const double* first, const double* second,
-                             PolytopeClipper& clipper, double& volume, double* first_moment,
-                             clip::SimplexOutput* simplices, double* second_moment) {
+int32_t clip_tetrahedron_pair(const double* first, const double* second,
+                              PolytopeClipper& clipper, bool& empty) {
   int32_t status = clip::check_finite(first, 12);
   if (status == PHX_MC_OK) {
     status = clip::check_finite(second, 12);
@@ -1146,8 +1144,15 @@ int32_t intersect_tetrahedra(const double* first, const double* second,
     clipper.add_point_plane(4 + kTetFace[k][0], 4 + kTetFace[k][1], 4 + kTetFace[k][2], k);
   }
   clipper.finish_setup();
+  return run_clips(clipper, empty);
+}
+
+// `simplices` (optional) receives the cone partition of a nonempty intersection.
+int32_t intersect_tetrahedra(const double* first, const double* second,
+                             PolytopeClipper& clipper, double& volume, double* first_moment,
+                             clip::SimplexOutput* simplices, double* second_moment) {
   bool empty = false;
-  status = run_clips(clipper, empty);
+  int32_t status = clip_tetrahedron_pair(first, second, clipper, empty);
   if (status == PHX_MC_OK && !empty) {
     if (simplices != nullptr) {
       // Simplex coordinates are rounded carriers, so their aggregate must use
@@ -1358,6 +1363,15 @@ struct TetrahedronClipper::Impl {
 TetrahedronClipper::TetrahedronClipper() : impl_(std::make_unique<Impl>()) {}
 
 TetrahedronClipper::~TetrahedronClipper() = default;
+
+int32_t TetrahedronClipper::overlaps(const double* first, const double* second,
+                                     bool& positive_volume) {
+  impl_->work.sorted_live.clear();
+  bool empty = false;
+  const int32_t status = clip_tetrahedron_pair(first, second, impl_->work.clipper, empty);
+  positive_volume = status == PHX_MC_OK && !empty;
+  return status;
+}
 
 int TetrahedronClipper::vertex_base_side(int32_t vertex, int32_t face) {
   if (vertex < 0 || static_cast<std::size_t>(vertex) >= impl_->work.sorted_live.size() ||
