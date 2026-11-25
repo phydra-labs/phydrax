@@ -264,7 +264,8 @@ class Adapter {
 
  private:
   // State setup and per-slot storage.
-  void bind();
+  void bind_core(TetMeshSnapshot& snapshot);
+  void bind_local_state(TetMeshSnapshot& snapshot);
   void ensure_vertex(std::int32_t slot);
   // The phases that look for work, each at the vertices changed since it last
   // looked (every vertex of a created cell is changed for all of them).
@@ -502,6 +503,7 @@ class Adapter {
            status == TetEditStatus::kAllocationFailure ||
            status == TetEditStatus::kIndexOverflow;
   }
+  void write_unchanged(AdaptOutput& output) const;
   void write(AdaptOutput& output) const;
 
   TetMesh& mesh_;
@@ -721,14 +723,12 @@ bool Adapter::vertex_metric(const Stencil& stencil, double* tensor) const {
                      logarithms.data(), tensor);
 }
 
-void Adapter::bind() {
+void Adapter::bind_core(TetMeshSnapshot& snapshot) {
   const std::size_t sources = input_.source_vertex_ids.size();
   if (input_.source_points.size() != 3 * sources || input_.source_metrics.size() != 9 * sources ||
       input_.source_logarithms.size() != 9 * sources) {
     throw std::invalid_argument("The source banks disagree in size.");
   }
-  for (std::uint64_t id : input_.source_vertex_ids) source_targets_.insert(id);
-  TetMeshSnapshot snapshot;
   if (mesh_.snapshot(snapshot) != TetEditStatus::kApplied) {
     throw std::invalid_argument("The mesh has no snapshot.");
   }
@@ -746,26 +746,38 @@ void Adapter::bind() {
   if (input_.stencil_offsets.size() != vertices + 1 || input_.vertex_target_ids.size() != vertices) {
     throw std::invalid_argument("The vertex banks disagree in size.");
   }
+  metrics_.assign(9 * mesh_.vertex_slot_count(), 0.0);
+  std::vector<double> weights;
+  std::vector<double> tensors;
+  std::vector<double> logarithms;
   for (std::size_t index = 0; index < vertices; ++index) {
     const std::int32_t slot = mesh_.vertex_slot(input_.vertex_ids[index]);
     if (!mesh_.live_vertex(slot)) throw std::invalid_argument("A vertex ID is not live.");
-    ensure_vertex(slot);
-    Stencil& stencil = stencils_[static_cast<std::size_t>(slot)];
-    for (std::int64_t term = input_.stencil_offsets[index];
-         term < input_.stencil_offsets[index + 1]; ++term) {
+    const std::int64_t begin = input_.stencil_offsets[index];
+    const std::int64_t end = input_.stencil_offsets[index + 1];
+    weights.clear();
+    tensors.clear();
+    logarithms.clear();
+    std::int32_t previous = -1;
+    for (std::int64_t term = begin; term < end; ++term) {
       const std::int32_t row = input_.stencil_rows[static_cast<std::size_t>(term)];
       if (row < 0 || static_cast<std::size_t>(row) >= sources ||
-          (!stencil.empty() && stencil.back().row >= row)) {
+          (term > begin && previous >= row)) {
         throw std::invalid_argument("A stencil row is outside the source or out of order.");
       }
-      stencil.push_back({row, input_.stencil_weights[static_cast<std::size_t>(term)]});
+      previous = row;
+      const auto at = static_cast<std::size_t>(row);
+      weights.push_back(input_.stencil_weights[static_cast<std::size_t>(term)]);
+      tensors.insert(tensors.end(), input_.source_metrics.begin() + 9 * at,
+                     input_.source_metrics.begin() + 9 * at + 9);
+      logarithms.insert(logarithms.end(), input_.source_logarithms.begin() + 9 * at,
+                        input_.source_logarithms.begin() + 9 * at + 9);
     }
-    if (!vertex_metric(stencil, metrics_.data() + 9 * static_cast<std::size_t>(slot))) {
+    if (weights.empty() ||
+        !interpolate(static_cast<std::int64_t>(weights.size()), weights.data(), tensors.data(),
+                     logarithms.data(), metrics_.data() + 9 * static_cast<std::size_t>(slot))) {
       throw std::invalid_argument("A vertex stencil has no metric.");
     }
-    log_dets_[static_cast<std::size_t>(slot)] =
-        log_determinant(metrics_.data() + 9 * static_cast<std::size_t>(slot));
-    vertex_targets_[static_cast<std::size_t>(slot)] = input_.vertex_target_ids[index];
   }
   const std::size_t cells = input_.cell_ids.size();
   if (input_.cell_blocks.size() != cells || input_.cell_target_ids.size() != cells ||
@@ -778,23 +790,66 @@ void Adapter::bind() {
     if (!mesh_.complex().live(slot) || is_ghost(mesh_.tet(slot))) {
       throw std::invalid_argument("A cell ID is not live.");
     }
-    ensure_cell(slot);
-    const auto at = static_cast<std::size_t>(slot);
-    cell_blocks_[at] = input_.cell_blocks[index];
-    cell_targets_[at] = input_.cell_target_ids[index];
-    CellLineage& lineage = cell_lineage_[at];
-    lineage.kind = static_cast<AdaptLineage>(input_.ancestry_kinds[index]);
-    for (std::int64_t row = input_.ancestry_offsets[index]; row < input_.ancestry_offsets[index + 1];
-         ++row) {
-      lineage.ancestry.push_back(input_.ancestry_ids[static_cast<std::size_t>(row)]);
-    }
-    std::sort(lineage.ancestry.begin(), lineage.ancestry.end());
   }
   if (input_.protected_edges.size() % 2 != 0) {
     throw std::invalid_argument("Protected edges are vertex ID pairs.");
   }
   for (std::size_t index = 0; index < input_.protected_edges.size(); index += 2) {
     protected_edges_.insert(id_edge(input_.protected_edges[index], input_.protected_edges[index + 1]));
+  }
+  if (input_.exact_source != nullptr &&
+      !input_.exact_source->matches_roundings(input_.source_points, input_.source_cells)) {
+    throw std::invalid_argument("The authored source must match the adaptation point and cell rows.");
+  }
+  if (input_.relocation && input_.exact_source == nullptr && input_.source_cells.size() % 4 != 0) {
+    throw std::invalid_argument("Source cells are four point rows each.");
+  }
+}
+
+void Adapter::bind_local_state(TetMeshSnapshot& snapshot) {
+  source_targets_.reserve(input_.source_vertex_ids.size());
+  for (std::uint64_t id : input_.source_vertex_ids) source_targets_.insert(id);
+  const std::size_t vertex_slots = mesh_.vertex_slot_count();
+  stencils_.resize(vertex_slots);
+  log_dets_.resize(vertex_slots, 0.0);
+  carrier_revisions_.resize(vertex_slots, 0);
+  vertex_targets_.resize(vertex_slots, std::numeric_limits<std::uint64_t>::max());
+  for (auto& flags : dirty_flags_) flags.resize(vertex_slots, 0);
+  const std::size_t vertices = input_.vertex_ids.size();
+  for (std::size_t index = 0; index < vertices; ++index) {
+    const std::int32_t slot = mesh_.vertex_slot(input_.vertex_ids[index]);
+    const auto at = static_cast<std::size_t>(slot);
+    Stencil& stencil = stencils_[at];
+    const std::int64_t begin = input_.stencil_offsets[index];
+    const std::int64_t end = input_.stencil_offsets[index + 1];
+    stencil.reserve(static_cast<std::size_t>(end - begin));
+    for (std::int64_t term = begin; term < end; ++term) {
+      stencil.push_back({input_.stencil_rows[static_cast<std::size_t>(term)],
+                         input_.stencil_weights[static_cast<std::size_t>(term)]});
+    }
+    log_dets_[at] = log_determinant(metrics_.data() + 9 * at);
+    vertex_targets_[at] = input_.vertex_target_ids[index];
+  }
+  const std::size_t cell_slots = mesh_.complex().tets.size();
+  cell_blocks_.resize(cell_slots, kNoBlock);
+  cell_targets_.resize(cell_slots, std::numeric_limits<std::uint64_t>::max());
+  cell_lineage_.resize(cell_slots);
+  cell_quality_.resize(cell_slots, std::numeric_limits<double>::quiet_NaN());
+  const std::size_t cells = input_.cell_ids.size();
+  for (std::size_t index = 0; index < cells; ++index) {
+    const std::int32_t slot = mesh_.cell_slot(input_.cell_ids[index]);
+    const auto at = static_cast<std::size_t>(slot);
+    cell_blocks_[at] = input_.cell_blocks[index];
+    cell_targets_[at] = input_.cell_target_ids[index];
+    CellLineage& lineage = cell_lineage_[at];
+    lineage.kind = static_cast<AdaptLineage>(input_.ancestry_kinds[index]);
+    const std::int64_t begin = input_.ancestry_offsets[index];
+    const std::int64_t end = input_.ancestry_offsets[index + 1];
+    lineage.ancestry.reserve(static_cast<std::size_t>(end - begin));
+    for (std::int64_t row = begin; row < end; ++row) {
+      lineage.ancestry.push_back(input_.ancestry_ids[static_cast<std::size_t>(row)]);
+    }
+    std::sort(lineage.ancestry.begin(), lineage.ancestry.end());
   }
   next_vertex_id_ = input_.next_vertex_id;
   next_cell_id_ = input_.next_cell_id;
@@ -815,29 +870,7 @@ void Adapter::bind() {
       declared_groups_.insert(snapshot.source_face_groups[row]);
     }
   }
-  if (input_.exact_source != nullptr &&
-      !input_.exact_source->matches_roundings(input_.source_points, input_.source_cells)) {
-    throw std::invalid_argument("The authored source must match the adaptation point and cell rows.");
-  }
-  if (input_.relocation) {
-    carriers_ = input_.exact_source;
-    if (carriers_ == nullptr) {
-      if (input_.source_cells.size() % 4 != 0) {
-        throw std::invalid_argument("Source cells are four point rows each.");
-      }
-      // Binary64 source points share the denominator 2^shift.
-      std::vector<Dyadic> numerators;
-      numerators.reserve(input_.source_points.size());
-      std::int64_t shift = 0;
-      for (double value : input_.source_points) {
-        numerators.emplace_back(value);
-        if (!numerators.back().is_zero()) shift = std::max(shift, -numerators.back().exponent());
-      }
-      for (Dyadic& numerator : numerators) numerator = numerator.scaled_power(shift);
-      binary64_carriers_.emplace(input_.source_points, std::move(numerators),
-                                 Dyadic(1.0).scaled_power(shift), input_.source_cells);
-      carriers_ = &*binary64_carriers_;
-    }
+  if (input_.relocation && carriers_ != nullptr) {
     // Facet groups of the mesh's own source complex, when it is this source.
     const std::size_t faces = snapshot.source_faces.size() / 3;
     for (std::size_t row = 0; source_banks_match_ && row < faces; ++row) {
@@ -4141,17 +4174,79 @@ void Adapter::write(AdaptOutput& output) const {
   }
 }
 
+void Adapter::write_unchanged(AdaptOutput& output) const {
+  output.counters = counters_;
+  const std::size_t vertices = input_.vertex_ids.size();
+  output.vertex_ids = input_.vertex_ids;
+  output.vertex_target_ids = input_.vertex_target_ids;
+  output.stencil_offsets.reserve(vertices + 1);
+  output.stencil_offsets.push_back(0);
+  output.stencil_rows.reserve(input_.stencil_rows.size());
+  output.stencil_weights.reserve(input_.stencil_weights.size());
+  output.metrics.reserve(9 * vertices);
+  for (std::size_t index = 0; index < vertices; ++index) {
+    const std::int64_t begin = input_.stencil_offsets[index];
+    const std::int64_t end = input_.stencil_offsets[index + 1];
+    output.stencil_rows.insert(output.stencil_rows.end(), input_.stencil_rows.begin() + begin,
+                               input_.stencil_rows.begin() + end);
+    output.stencil_weights.insert(output.stencil_weights.end(),
+                                  input_.stencil_weights.begin() + begin,
+                                  input_.stencil_weights.begin() + end);
+    output.stencil_offsets.push_back(static_cast<std::int64_t>(output.stencil_rows.size()));
+    const auto at = static_cast<std::size_t>(mesh_.vertex_slot(input_.vertex_ids[index]));
+    output.metrics.insert(output.metrics.end(), metrics_.begin() + 9 * at,
+                          metrics_.begin() + 9 * at + 9);
+  }
+  const std::size_t cells = input_.cell_ids.size();
+  output.cell_ids = input_.cell_ids;
+  output.cell_target_ids = input_.cell_target_ids;
+  output.cell_blocks = input_.cell_blocks;
+  output.ancestry_kinds = input_.ancestry_kinds;
+  output.cell_relocated.assign(cells, 0);
+  output.ancestry_offsets.reserve(cells + 1);
+  output.ancestry_offsets.push_back(0);
+  output.ancestry_ids.reserve(input_.ancestry_ids.size());
+  for (std::size_t index = 0; index < cells; ++index) {
+    const std::int64_t begin = input_.ancestry_offsets[index];
+    const std::int64_t end = input_.ancestry_offsets[index + 1];
+    const std::size_t start = output.ancestry_ids.size();
+    output.ancestry_ids.insert(output.ancestry_ids.end(), input_.ancestry_ids.begin() + begin,
+                               input_.ancestry_ids.begin() + end);
+    std::sort(output.ancestry_ids.begin() + static_cast<std::ptrdiff_t>(start),
+              output.ancestry_ids.end());
+    output.ancestry_offsets.push_back(static_cast<std::int64_t>(output.ancestry_ids.size()));
+  }
+}
+
 TetEditStatus Adapter::run(AdaptOutput& output) {
-  bind();
+  TetMeshSnapshot snapshot;
+  bind_core(snapshot);
   output = AdaptOutput{};
   // No split or collapse is eligible in this interval. The caller's
   // completion lower bound can be looser than the actual collapse trigger.
   const double initial_lower =
       input_.topology_operations ? std::max(input_.lower, kLowerLength) : input_.lower;
   if (complete(initial_lower)) {
-    write(output);
+    write_unchanged(output);
     output.passes = 1;
     return TetEditStatus::kApplied;
+  }
+  if (input_.relocation) {
+    carriers_ = input_.exact_source;
+    if (carriers_ == nullptr) {
+      // Binary64 source points share the denominator 2^shift.
+      std::vector<Dyadic> numerators;
+      numerators.reserve(input_.source_points.size());
+      std::int64_t shift = 0;
+      for (double value : input_.source_points) {
+        numerators.emplace_back(value);
+        if (!numerators.back().is_zero()) shift = std::max(shift, -numerators.back().exponent());
+      }
+      for (Dyadic& numerator : numerators) numerator = numerator.scaled_power(shift);
+      binary64_carriers_.emplace(input_.source_points, std::move(numerators),
+                                 Dyadic(1.0).scaled_power(shift), input_.source_cells);
+      carriers_ = &*binary64_carriers_;
+    }
   }
   bool tensor_field = false;
   if (input_.relocation && carriers_) {
@@ -4164,9 +4259,11 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
   }
   bounded_tensor_search_ = tensor_field && !mesh_.implicit_source();
   if (input_.topology_operations && input_.relocation && carriers_ && !mesh_.implicit_source()) {
-    const auto status = adapt_metric_box(mesh_, input_, *carriers_, !tensor_field, output);
+    const auto status = adapt_metric_box(mesh_, input_, *carriers_, !tensor_field, output,
+                                         &snapshot, input_.exact_source == nullptr);
     if (status.has_value()) return *status;
   }
+  bind_local_state(snapshot);
   separated_splits_ = input_.topology_operations && input_.relocation && carriers_ &&
                       !tensor_field && !mesh_.implicit_source();
   if (mesh_.vertex_slot_count() >= 512) {

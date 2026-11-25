@@ -17,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <vector>
 
@@ -72,6 +73,7 @@ class CarrierBoxGrid {
   void prepare(std::span<const double> lower, std::span<const double> upper,
                std::uint8_t axes, std::size_t membership_limit);
   bool indexed() const noexcept { return !offsets_.empty(); }
+  std::size_t membership_count() const noexcept { return rows_.size(); }
   std::span<const std::int64_t> candidates(const double* target) const noexcept;
 
  private:
@@ -115,6 +117,8 @@ class CarrierSource {
   std::int64_t cell_count() const noexcept {
     return static_cast<std::int64_t>(cells_.size() / 4);
   }
+  // Spatial bucket index over all source cell AABBs, built lazily on first use.
+  const CarrierBoxGrid& cell_grid() const;
 
   // Identify a coordinate-subspace hull with exact source numerators.
   CarrierSimplex prepare_simplex(CarrierSimplex simplex) const;
@@ -160,7 +164,8 @@ class CarrierSource {
   std::vector<std::int64_t> cells_;
   std::vector<double> lower_;  // closed binary64 box of each cell
   std::vector<double> upper_;
-  CarrierBoxGrid cell_grid_;
+  mutable std::once_flag cell_grid_once_;
+  mutable CarrierBoxGrid cell_grid_;
   // The numerators and then the denominator as 64-bit limbs, integer i in
   // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
   // of the search; a query that leaves their capacity runs on the unbounded

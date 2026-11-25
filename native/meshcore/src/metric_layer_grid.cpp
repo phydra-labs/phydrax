@@ -783,7 +783,9 @@ std::optional<MetricBoxGrid> propose_scalar_box_grid(
     const AdaptInput& input, const CarrierSource& source, const Point& low, const Point& high) {
   const double lower = std::max(input.lower, kLowerLength);
   ScalarBoxField field;
-  if (!(lower < kUpperLength) || !field.prepare(input, low, high)) return std::nullopt;
+  if (!(lower < kUpperLength) || !field.prepare(input, low, high, &source.cell_grid())) {
+    return std::nullopt;
+  }
   ScalarBoxSites sites;
   constexpr int smoothing_steps = 5;
   if (!seed_scalar_box(input, field, sites) || !relax_scalar_box(field, sites, smoothing_steps)) {

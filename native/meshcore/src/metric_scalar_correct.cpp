@@ -183,13 +183,28 @@ bool update_shape(const CellGeometry& t, double limit, ShapeConstraint& shape) {
                          geometry::squared_distance(t.u.data(), t.w.data()) +
                          geometry::squared_distance(t.v.data(), t.w.data());
   const double mean_square = squares / 12.0;
+  if (!(mean_square > 0.0) || !std::isfinite(mean_square) || !std::isfinite(determinant)) {
+    return false;
+  }
+  // Screen well-shaped cells without sqrt: det > limit_guard * 2 * m^(3/2)
+  // iff det^2 > 4 * limit_guard^2 * m^3 for det > 0 in the normal range.
+  const double limit_guard = limit * (1.0 + 0x1p-40);
+  if (determinant > 0.0) {
+    const double det2 = determinant * determinant;
+    const double m3 = (mean_square * mean_square) * mean_square;
+    if (m3 > 0x1p-900 && std::isfinite(m3) && std::isfinite(det2) &&
+        det2 > ((4.0 * limit_guard) * limit_guard) * m3 * (1.0 + 0x1p-36)) {
+      shape.fatness = limit;
+      return true;
+    }
+  }
   const double denominator = (2.0 * mean_square) * std::sqrt(mean_square);
-  if (!(denominator > 0.0) || !std::isfinite(denominator) || !std::isfinite(determinant)) {
+  if (!(denominator > 0.0) || !std::isfinite(denominator)) {
     return false;
   }
   // Positive determinant above this guarded cutoff also clears the hard
   // floor. No division or volume gradient is needed in the inactive tail.
-  if (determinant > (limit * (1.0 + 0x1p-40)) * denominator) {
+  if (determinant > limit_guard * denominator) {
     shape.fatness = limit;
   } else {
     shape.fatness = determinant / denominator;

@@ -33,8 +33,9 @@ std::optional<MetricBoxGrid> propose_scalar_box_grid(
 // An ineligible source or unusable proposal leaves state and output unchanged.
 // A committed whole-volume operation writes its genuine stencil, cell
 // ancestry, generation and status evidence. Fatal transaction errors propagate.
-std::optional<TetEditStatus> adapt_metric_box(TetMesh& mesh, const AdaptInput& input,
-                                             const CarrierSource& source, bool scalar,
-                                             AdaptOutput& output);
+std::optional<TetEditStatus> adapt_metric_box(
+    TetMesh& mesh, const AdaptInput& input, const CarrierSource& source, bool scalar,
+    AdaptOutput& output, const TetMeshSnapshot* existing_snapshot = nullptr,
+    bool trusted_roundings = false);
 
 }  // namespace phx::mc::metric

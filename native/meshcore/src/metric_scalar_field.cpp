@@ -21,7 +21,7 @@ bool scalar_topology_accepted(std::int32_t status) {
 }
 
 bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
-                             const BoxPoint& maximum) {
+                             const BoxPoint& maximum, const CarrierBoxGrid* shared_grid) {
   const std::size_t vertices = input.source_points.size() / 3;
   const std::size_t cells = input.source_cells.size() / 4;
   // Sample hints are int32 cell rows; the transaction owns the source cap.
@@ -47,8 +47,12 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
     minimum_log_rate = std::min(minimum_log_rate, 0.5 * log[0]);
     maximum_log_rate = std::max(maximum_log_rate, 0.5 * log[0]);
   }
-  std::vector<double> lower(3 * cells), upper(3 * cells);
-  tets_.resize(cells);
+  const bool build_grid = shared_grid == nullptr;
+  std::vector<double> lower, upper;
+  if (build_grid) {
+    lower.resize(3 * cells);
+    upper.resize(3 * cells);
+  }
   double estimated_work = 0.0;
   for (std::size_t row = 0; row < cells; ++row) {
     std::array<BoxPoint, 4> corners;
@@ -60,32 +64,62 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
       if (!geometry::point_in_domain(corners[k])) return false;
       rates[k] = 0.5 * input.source_logarithms[9 * i];
     }
-    auto& tet = tets_[row];
-    tet.origin = corners[0];
-    tet.log_rate = rates[0];
-    if (!prepare_box_rate(corners, rates, tet.gradients, tet.log_gradient)) return false;
+    const auto a = geometry::difference(corners[1], corners[0]);
+    const auto b = geometry::difference(corners[2], corners[0]);
+    const auto c = geometry::difference(corners[3], corners[0]);
+    const double det = geometry::dot(a.data(), geometry::cross(b, c).data());
+    const double scale = geometry::length(a) * geometry::length(b) * geometry::length(c);
+    if (!(std::abs(det) > 64 * std::numeric_limits<double>::epsilon() * scale)) return false;
     for (int k = 0; k < 3; ++k) {
-      lower[3 * row + k] = std::min({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
-      upper[3 * row + k] = std::max({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
-      if (lower[3 * row + k] < low[k] || upper[3 * row + k] > high[k]) return false;
+      const auto [lo, hi] = std::minmax({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
+      if (lo < low[k] || hi > high[k]) return false;
+      if (build_grid) {
+        lower[3 * row + k] = lo;
+        upper[3 * row + k] = hi;
+      }
     }
-    const auto a = geometry::difference(corners[1], tet.origin);
-    const auto b = geometry::difference(corners[2], tet.origin);
-    const auto c = geometry::difference(corners[3], tet.origin);
-    const double volume6 = std::abs(geometry::dot(a.data(), geometry::cross(b, c).data()));
     // Dimensionless metric volume, estimated at the barycenter. It bounds the
     // proposal's resources; no bound or certificate uses it.
     const double mean3 = 0.75 * ((rates[0] + rates[1]) + (rates[2] + rates[3]));
-    estimated_work += volume6 * deterministic::exp(mean3);
+    estimated_work += std::abs(det) * deterministic::exp(mean3);
   }
   if (!(estimated_work > 0.0 && estimated_work <= static_cast<double>(kMaxScalarCells))) return false;
-  boxes_.prepare(lower, upper, 0b111, 64 * cells);
-  return boxes_.indexed();
+  source_points_ = input.source_points;
+  source_cells_ = input.source_cells;
+  source_logs_ = input.source_logarithms;
+  tets_.resize(cells);
+  ready_.assign(cells, 0);
+  if (build_grid) {
+    owned_boxes_.prepare(lower, upper, 0b111, 64 * cells);
+    boxes_ = &owned_boxes_;
+  } else {
+    if (!shared_grid->indexed() || shared_grid->membership_count() > 64 * cells) return false;
+    boxes_ = shared_grid;
+  }
+  return boxes_->indexed();
+}
+
+bool ScalarBoxField::ensure_element(std::size_t id) const {
+  if (ready_[id] != 0) return true;
+  std::array<BoxPoint, 4> corners;
+  std::array<double, 4> rates;
+  for (int k = 0; k < 4; ++k) {
+    const auto i = static_cast<std::size_t>(source_cells_[4 * id + k]);
+    std::copy_n(source_points_.data() + 3 * i, 3, corners[k].data());
+    rates[k] = 0.5 * source_logs_[9 * i];
+  }
+  auto& tet = tets_[id];
+  tet.origin = corners[0];
+  tet.log_rate = rates[0];
+  if (!prepare_box_rate(corners, rates, tet.gradients, tet.log_gradient)) return false;
+  ready_[id] = 1;
+  return true;
 }
 
 bool ScalarBoxField::sample(const BoxPoint& x, ScalarBoxSample& sample) const {
-  if (!geometry::point_in_domain(x)) return false;
+  if (!geometry::point_in_domain(x) || boxes_ == nullptr) return false;
   const auto locate = [&](std::size_t id) {
+    if (!ensure_element(id)) return false;
     const auto& tet = tets_[id];
     const auto d = geometry::difference(x, tet.origin);
     for (int k = 0; k < 4; ++k) {
@@ -98,7 +132,7 @@ bool ScalarBoxField::sample(const BoxPoint& x, ScalarBoxSample& sample) const {
   };
   if (sample.cell >= 0 && static_cast<std::size_t>(sample.cell) < tets_.size() &&
       locate(static_cast<std::size_t>(sample.cell))) return true;
-  for (auto cell : boxes_.candidates(x.data())) {
+  for (auto cell : boxes_->candidates(x.data())) {
     if (locate(static_cast<std::size_t>(cell))) return true;
   }
   return false;

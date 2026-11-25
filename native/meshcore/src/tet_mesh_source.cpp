@@ -1108,11 +1108,38 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   // Three times the centroid, against each row's edges (p, q):
   // n.((q - p) x (3 centroid - 3 p)) has the sign of the centroid's side.
   Expansion sum[3];
-  for (int axis = 0; axis < 3; ++axis) {
-    sum[axis] = binary
-        ? Expansion(carriers[0][axis]) + Expansion(carriers[1][axis]) + Expansion(carriers[2][axis])
-        : corners[0][axis] + corners[1][axis] + corners[2][axis];
+  bool sum_ready = !binary;
+  if (!binary) {
+    for (int axis = 0; axis < 3; ++axis) {
+      sum[axis] = corners[0][axis] + corners[1][axis] + corners[2][axis];
+    }
   }
+  const auto ensure_binary_sum = [&]() {
+    if (sum_ready) return;
+    for (int axis = 0; axis < 3; ++axis) {
+      sum[axis] =
+          Expansion(carriers[0][axis]) + Expansion(carriers[1][axis]) + Expansion(carriers[2][axis]);
+    }
+    sum_ready = true;
+  };
+  const double bin_sum_x = binary
+      ? (carriers[0][(cartesian + 1) % 3] + carriers[1][(cartesian + 1) % 3]) +
+            carriers[2][(cartesian + 1) % 3]
+      : 0.0;
+  const double bin_sum_y = binary
+      ? (carriers[0][(cartesian + 2) % 3] + carriers[1][(cartesian + 2) % 3]) +
+            carriers[2][(cartesian + 2) % 3]
+      : 0.0;
+  const double bin_err_x = binary
+      ? (std::abs(carriers[0][(cartesian + 1) % 3]) + std::abs(carriers[1][(cartesian + 1) % 3]) +
+         std::abs(carriers[2][(cartesian + 1) % 3])) *
+            0x1p-50
+      : 0.0;
+  const double bin_err_y = binary
+      ? (std::abs(carriers[0][(cartesian + 2) % 3]) + std::abs(carriers[1][(cartesian + 2) % 3]) +
+         std::abs(carriers[2][(cartesian + 2) % 3])) *
+            0x1p-50
+      : 0.0;
   const auto contains_centroid = [&](std::int32_t row) {
     const double* points[3];
     for (int corner = 0; corner < 3; ++corner) {
@@ -1135,11 +1162,31 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
       for (int edge = 0; edge < 3; ++edge) {
         const auto& u = p[edge];
         const auto& v = p[(edge + 1) % 3];
-        const Expansion dx = Expansion::difference(v[0], u[0]);
-        const Expansion dy = Expansion::difference(v[1], u[1]);
-        const Expansion cx = sum[x] - Expansion(u[0]).scaled(3.0);
-        const Expansion cy = sum[y] - Expansion(u[1]).scaled(3.0);
-        if ((dx * cy - dy * cx).sign() * sense < 0) return false;
+        const double dx_f = v[0] - u[0];
+        const double dy_f = v[1] - u[1];
+        const double cx_f = bin_sum_x - 3.0 * u[0];
+        const double cy_f = bin_sum_y - 3.0 * u[1];
+        const double det_f = dx_f * cy_f - dy_f * cx_f;
+        const double e_dx = (std::abs(v[0]) + std::abs(u[0])) * 0x1p-52;
+        const double e_dy = (std::abs(v[1]) + std::abs(u[1])) * 0x1p-52;
+        const double e_cx = bin_err_x + (4.0 * std::abs(u[0]) + std::abs(cx_f)) * 0x1p-52;
+        const double e_cy = bin_err_y + (4.0 * std::abs(u[1]) + std::abs(cy_f)) * 0x1p-52;
+        const double bound =
+            4.0 * (std::abs(dx_f) * e_cy + std::abs(cy_f) * e_dx + std::abs(dy_f) * e_cx +
+                   std::abs(cx_f) * e_dy +
+                   (std::abs(dx_f * cy_f) + std::abs(dy_f * cx_f)) * 0x1p-51);
+        int sign = 0;
+        if (std::isfinite(bound) && std::abs(det_f) > bound) {
+          sign = det_f > 0.0 ? 1 : -1;
+        } else {
+          ensure_binary_sum();
+          const Expansion dx = Expansion::difference(v[0], u[0]);
+          const Expansion dy = Expansion::difference(v[1], u[1]);
+          const Expansion cx = sum[x] - Expansion(u[0]).scaled(3.0);
+          const Expansion cy = sum[y] - Expansion(u[1]).scaled(3.0);
+          sign = (dx * cy - dy * cx).sign();
+        }
+        if (sign * sense < 0) return false;
       }
       return true;
     }
@@ -1160,12 +1207,25 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
     return inside;
   };
   if (indexed) {
-    Dyadic exact_sum[3];
-    for (int axis = 0; axis < 3; ++axis) {
-      exact_sum[axis] = exact::to_dyadic(sum[axis]);
+    FacetCoverageBounds centroid{};
+    if (binary) {
+      const double cx = bin_sum_x / 3.0;
+      const double cy = bin_sum_y / 3.0;
+      const double px = bin_err_x * 4.0 + std::abs(cx) * 0x1p-49 + std::numeric_limits<double>::min();
+      const double py = bin_err_y * 4.0 + std::abs(cy) * 0x1p-49 + std::numeric_limits<double>::min();
+      centroid.lower[0] = cx - px;
+      centroid.upper[0] = cx + px;
+      centroid.lower[1] = cy - py;
+      centroid.upper[1] = cy + py;
+      centroid.nondegenerate = true;
+    } else {
+      Dyadic exact_sum[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        exact_sum[axis] = exact::to_dyadic(sum[axis]);
+      }
+      centroid = projected_bounds(exact_normal, exact_sum,
+                                  prepared->declared_projection_axis, Dyadic(3.0));
     }
-    const auto centroid = projected_bounds(exact_normal, exact_sum,
-                                            prepared->declared_projection_axis, Dyadic(3.0));
     prepared->coverage_index.candidates(centroid.lower, centroid.upper,
                                         prepared->coverage_scratch);
     for (std::size_t candidate : prepared->coverage_scratch) {

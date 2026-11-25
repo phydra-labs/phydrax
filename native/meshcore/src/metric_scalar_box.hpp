@@ -22,7 +22,8 @@ struct ScalarBoxSample {
 // carriers, transported metric, walls, volume coverage and ancestry.
 class ScalarBoxField {
  public:
-  bool prepare(const AdaptInput& input, const BoxPoint& low, const BoxPoint& high);
+  bool prepare(const AdaptInput& input, const BoxPoint& low, const BoxPoint& high,
+               const CarrierBoxGrid* shared_grid = nullptr);
   bool sample(const BoxPoint& x, ScalarBoxSample& sample) const;
   BoxPoint low{}, high{};
   // Extremes of the source vertex log rates. The log-P1 field interpolates
@@ -35,8 +36,15 @@ class ScalarBoxField {
     double log_rate;
     BoxPoint log_gradient;
   };
-  std::vector<Element> tets_;
-  CarrierBoxGrid boxes_;
+  bool ensure_element(std::size_t id) const;
+
+  std::span<const double> source_points_;
+  std::span<const std::int64_t> source_cells_;
+  std::span<const double> source_logs_;
+  mutable std::vector<Element> tets_;
+  mutable std::vector<std::uint8_t> ready_;
+  CarrierBoxGrid owned_boxes_;
+  const CarrierBoxGrid* boxes_ = nullptr;
 };
 
 struct ScalarBoxSites {

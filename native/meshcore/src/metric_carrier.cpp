@@ -467,7 +467,7 @@ struct Geometry {
   const std::vector<std::int64_t>& cells;
   const std::vector<double>& lower;
   const std::vector<double>& upper;
-  const CarrierBoxGrid& grid;
+  const CarrierSource& source;
 };
 
 // The grid bucket coordinate of `value` on `axis`: monotone in value, so a
@@ -522,7 +522,7 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
     for (int axis = 0; axis < 3; ++axis) {
       if (!std::isfinite(target[axis])) return false;
     }
-    candidates = geometry.grid.candidates(target);
+    candidates = geometry.source.cell_grid().candidates(target);
   }
   for (const std::int64_t row : candidates) {
     const auto cell = static_cast<std::size_t>(row);
@@ -1044,8 +1044,7 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     }
   }
 
-  cell_grid_.prepare(lower_, upper_, 7, std::numeric_limits<std::int64_t>::max());
-  if (!cell_grid_.indexed()) throw std::length_error("Carrier cell buckets exceed the index range.");
+  // cell_grid_ is built lazily in cell_grid() on first unhinted query or shared access.
 
   // The same integers as 64-bit limbs for the inline route, when every one
   // of them and their offsets fit.
@@ -1175,10 +1174,18 @@ double CarrierSource::stencil_coordinate(std::span<const StencilTerm> stencil, i
   return rounded;
 }
 
+const CarrierBoxGrid& CarrierSource::cell_grid() const {
+  std::call_once(cell_grid_once_, [&]() {
+    cell_grid_.prepare(lower_, upper_, 7, std::numeric_limits<std::int64_t>::max());
+  });
+  if (!cell_grid_.indexed()) throw std::length_error("Carrier cell buckets exceed the index range.");
+  return cell_grid_;
+}
+
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,
                                              CarrierChartView chart, std::int64_t cell,
                                              CarrierOrder order, std::int64_t limit) const {
-  const Geometry geometry{points_, cells_, lower_, upper_, cell_grid_};
+  const Geometry geometry{points_, cells_, lower_, upper_, *this};
   if (inline_) {
     try {
       InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small(), binary_shift_};
