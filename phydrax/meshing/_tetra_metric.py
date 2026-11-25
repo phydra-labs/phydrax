@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
+from functools import cached_property
 from itertools import combinations
 from math import lcm, sqrt
 from typing import Any, assert_never, cast, final, NamedTuple, NoReturn
@@ -18,6 +19,8 @@ from typing import Any, assert_never, cast, final, NamedTuple, NoReturn
 import equinox as eqx
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 
 from .._exact_kernels import exact_kernel_parallelism
 from .._fingerprint import canonical_fingerprint
@@ -69,7 +72,12 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock
-from ..discretization._topology import row_positions, sorted_rows, sorted_unique_rows
+from ..discretization._topology import (
+    row_positions,
+    sorted_rows,
+    sorted_unique_rows,
+    unique_rows_inverse,
+)
 from ..linalg._exact import solve_exact
 from ..typing import ConvertibleToArray
 from ._lineage import EntityLineageKind
@@ -338,13 +346,39 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         return self.status is TetraMetricStatus.COMPLETE
 
 
-class TetraMetricOutcome(NamedTuple):
+type _ExactVertexRows = tuple[tuple[Fraction, Fraction, Fraction], ...]
+
+
+@final
+@dataclass(frozen=True)
+class _ExactSourceVertices:
+    carrier: np.ndarray
+    authored_rows: _ExactVertexRows | None
+
+    @cached_property
+    def rows(self) -> _ExactVertexRows:
+        if self.authored_rows is not None:
+            return self.authored_rows
+        return tuple(
+            (Fraction(float(x)), Fraction(float(y)), Fraction(float(z)))
+            for x, y, z in self.carrier
+        )
+
+
+@final
+@dataclass(frozen=True)
+class TetraMetricOutcome:
     """Numerical topology edit, vertex metric, and truthful termination evidence."""
 
     edit: CellTopologyEdit
     metric: np.ndarray
     evidence: TetraMetricEvidence
-    exact_source_vertices: tuple[tuple[Fraction, Fraction, Fraction], ...]
+    _exact_source: _ExactSourceVertices
+
+    @property
+    def exact_source_vertices(self) -> _ExactVertexRows:
+        """Exact source rows in coordinate order, realized only by readers."""
+        return self._exact_source.rows
 
 
 class _ImplicitMetricSource(NamedTuple):
@@ -426,13 +460,35 @@ class _RelocationSearch:
 type _RelocationCaches = tuple[dict[int, _RelocationSearch | None], ...]
 
 
-@dataclass(slots=True)
+@final
+@dataclass(frozen=True, eq=False)
+class _SourceRegionVolumes(Mapping[int, float]):
+    """Ordered source measures, first evaluated by the evidence phase."""
+
+    points: np.ndarray
+    cells: np.ndarray
+    regions: np.ndarray
+
+    @cached_property
+    def _totals(self) -> dict[int, float]:
+        return _region_volumes(self.points, self.cells, self.regions)
+
+    def __getitem__(self, region: int, /) -> float:
+        return self._totals[region]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._totals)
+
+    def __len__(self) -> int:
+        return len(self._totals)
+
+
+@dataclass
 class _NativeState:
     native: TetMesh3D
-    snapshot: TetMeshArrays
     source_mesh: CellMesh
     source_points: np.ndarray
-    source_exact_points: tuple[tuple[Fraction, Fraction, Fraction], ...]
+    exact_source: _ExactSourceVertices
     source_has_authored_rounding: bool
     implicit_groups: frozenset[int]
     target_mesh: CellMesh
@@ -445,31 +501,20 @@ class _NativeState:
     periodic_state: TetMeshPeriodicState | None
     source_cell_ids: np.ndarray
     source_vertex_ids: np.ndarray
-    source_vertex_rows: dict[int, int]
     source_cell_vertices: np.ndarray
     source_cell_regions: np.ndarray
+    source_region_volumes: Mapping[int, float]
     source_cell_blocks: np.ndarray
-    source_region_volumes: dict[int, float]
     source_identity: tuple[str, str, str, str]
-    vertex_target_ids: dict[int, int]
-    cell_target_ids: dict[int, int]
-    cell_blocks: dict[int, int]
-    cell_ancestry: dict[int, dict[int, EntityLineageKind]]
-    vertex_stencils: dict[int, dict[int, Fraction]]
-    metric_by_vertex: dict[int, np.ndarray]
-    fixed_vertices: set[int]
-    protected_edge_ids: set[tuple[int, int]]
-    source_edge_ids: dict[tuple[int, int], int]
-    edge_classes: dict[tuple[int, int], int]
-    source_face_group_rows: dict[int, int]
-    source_segment_group_rows: dict[int, int]
-    # Source vertex IDs carrying each facet group row and segment group row.
-    source_face_vertices: dict[int, frozenset[int]]
-    source_segment_vertices: dict[int, frozenset[int]]
-    # Source-vertex sets of source triangles on a declared exact plane.
-    declared_source_faces: frozenset[frozenset[int]]
-    # Source triangles (source vertex IDs) of each planar facet group row.
-    source_group_triangles: dict[int, tuple[tuple[int, int, int], ...]]
+    source_face_ids: np.ndarray
+    source_segment_ids: np.ndarray
+    initial_fixed_ids: np.ndarray
+    protected_edge_keys: np.ndarray
+    source_edge_codes: np.ndarray
+    source_faces: np.ndarray
+    source_face_groups: np.ndarray
+    source_face_declared: np.ndarray
+    source_segments: np.ndarray
     next_native_vertex: int
     next_native_cell: int
     next_native_facet: int
@@ -496,6 +541,146 @@ class _NativeState:
     # The native exact source (``_source_bank``), created on first use.
     source_bank: _SourceBank | None = None
     _host_source_records: _SourceRecords | None = field(default=None, init=False)
+
+    @cached_property
+    def snapshot(self) -> TetMeshArrays:
+        snapshot = self.native.arrays()
+        if not (
+            np.array_equal(np.sort(snapshot.vertex_ids), np.sort(self.source_vertex_ids))
+            and np.array_equal(np.sort(snapshot.cell_ids), self.source_cell_ids)
+        ):
+            raise ValueError(
+                "Native tetra source IDs do not preserve exact lifted ancestry."
+            )
+        return snapshot
+
+    @property
+    def source_exact_points(self) -> _ExactVertexRows:
+        return self.exact_source.rows
+
+    @source_exact_points.setter
+    def source_exact_points(self, rows: _ExactVertexRows) -> None:
+        self.exact_source = _ExactSourceVertices(self.source_points, rows)
+
+    @cached_property
+    def source_vertex_rows(self) -> dict[int, int]:
+        return {
+            identifier: row
+            for row, identifier in enumerate(self.source_vertex_ids.tolist())
+        }
+
+    # Mutable tables of the host phase schedule. The native route seeds the
+    # same identity stencils and ancestry directly in its array banks.
+    @cached_property
+    def vertex_target_ids(self) -> dict[int, int]:
+        return {identifier: identifier for identifier in self.source_vertex_ids.tolist()}
+
+    @cached_property
+    def cell_target_ids(self) -> dict[int, int]:
+        return {identifier: identifier for identifier in self.source_cell_ids.tolist()}
+
+    @cached_property
+    def cell_blocks(self) -> dict[int, int]:
+        return dict(
+            zip(
+                self.source_cell_ids.tolist(),
+                self.source_cell_blocks.tolist(),
+                strict=True,
+            )
+        )
+
+    @cached_property
+    def cell_ancestry(self) -> dict[int, dict[int, EntityLineageKind]]:
+        return {
+            identifier: {identifier: EntityLineageKind.PRESERVED}
+            for identifier in self.source_cell_ids.tolist()
+        }
+
+    @cached_property
+    def vertex_stencils(self) -> dict[int, dict[int, Fraction]]:
+        one = Fraction(1)
+        return {
+            identifier: {identifier: one}
+            for identifier in self.source_vertex_ids.tolist()
+        }
+
+    @cached_property
+    def metric_by_vertex(self) -> dict[int, np.ndarray]:
+        return {
+            identifier: self.source_metric[row].copy()
+            for row, identifier in enumerate(self.source_vertex_ids.tolist())
+        }
+
+    @cached_property
+    def protected_edge_ids(self) -> set[tuple[int, int]]:
+        return {tuple(row) for row in self.protected_edge_keys.tolist()}
+
+    @cached_property
+    def source_edge_ids(self) -> dict[tuple[int, int], int]:
+        keys = entity_keys(self.source_mesh, 1)
+        ids = np.asarray(self.source_mesh.entity_set(1).entity_ids)
+        return dict(zip(map(tuple, keys.tolist()), ids.tolist(), strict=True))
+
+    @cached_property
+    def edge_classes(self) -> dict[tuple[int, int], int]:
+        return dict(
+            zip(self.source_edge_ids, self.source_edge_codes.tolist(), strict=True)
+        )
+
+    @cached_property
+    def fixed_vertices(self) -> set[int]:
+        return set(self.initial_fixed_ids.tolist())
+
+    @cached_property
+    def source_face_group_rows(self) -> dict[int, int]:
+        return {
+            identifier: row
+            for row, identifier in enumerate(self.source_face_ids.tolist())
+        }
+
+    @cached_property
+    def source_segment_group_rows(self) -> dict[int, int]:
+        return {
+            identifier: row
+            for row, identifier in enumerate(self.source_segment_ids.tolist())
+        }
+
+    @cached_property
+    def source_face_keys(self) -> np.ndarray:
+        return np.sort(self.source_vertex_ids[self.source_faces], axis=1)
+
+    @cached_property
+    def source_segment_keys(self) -> np.ndarray:
+        return self.source_vertex_ids[self.source_segments]
+
+    @cached_property
+    def source_group_triangles(self) -> dict[int, tuple[tuple[int, int, int], ...]]:
+        groups: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+        for group, (a, b, c) in zip(
+            self.source_face_groups.tolist(), self.source_face_keys.tolist(), strict=True
+        ):
+            groups[group].append((a, b, c))
+        return {group: tuple(triangles) for group, triangles in groups.items()}
+
+    @cached_property
+    def source_face_vertices(self) -> dict[int, frozenset[int]]:
+        return {
+            group: frozenset(vertex for triangle in triangles for vertex in triangle)
+            for group, triangles in self.source_group_triangles.items()
+        }
+
+    @cached_property
+    def source_segment_vertices(self) -> dict[int, frozenset[int]]:
+        return {
+            row: frozenset(key)
+            for row, key in enumerate(self.source_segment_keys.tolist())
+        }
+
+    @cached_property
+    def declared_source_faces(self) -> frozenset[frozenset[int]]:
+        return frozenset(
+            map(frozenset, self.source_face_keys[self.source_face_declared].tolist())
+        )
 
     @property
     def source_records(self) -> _SourceRecords:
@@ -1395,122 +1580,142 @@ def _relation_records(
     )
 
 
-type _FacetSides = tuple[int, tuple[int, ...], int]
-type _SourceFacet = tuple[int, tuple[int, int, int], np.ndarray, _FacetSides]
+class _SourceFacets(NamedTuple):
+    rows: np.ndarray
+    ids: np.ndarray
+    oriented: np.ndarray
+    counts: np.ndarray
+    sides: np.ndarray
 
 
 def _constrained_source_facets(
     mesh: CellMesh,
     cells: np.ndarray,
-    cell_ids: np.ndarray,
+    entity_to_cell: np.ndarray | None,
     regions: np.ndarray,
     face_ids: np.ndarray,
-    face_keys: np.ndarray,
     facet_codes: np.ndarray,
     /,
-) -> list[_SourceFacet]:
-    """Reuse the source's facet-to-cell incidence; orient only constrained rows."""
+) -> _SourceFacets:
+    """Reuse source incidence, gathering and orienting only constrained rows."""
+    connectivity = mesh.connectivity
     relation = mesh.topology.incidences[2].relation
     valid = np.asarray(relation.valid, dtype=np.bool_)
-    facets = np.asarray(relation.source_indices)[valid]
-    top_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
-    incident = np.searchsorted(
-        cell_ids, top_ids[np.asarray(relation.target_indices)[valid]]
+    facets = np.asarray(relation.source_indices)
+    incident = np.asarray(relation.target_indices)
+    counts = (
+        np.asarray(connectivity.face_cell_counts)
+        if isinstance(connectivity, TetrahedralConnectivity)
+        else np.bincount(facets[valid], minlength=face_ids.size)
     )
-    counts = np.bincount(facets, minlength=face_ids.size)
-    lowest = np.full(face_ids.size, np.iinfo(np.int32).max, dtype=np.int32)
-    highest = np.full(face_ids.size, -1, dtype=np.int32)
-    incident_regions = regions[incident]
-    np.minimum.at(lowest, facets, incident_regions)
-    np.maximum.at(highest, facets, incident_regions)
-    select = ((counts == 1) | (lowest != highest) | (facet_codes > 0)) & (counts > 0)
-    eligible = select[facets]
+    selected = (counts == 1) | ((facet_codes > 0) & (counts > 0))
+    if regions.size and np.all(regions == regions[0]):
+        lowest = highest = np.broadcast_to(regions[0], counts.shape)
+    else:
+        owners = incident[valid]
+        if entity_to_cell is not None:
+            owners = entity_to_cell[owners]
+        incident_regions = regions[owners]
+        incident_faces = facets[valid]
+        lowest = np.full(face_ids.size, np.iinfo(np.int32).max, dtype=np.int32)
+        highest = np.full(face_ids.size, -1, dtype=np.int32)
+        np.minimum.at(lowest, incident_faces, incident_regions)
+        np.maximum.at(highest, incident_faces, incident_regions)
+        selected |= (counts > 0) & (lowest != highest)
+    eligible = valid & selected[facets]
     facets, incident = facets[eligible], incident[eligible]
+    if entity_to_cell is not None:
+        incident = entity_to_cell[incident]
     order = np.lexsort((incident, facets))
-    facet_rows, starts, sizes = np.unique(
-        facets[order], return_index=True, return_counts=True
-    )
-    incident = incident[order]
-    owner_cells = cells[incident[starts]]
-    owner_points = np.asarray(mesh.vertex_global_ids)[owner_cells]
-    on_face = np.any(owner_points[:, :, None] == face_keys[facet_rows, None], axis=-1)
+    facet_rows, starts = np.unique(facets[order], return_index=True)
+    by_id = np.argsort(face_ids[facet_rows])
+    facet_rows, starts = facet_rows[by_id], starts[by_id]
+    owner_cells = cells[incident[order[starts]]]
+    if isinstance(connectivity, TetrahedralConnectivity):
+        face_vertices = np.asarray(connectivity.faces)[facet_rows]
+        on_face = np.any(owner_cells[:, :, None] == face_vertices[:, None], axis=-1)
+    else:
+        keys = entity_keys(mesh, 2)[facet_rows]
+        owner_points = np.asarray(mesh.vertex_global_ids)[owner_cells]
+        on_face = np.any(owner_points[:, :, None] == keys[:, None], axis=-1)
     if np.any(np.count_nonzero(on_face, axis=1) != 3):
         raise ValueError("A constrained tetra facet has no source identity.")
     oriented = np.take_along_axis(
         owner_cells, _TETRA_FACES[np.argmin(on_face, axis=1)], axis=1
-    ).astype(np.int32)
-    ordered = np.argsort(face_ids[facet_rows])
-    result: list[_SourceFacet] = []
-    for index in ordered.tolist():
-        row, start, count = facet_rows[index], starts[index], sizes[index]
-        if lowest[row] == highest[row]:
-            active_regions = (int(lowest[row]),)
-        elif count == 2:
-            active_regions = (int(lowest[row]), int(highest[row]))
-        else:
-            active_regions = tuple(
-                np.unique(regions[incident[start : start + count]]).tolist()
+    ).astype(np.int32, copy=False)
+    face_counts = counts[facet_rows]
+    signatures = np.stack(
+        (face_counts, lowest[facet_rows], highest[facet_rows], facet_codes[facet_rows]),
+        axis=1,
+    )
+    _, sides, _ = unique_rows_inverse(signatures)
+    # The native complex rejects non-manifold faces. Before that rejection,
+    # their coplanarity admission still distinguishes all incident regions.
+    mixed = np.flatnonzero((face_counts > 2) & (signatures[:, 1] != signatures[:, 2]))
+    if mixed.size:
+        profiles: dict[tuple[int, int, tuple[int, ...]], int] = {}
+        offset = int(sides.max()) + 1
+        ordered_incident = incident[order]
+        for row in mixed:
+            start, count = starts[row], face_counts[row]
+            profile = (
+                int(count),
+                int(signatures[row, 3]),
+                tuple(
+                    np.unique(regions[ordered_incident[start : start + count]]).tolist()
+                ),
             )
-        result.append(
-            (
-                int(face_ids[row]),
-                _face_key(face_keys[row]),
-                oriented[index],
-                (int(count), active_regions, int(facet_codes[row])),
-            )
-        )
-    return result
+            sides[row] = profiles.setdefault(profile, offset + len(profiles))
+    return _SourceFacets(facet_rows, face_ids[facet_rows], oriented, face_counts, sides)
+
+
+def _packed_row_edges(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
+    """Lexicographic keys of undirected edges over nonnegative int32 rows."""
+    return (np.minimum(first, second).astype(np.int64) << 32) | np.maximum(first, second)
+
+
+def _paired_source_face_edges(faces: np.ndarray, segments: np.ndarray, /) -> np.ndarray:
+    """Linear indices for oppositely oriented face edges used exactly twice."""
+    first, second = faces.ravel(), np.roll(faces, -1, axis=1).ravel()
+    keys = _packed_row_edges(first, second)
+    order = np.argsort(keys, kind="stable")
+    distinct = np.r_[True, keys[order[1:]] != keys[order[:-1]], True]
+    starts = np.flatnonzero(distinct)
+    twins = starts[:-1][np.diff(starts) == 2]
+    a, b = order[twins], order[twins + 1]
+    selected = first[a] == second[b]
+    if segments.size:
+        selected &= ~np.isin(keys[a], _packed_row_edges(*segments.T))
+    return np.stack((a[selected], b[selected]), axis=1)
 
 
 def _coplanar_face_groups(
     points: np.ndarray,
-    faces: np.ndarray,
-    sides: list[_FacetSides],
-    segments: set[tuple[int, int]],
+    facets: _SourceFacets,
+    paired_edges: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Planar source facet label (a representative row) of each source triangle.
-
-    Two triangles sharing an edge join when the edge is no source segment and
-    is used exactly by them in opposite directions (a consistently oriented
-    manifold), their sides agree (incident cell count, regions, facet class),
-    and the fourth vertex is exactly coplanar (exact rational orientation).
-    """
-    parent = list(range(faces.shape[0]))
-
-    def find(row: int) -> int:
-        while parent[row] != row:
-            parent[row] = parent[parent[row]]
-            row = parent[row]
-        return row
-
-    uses: dict[tuple[int, int], list[tuple[int, tuple[int, int]]]] = defaultdict(list)
-    rows = np.asarray(faces, dtype=np.int64).tolist()
-    for row, face in enumerate(rows):
-        for corner in range(3):
-            first, second = int(face[corner]), int(face[(corner + 1) % 3])
-            uses[_edge_key((first, second))].append((row, (first, second)))
-
-    candidates: list[tuple[int, int]] = []
-    tests: list[list[int]] = []
-    for key, incident in uses.items():
-        if len(incident) != 2 or key in segments:
-            continue
-        (first_row, first_use), (second_row, second_use) = incident
-        if first_use != second_use[::-1] or sides[first_row] != sides[second_row]:
-            continue
-        apex = next(vertex for vertex in rows[second_row] if vertex not in key)
-        tests.append([*rows[first_row], apex])
-        candidates.append((first_row, second_row))
-    signs = _tetra_orientation(
-        points, np.asarray(tests, dtype=np.int64).reshape((-1, 4)), PredicateMode.EXACT
-    )
+    """Connected components across unconstrained, coplanar sides of like facets."""
+    first, second = paired_edges.T // 3
+    same = facets.sides[first] == facets.sides[second]
+    first, second = first[same], second[same]
+    faces = facets.oriented
+    apex = faces[second, (paired_edges[same, 1] + 2) % 3]
+    tests = np.column_stack((faces[first], apex))
+    signs = _tetra_orientation(points, tests, PredicateMode.EXACT)
     if np.any(signs == 2):
         raise ValueError("Exact source facet coplanarity is unresolved.")
-    for (first_row, second_row), sign in zip(candidates, signs, strict=True):
-        if sign == 0:
-            parent[find(first_row)] = find(second_row)
-    return np.asarray([find(row) for row in range(faces.shape[0])], dtype=np.int64)
+    coplanar = signs == 0
+    count = faces.shape[0]
+    graph = coo_matrix(
+        (
+            np.ones(np.count_nonzero(coplanar), dtype=np.int8),
+            (first[coplanar], second[coplanar]),
+        ),
+        shape=(count, count),
+    )
+    _, labels = connected_components(graph, directed=False)
+    return labels
 
 
 def _declared_face_planes(points: np.ndarray, faces: np.ndarray, /) -> np.ndarray:
@@ -1521,112 +1726,108 @@ def _declared_face_planes(points: np.ndarray, faces: np.ndarray, /) -> np.ndarra
     then exactly the triangle's plane and a point ``a + s (b - a) + t (c - a)``
     has source weights ``(1 - s - t, s, t)``.
     """
-    planes = np.full((faces.shape[0], 3, 3), np.nan, dtype=np.float64)
-    for row, face in enumerate(np.asarray(faces, dtype=np.int64).tolist()):
-        origin, first, second = (points[int(vertex)] for vertex in face)
-        axes = (first - origin, second - origin)
-        if all(
-            Fraction(float(axis[k]))
-            == Fraction(float(end[k])) - Fraction(float(origin[k]))
-            for axis, end in zip(axes, (first, second), strict=True)
-            for k in range(3)
-        ):
-            planes[row] = (origin, axes[0], axes[1])
+    planes = points[faces]
+    origin = planes[:, :1]
+    ends = planes[:, 1:]
+    axes = ends - origin
+    # Undo the larger-magnitude term. Either the original subtraction is
+    # exact by Sterbenz's lemma, or this reverse subtraction is exact and
+    # recovers the smaller term iff the candidate axis lost no bits.
+    exact = np.where(
+        np.abs(ends) >= np.abs(origin), axes - ends == -origin, axes + origin == ends
+    )
+    planes[:, 1:] = axes
+    planes[~np.all(exact, axis=(1, 2))] = np.nan
     return planes
 
 
 def _cartesian_source_seams(
-    points: np.ndarray,
-    vertex_ids: np.ndarray,
-    vertex_row_by_id: Mapping[int, int],
-    constrained_faces: list[_SourceFacet],
+    mesh: CellMesh,
+    facets: _SourceFacets,
+    paired_edges: np.ndarray,
     face_groups: np.ndarray,
     declared_planes: np.ndarray,
-    edge_id_by_key: Mapping[tuple[int, int], int],
-    live_segment_keys: list[tuple[int, int]],
-    fixed: np.ndarray,
     /,
-) -> tuple[list[tuple[int, int]], dict[int, tuple[tuple[int, int], int]]]:
-    """Find immutable ridge edges and canonical source endpoint witnesses.
-
-    A ridge uses exactly two oppositely oriented exterior triangles from
-    different Cartesian planes. Scan the constrained source incidence once;
-    neither live facets nor the entire tetrahedral edge bank define the chart.
-    """
+) -> tuple[np.ndarray, np.ndarray]:
+    """Source edge rows and tangent axes of Cartesian ridges."""
     constant_axes = np.all(declared_planes[:, 1:] == 0.0, axis=1)
-    if np.count_nonzero(np.any(constant_axes, axis=0)) < 2:
-        return [], {}
     group_axes = np.where(
         np.count_nonzero(constant_axes, axis=1) == 1,
         np.argmax(constant_axes, axis=1),
         -1,
     )
-    authored = set(live_segment_keys)
-    authored_vertices = {vertex for key in authored for vertex in key}
-    edge_uses: dict[tuple[int, int], list[tuple[int, bool]]] = defaultdict(list)
-    vertex_groups: dict[int, set[int]] = defaultdict(set)
-    for face_row, (_, _, corners, _) in enumerate(constrained_faces):
-        a, b, c = (int(vertex_ids[corner]) for corner in corners)
-        group = int(face_groups[face_row])
-        for first, second in ((a, b), (b, c), (c, a)):
-            vertex_groups[first].add(group)
-            forward = first < second
-            key = (first, second) if forward else (second, first)
-            edge_uses[key].append((face_row, forward))
+    first, second = paired_edges.T // 3
+    a, b = group_axes[face_groups[first]], group_axes[face_groups[second]]
+    select = (
+        (facets.counts[first] == 1)
+        & (facets.counts[second] == 1)
+        & (a >= 0)
+        & (b >= 0)
+        & (a != b)
+    )
+    axes = 3 - a[select] - b[select]
+    first = first[select]
+    corner = paired_edges[select, 0] % 3
+    near = facets.oriented[first, corner]
+    far = facets.oriented[first, (corner + 1) % 3]
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, TetrahedralConnectivity):
+        candidates = np.asarray(connectivity.face_edges)[facets.rows[first]]
+        candidates_edges = np.asarray(connectivity.edges)[candidates]
+        known = _packed_row_edges(candidates_edges[..., 0], candidates_edges[..., 1])
+        matches = known == _packed_row_edges(near, far)[:, None]
+        if not np.all(np.any(matches, axis=1)):
+            raise ValueError("A Cartesian source seam has no source edge identity.")
+        return candidates[np.arange(axes.size), np.argmax(matches, axis=1)], axes
+    ids = np.asarray(mesh.vertex_global_ids)
+    queries = np.sort(np.stack((ids[near], ids[far]), axis=1), axis=1)
+    edges = row_positions(entity_keys(mesh, 1), queries)
+    if np.any(edges < 0):
+        raise ValueError("A Cartesian source seam has no source edge identity.")
+    return edges, axes
 
-    seams: list[tuple[int, int]] = []
-    incident_seams: dict[int, list[tuple[tuple[int, int], int]]] = defaultdict(list)
-    for key, uses in edge_uses.items():
-        if len(uses) != 2 or key in authored:
-            continue
-        (first, forward), (second, reverse) = uses
-        if (
-            forward == reverse
-            or constrained_faces[first][3][0] != 1
-            or constrained_faces[second][3][0] != 1
-        ):
-            continue
-        first_axis = int(group_axes[face_groups[first]])
-        second_axis = int(group_axes[face_groups[second]])
-        if first_axis < 0 or second_axis < 0 or first_axis == second_axis:
-            continue
-        # Two different fixed axes leave one direction along the intersection.
-        axis = 3 - first_axis - second_axis
-        seams.append(key)
-        for vertex in key:
-            incident_seams[vertex].append((key, axis))
 
-    witnesses: dict[int, tuple[tuple[int, int], int]] = {}
-    for vertex, incident in incident_seams.items():
-        row = vertex_row_by_id[vertex]
-        if (
-            len(vertex_groups[vertex]) != 2
-            or len(incident) != 2
-            or vertex in authored_vertices
-            or fixed[row]
-        ):
-            continue
-        (first_key, axis), (second_key, other_axis) = incident
-        if axis != other_axis:
-            continue
-        point = points[row]
-        first_end = first_key[0] if vertex == first_key[1] else first_key[1]
-        second_end = second_key[0] if vertex == second_key[1] else second_key[1]
-        first = points[vertex_row_by_id[first_end], axis]
-        second = points[vertex_row_by_id[second_end], axis]
-        if not (first < point[axis] < second or second < point[axis] < first):
-            continue
-        # Expansion realization canonicalizes zero; only install a witness
-        # when the unchanged native carrier also has that sign bit.
-        if np.any((point == 0.0) & np.signbit(point)):
-            continue
-        key = (
-            first_key
-            if edge_id_by_key[first_key] < edge_id_by_key[second_key]
-            else second_key
-        )
-        witnesses[row] = (key, 0 if vertex == key[0] else 1)
-    return seams, witnesses
+def _ridge_endpoint_witnesses(
+    points: np.ndarray,
+    faces: np.ndarray,
+    groups: np.ndarray,
+    live_segments: np.ndarray,
+    seams: np.ndarray,
+    seam_axes: np.ndarray,
+    seam_ids: np.ndarray,
+    fixed: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Source vertices strictly between two collinear Cartesian ridge edges."""
+    endpoints = seams.ravel()
+    order = np.argsort(endpoints, kind="stable")
+    vertices, starts, counts = np.unique(
+        endpoints[order], return_index=True, return_counts=True
+    )
+    candidate = (counts == 2) & ~fixed[vertices]
+    if live_segments.size:
+        candidate &= ~np.isin(vertices, live_segments)
+    vertices, starts = vertices[candidate], starts[candidate]
+    first, second = order[starts], order[starts + 1]
+    axis = seam_axes[first // 2]
+    point = points[vertices]
+    location = points[vertices, axis]
+    a = points[endpoints[first ^ 1], axis]
+    b = points[endpoints[second ^ 1], axis]
+    group_pairs = sorted_unique_rows(
+        np.stack((faces.ravel(), np.repeat(groups, 3)), axis=1)
+    )
+    group_counts = np.bincount(group_pairs[:, 0], minlength=points.shape[0])
+    keep = (
+        (group_counts[vertices] == 2)
+        & (axis == seam_axes[second // 2])
+        & (np.minimum(a, b) < location)
+        & (location < np.maximum(a, b))
+        # Expansion realization canonicalizes zero; preserve the carrier's bits.
+        & ~np.any((point == 0.0) & np.signbit(point), axis=1)
+    )
+    endpoint = np.where(seam_ids[first // 2] < seam_ids[second // 2], first, second)[keep]
+    return vertices[keep], seam_ids[endpoint // 2], endpoint % 2
 
 
 def _cell_volume(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
@@ -1638,23 +1839,25 @@ def _region_volumes(
     points: np.ndarray, cells: np.ndarray, regions: np.ndarray, /
 ) -> dict[int, float]:
     measures = _cell_volume(points, cells)
-    if (
-        regions.shape == measures.shape
-        and regions.size
-        and np.all(regions == regions[0])
-        and np.max(measures) <= np.finfo(np.float64).max / (2 * regions.size)
-    ):
-        # Accumulate in cell order, as in the per-region loop; a pairwise
-        # np.sum would change the evidence ID even for one region.
-        np.add.accumulate(measures, out=measures)
-        return {int(regions[0]): float(measures[-1])}
-    totals: dict[int, float] = defaultdict(float)
-    for region, measure in zip(regions.tolist(), measures.tolist(), strict=True):
-        totals[int(region)] += float(measure)
-    return dict(sorted(totals.items()))
+    if regions.shape != measures.shape:
+        raise ValueError("Every tetrahedron must have one region.")
+    if not regions.size:
+        return {}
+    # Accumulate in original cell order within each region. A pairwise sum
+    # would change the historical volume and the evidence ID.
+    with np.errstate(over="ignore", invalid="ignore"):
+        if np.all(regions == regions[0]):
+            np.add.accumulate(measures, out=measures)
+            return {int(regions[0]): float(measures[-1])}
+        labels, inverse = np.unique(regions, return_inverse=True)
+        totals = np.zeros(labels.size, dtype=np.float64)
+        np.add.at(totals, inverse, measures)
+    return dict(zip(labels.tolist(), totals.tolist(), strict=True))
 
 
-def _relative_region_error(before: dict[int, float], after: dict[int, float], /) -> float:
+def _relative_region_error(
+    before: Mapping[int, float], after: Mapping[int, float], /
+) -> float:
     if before.keys() != after.keys():
         return float("inf")
     return max(
@@ -1833,16 +2036,6 @@ def _canonical_lagrange_layout(
     return True
 
 
-def _canonical_lagrange_vertices(
-    mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
-) -> tuple[tuple[Fraction, Fraction, Fraction], ...] | None:
-    if not _canonical_lagrange_layout(mesh, geometry, points):
-        return None
-    return tuple(
-        (Fraction(float(x)), Fraction(float(y)), Fraction(float(z))) for x, y, z in points
-    )
-
-
 def _admit_metric_bank(values: np.ndarray, vertex_count: int, /) -> np.ndarray:
     metric = _tensor_array(values, vertex_count)
     if metric.shape[1:] != (3, 3):
@@ -1910,12 +2103,18 @@ def _noop_metric_length_extrema(
 
     if count <= block:
         return extrema(edges)
+    first = extrema(edges[:block])
+    if not _LOWER <= first[0] <= first[1] <= _UPPER:
+        # A single witness rules out strict-band identity; the caller does
+        # not publish extrema on a rejected no-op.
+        return first
     bounds = np.empty(((count + block - 1) // block, 2), dtype=np.float64)
 
     def measure(begin: int, end: int, chunk: int, /) -> None:
-        bounds[chunk] = extrema(edges[begin:end])
+        bounds[chunk + 1] = extrema(edges[begin + block : end + block])
 
-    status = parallel_for(count, measure, chunk_size=block, parallelism=workers)
+    bounds[0] = first
+    status = parallel_for(count - block, measure, chunk_size=block, parallelism=workers)
     _raise_for_call(status, "tetrahedral metric length extrema")
     return float(np.min(bounds[:, 0])), float(np.max(bounds[:, 1]))
 
@@ -1984,6 +2183,186 @@ def strict_plain_tetra_metric_noop(
     )
 
 
+def _source_segment_rows(mesh: CellMesh, rows: np.ndarray, /) -> np.ndarray:
+    """Gather source edges with endpoints in increasing global-ID order."""
+    connectivity = mesh.connectivity
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    if isinstance(connectivity, TetrahedralConnectivity):
+        segments = np.asarray(connectivity.edges, dtype=np.int32)[rows]
+        reverse = vertex_ids[segments[:, 0]] > vertex_ids[segments[:, 1]]
+        segments[reverse] = segments[reverse, ::-1]
+        return segments
+    keys = entity_keys(mesh, 1)[rows]
+    return (
+        row_positions(vertex_ids[:, None], keys.reshape(-1, 1))
+        .reshape(-1, 2)
+        .astype(np.int32)
+    )
+
+
+def _prepare_exact_source(
+    mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
+) -> tuple[_ExactSourceVertices, bool]:
+    if _canonical_lagrange_layout(mesh, geometry, points):
+        return _ExactSourceVertices(points, None), False
+    from ._adaptation import _metric_exact_source_vertices, _piecewise_linear_geometry
+
+    if not _piecewise_linear_geometry(mesh, geometry):
+        raise ValueError(
+            "Native tetra metric adaptation requires an exact P1 source map."
+        )
+    from ..discretization.fem import lagrange_element
+
+    if (
+        mesh.periodic_topology is None
+        and geometry.source_map is None
+        and geometry.exact_coordinate_bank is None
+        and geometry.restriction_source is None
+        and all(
+            element is lagrange_element(element.cell_kind, 1)
+            for element in geometry.elements
+        )
+    ):
+        # Linear-map equality proves the vertex values, including a
+        # noncanonical coefficient layout with no exact authored override.
+        covered = np.zeros(points.shape[0], dtype=np.bool_)
+        for block in mesh.blocks:
+            covered[np.asarray(block.vertices)] = True
+        if not np.all(covered):
+            raise ValueError("Exact source geometry does not cover every metric vertex.")
+        return _ExactSourceVertices(points, None), False
+    exact_rows = _metric_exact_source_vertices(mesh, geometry)
+    rows = tuple((row[0], row[1], row[2]) for row in exact_rows)
+    if not np.array_equal(
+        np.asarray([[float(value) for value in row] for row in rows]), points
+    ):
+        raise ValueError(
+            "Tetra source vertices are not canonical exact-source roundings."
+        )
+    has_authored_rounding = any(
+        value != float(value) for point in rows for value in point
+    )
+    return _ExactSourceVertices(points, rows), has_authored_rounding
+
+
+class _PreparedSourceBoundary(NamedTuple):
+    source: TetMeshSourceComplex
+    facet_ids: np.ndarray
+    face_sources: np.ndarray
+    live_segments: np.ndarray
+    live_segment_ids: np.ndarray
+    protected_edge_keys: np.ndarray
+    implicit_groups: frozenset[int]
+
+
+def _prepare_source_boundary(
+    mesh: CellMesh,
+    points: np.ndarray,
+    vertex_ids: np.ndarray,
+    facets: _SourceFacets,
+    edge_ids: np.ndarray,
+    edge_codes: np.ndarray,
+    protected: np.ndarray,
+    fixed: np.ndarray,
+    /,
+    *,
+    has_implicit_source: bool,
+    periodic: bool,
+    derive_cartesian_seams: bool,
+) -> _PreparedSourceBoundary:
+    live_rows = np.flatnonzero((edge_codes > 0) | protected)
+    live_rows = live_rows[np.argsort(edge_ids[live_rows])]
+    live_segment_ids = edge_ids[live_rows]
+    live_segments = _source_segment_rows(mesh, live_rows)
+    protected_edge_keys = sorted_rows(vertex_ids[live_segments[protected[live_rows]]])
+    faces = facets.oriented
+    paired_edges = _paired_source_face_edges(faces, live_segments)
+    row_groups = _coplanar_face_groups(points, facets, paired_edges)
+    implicit_rows = np.empty(0, dtype=np.int64)
+    if has_implicit_source:
+        if periodic:
+            raise ValueError(
+                "Implicit tetra source admission does not support periodic state."
+            )
+        implicit_rows = np.flatnonzero(facets.counts == 1)
+        if not implicit_rows.size:
+            raise ValueError("Implicit tetra source requires actual exterior facets.")
+        row_groups[implicit_rows] = (
+            int(np.max(row_groups, initial=-1)) + 1 + facets.sides[implicit_rows]
+        )
+    _, representatives, inverse = np.unique(
+        row_groups, return_index=True, return_inverse=True
+    )
+    # Native group order is the first member's global facet ID.
+    order = np.argsort(representatives)
+    representatives = representatives[order]
+    face_ids = facets.ids[representatives]
+    rank = np.empty(order.shape, dtype=np.int32)
+    rank[order] = np.arange(order.size, dtype=np.int32)
+    face_groups = rank[inverse]
+    implicit_groups = frozenset(face_groups[implicit_rows].tolist())
+
+    witness_strata = np.zeros(vertex_ids.size, dtype=np.int8)
+    witness_entities = np.full(vertex_ids.size, -1, dtype=np.int32)
+    witness_parameters = np.zeros((vertex_ids.size, 2), dtype=np.float64)
+    segments, segment_ids = live_segments, live_segment_ids
+    if periodic:
+        face_planes = np.full((faces.shape[0], 3, 3), np.nan, dtype=np.float64)
+    else:
+        planes = _declared_face_planes(points, faces[representatives])
+        face_planes = planes[face_groups]
+        face_planes[implicit_rows] = np.nan
+        if not has_implicit_source and derive_cartesian_seams:
+            ridge_rows, axes = _cartesian_source_seams(
+                mesh, facets, paired_edges, face_groups, planes
+            )
+            if ridge_rows.size:
+                ridges = _source_segment_rows(mesh, ridge_rows)
+                ridge_ids = edge_ids[ridge_rows]
+                rows, ids, endpoints = _ridge_endpoint_witnesses(
+                    points,
+                    faces,
+                    face_groups,
+                    live_segments,
+                    ridges,
+                    axes,
+                    ridge_ids,
+                    fixed,
+                )
+                segment_ids = np.concatenate((live_segment_ids, ridge_ids))
+                order = np.argsort(segment_ids)
+                segment_ids = segment_ids[order]
+                segments = np.concatenate((live_segments, ridges))[order]
+                witness_strata[rows] = 1  # SourceStratum::kSegment
+                witness_entities[rows] = np.searchsorted(segment_ids, ids)
+                witness_parameters[rows, 0] = endpoints
+    source = TetMeshSourceComplex(
+        points=points,
+        faces=faces,
+        face_group_rows=face_groups,
+        face_tolerances=np.zeros(faces.shape[0], dtype=np.float64),
+        segments=segments,
+        segment_group_rows=np.arange(segment_ids.size, dtype=np.int32),
+        segment_tolerances=np.zeros(segment_ids.size, dtype=np.float64),
+        witness_strata=witness_strata,
+        witness_entities=witness_entities,
+        witness_parameters=witness_parameters,
+        face_ids=face_ids,
+        segment_ids=segment_ids,
+        face_planes=face_planes,
+        face_plane_tolerances=np.zeros(faces.shape[0], dtype=np.float64),
+    )
+    return _PreparedSourceBoundary(
+        source,
+        facets.ids,
+        face_ids[face_groups],
+        live_segments,
+        live_segment_ids,
+        protected_edge_keys,
+        implicit_groups,
+    )
+
+
 def _prepare_native_state(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -2011,29 +2390,10 @@ def _prepare_native_state(
         )
     ):
         raise ValueError("Native tetra metric adaptation requires 3D tetrahedron blocks.")
-    from ._adaptation import _metric_exact_source_vertices, _piecewise_linear_geometry
     from ._local_metric import _boolean_array, _integer_array
 
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    exact_source_points = _canonical_lagrange_vertices(mesh, geometry, points)
-    has_authored_rounding = False
-    if exact_source_points is None:
-        if not _piecewise_linear_geometry(mesh, geometry):
-            raise ValueError(
-                "Native tetra metric adaptation requires an exact P1 source map."
-            )
-        exact_rows = _metric_exact_source_vertices(mesh, geometry)
-        exact_source_points = tuple((row[0], row[1], row[2]) for row in exact_rows)
-        if not np.array_equal(
-            np.asarray([[float(value) for value in row] for row in exact_source_points]),
-            points,
-        ):
-            raise ValueError(
-                "Tetra source vertices are not canonical exact-source roundings."
-            )
-        has_authored_rounding = any(
-            value != float(value) for point in exact_source_points for value in point
-        )
+    exact_source, has_authored_rounding = _prepare_exact_source(mesh, geometry, points)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if vertex_ids.shape != (points.shape[0],):
         raise ValueError("Source vertex identities do not align with coordinates.")
@@ -2050,51 +2410,63 @@ def _prepare_native_state(
         block_cells.append(cells)
         block_cell_ids.append(identifiers)
         block_numbers.append(np.full((identifiers.size,), block_index, dtype=np.int32))
-    unsorted_cells = np.concatenate(block_cells, axis=0)
-    unsorted_ids = np.concatenate(block_cell_ids, axis=0)
-    unsorted_blocks = np.concatenate(block_numbers, axis=0)
-    order = np.argsort(unsorted_ids, kind="stable")
-    source_cells = unsorted_cells[order].copy()
-    source_cell_ids = unsorted_ids[order]
-    source_cell_blocks = unsorted_blocks[order]
-    orientation = _tetra_orientation(points, source_cells, PredicateMode.EXACT)
-    if np.any(orientation == 2):
-        raise ValueError("Exact source tetrahedron orientation is unresolved.")
-    negative = orientation < 0
-    if mesh.periodic_topology is not None and np.any(negative):
-        raise ValueError(
-            "Periodic native tetra source cells must preserve lifted corner order."
-        )
-    source_cells[negative, 1], source_cells[negative, 2] = (
-        source_cells[negative, 2].copy(),
-        source_cells[negative, 1].copy(),
+    unsorted_cells = (
+        block_cells[0] if len(block_cells) == 1 else np.concatenate(block_cells)
     )
-    if np.any(_tetra_orientation(points, source_cells, PredicateMode.EXACT) != 1):
-        raise ValueError("Source tetrahedra must have nonzero exact orientation.")
+    unsorted_ids = (
+        block_cell_ids[0] if len(block_cell_ids) == 1 else np.concatenate(block_cell_ids)
+    )
+    unsorted_blocks = (
+        block_numbers[0] if len(block_numbers) == 1 else np.concatenate(block_numbers)
+    )
+    source_cells, source_cell_ids, source_cell_blocks = (
+        unsorted_cells,
+        unsorted_ids,
+        unsorted_blocks,
+    )
+    if np.any(unsorted_ids[1:] < unsorted_ids[:-1]):
+        order = np.argsort(unsorted_ids, kind="stable")
+        source_cells, source_cell_ids, source_cell_blocks = (
+            unsorted_cells[order],
+            unsorted_ids[order],
+            unsorted_blocks[order],
+        )
+    native_cells = source_cells.astype(np.int32)
+    if source_cells.size and not tetrahedra_positive_orientation(
+        points, native_cells, parallelism=exact_kernel_parallelism()
+    ):
+        orientation = _tetra_orientation(points, source_cells, PredicateMode.EXACT)
+        if np.any(orientation == 2):
+            raise ValueError("Exact source tetrahedron orientation is unresolved.")
+        negative = orientation < 0
+        if np.any(negative):
+            if mesh.periodic_topology is not None:
+                raise ValueError(
+                    "Periodic native tetra source cells must preserve lifted corner order."
+                )
+            native_cells[negative, 1], native_cells[negative, 2] = (
+                native_cells[negative, 2],
+                native_cells[negative, 1],
+            )
+            source_cells = native_cells.astype(np.int64)
+        if np.any(orientation == 0):
+            raise ValueError("Source tetrahedra must have nonzero exact orientation.")
 
     cell_entity_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
     cell_values = _integer_array(cell_classes, cell_entity_ids.size, "cell_classes")
     if np.any(cell_values < 0) or np.any(cell_values > np.iinfo(np.int32).max):
         raise ValueError("Tetra region identities must fit nonnegative int32 labels.")
-    region_by_id = {
-        int(identifier): int(value)
-        for identifier, value in zip(
-            cell_entity_ids.tolist(), cell_values.tolist(), strict=True
+    regions = cell_values.astype(np.int32, copy=False)
+    entity_to_cell = None
+    if not np.array_equal(cell_entity_ids, source_cell_ids):
+        entity_to_cell = np.searchsorted(source_cell_ids, cell_entity_ids)
+        regions = np.empty(source_cell_ids.size, dtype=np.int32)
+        regions[entity_to_cell] = cell_values
+    periodic_state = None
+    if mesh.periodic_topology is not None:
+        periodic_state = _native_periodic_state(
+            mesh, regions[np.searchsorted(source_cell_ids, unsorted_ids)]
         )
-    }
-    regions = np.asarray(
-        [region_by_id[int(identifier)] for identifier in source_cell_ids.tolist()],
-        dtype=np.int32,
-    )
-    periodic_regions = np.asarray(
-        [
-            region_by_id[int(identifier)]
-            for block in mesh.blocks
-            for identifier in np.asarray(block.global_ids, dtype=np.int64).tolist()
-        ],
-        dtype=np.int32,
-    )
-    periodic_state = _native_periodic_state(mesh, periodic_regions)
     if periodic_state is not None:
         _validate_periodic_metric_values(
             mesh,
@@ -2105,12 +2477,8 @@ def _prepare_native_state(
             periodic_state,
         )
 
-    edge_keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
     edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
-    face_keys = np.asarray(entity_keys(mesh, 2), dtype=np.int64)
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
-    if edge_keys.shape != (edge_ids.size, 2) or face_keys.shape != (face_ids.size, 3):
-        raise ValueError("Tetra edge and facet identity tables are malformed.")
     edge_codes = _integer_array(edge_classes, edge_ids.size, "edge_classes")
     facet_codes = _integer_array(facet_classes, face_ids.size, "facet_classes")
     if (
@@ -2122,176 +2490,23 @@ def _prepare_native_state(
         raise ValueError("Tetra feature classes must fit nonnegative int32 labels.")
     protected = _boolean_array(protected_edges, edge_ids.size, "protected_edges")
     fixed = _boolean_array(fixed_vertices, vertex_ids.size, "fixed_vertices")
-    edge_id_by_key = {
-        _edge_key(row): int(identifier)
-        for row, identifier in zip(edge_keys.tolist(), edge_ids.tolist(), strict=True)
-    }
-    edge_class_by_key = {
-        _edge_key(row): int(value)
-        for row, value in zip(edge_keys.tolist(), edge_codes.tolist(), strict=True)
-    }
-    protected_edge_ids = {
-        _edge_key(edge_keys[row].tolist()) for row in np.flatnonzero(protected).tolist()
-    }
-
-    constrained_faces = _constrained_source_facets(
-        mesh, source_cells, source_cell_ids, regions, face_ids, face_keys, facet_codes
+    facets = _constrained_source_facets(
+        mesh, source_cells, entity_to_cell, regions, face_ids, facet_codes
     )
-    source_faces = np.asarray(
-        [row for _, _, row, _ in constrained_faces], dtype=np.int32
-    ).reshape((-1, 3))
-    source_face_row_ids = np.asarray(
-        [identifier for identifier, *_ in constrained_faces], dtype=np.int64
-    )
-
-    vertex_row_by_id = {
-        int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
-    }
-    live_segment_keys = [
-        _edge_key(edge_keys[row].tolist())
-        for row in range(edge_ids.size)
-        if edge_codes[row] > 0 or protected[row]
-    ]
-    live_segment_keys.sort(key=lambda key: edge_id_by_key[key])
-    live_segment_ids = np.asarray(
-        [edge_id_by_key[key] for key in live_segment_keys], dtype=np.int64
-    )
-    live_segments = np.asarray(
-        [
-            [vertex_row_by_id[identifier] for identifier in key]
-            for key in live_segment_keys
-        ],
-        dtype=np.int32,
-    ).reshape((-1, 2))
-    # Exactly coplanar source triangles joined across non-segment edges form
-    # one planar source facet (one group): boundary vertices then move and
-    # collapse across the facet's internal diagonals. On a periodic lift each
-    # paired cell-face cap is such a facet, so seam vertices collapse within
-    # their cap plane (or along the cell edge two caps share).
-    row_groups = _coplanar_face_groups(
+    boundary = _prepare_source_boundary(
+        mesh,
         points,
-        source_faces,
-        [sides for *_, sides in constrained_faces],
-        {_edge_key(row) for row in live_segments.tolist()},
+        vertex_ids,
+        facets,
+        edge_ids,
+        edge_codes,
+        protected,
+        fixed,
+        has_implicit_source=implicit_source is not None,
+        periodic=periodic_state is not None,
+        derive_cartesian_seams=derive_cartesian_seams and not has_authored_rounding,
     )
-    implicit_rows: list[int] = []
-    if implicit_source is not None:
-        if periodic_state is not None:
-            raise ValueError(
-                "Implicit tetra source admission does not support periodic state."
-            )
-        group_by_sides: dict[_FacetSides, int] = {}
-        next_group = int(np.max(row_groups, initial=-1)) + 1
-        for row, (_, _, _, sides) in enumerate(constrained_faces):
-            if sides[0] != 1:
-                continue
-            group = group_by_sides.get(sides)
-            if group is None:
-                group = next_group
-                next_group += 1
-                group_by_sides[sides] = group
-            row_groups[row] = group
-            implicit_rows.append(row)
-        if not implicit_rows:
-            raise ValueError("Implicit tetra source requires actual exterior facets.")
-    _, representative_rows, face_groups = np.unique(
-        row_groups, return_index=True, return_inverse=True
-    )
-    # Native group order follows the first face's global identity.
-    group_order = np.argsort(representative_rows)
-    representative_rows = representative_rows[group_order]
-    source_face_ids = source_face_row_ids[representative_rows]
-    ranks = np.empty(group_order.shape, dtype=np.int32)
-    ranks[group_order] = np.arange(group_order.size, dtype=np.int32)
-    face_groups = ranks[face_groups]
-    implicit_groups = frozenset(int(face_groups[row]) for row in implicit_rows)
-    source_face_group_rows = {
-        int(identifier): row for row, identifier in enumerate(source_face_ids.tolist())
-    }
-    grouped_triangles: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
-    for row, (_, key, _, _) in enumerate(constrained_faces):
-        grouped_triangles[int(face_groups[row])].append(key)
-    source_group_triangles = {
-        group: tuple(triangles) for group, triangles in grouped_triangles.items()
-    }
-    source_face_vertices = {
-        group: frozenset(vertex for triangle in triangles for vertex in triangle)
-        for group, triangles in source_group_triangles.items()
-    }
-    seam_keys: list[tuple[int, int]] = []
-    endpoint_witnesses: dict[int, tuple[tuple[int, int], int]] = {}
-    # Off a periodic lift each facet declares the exact plane of its first
-    # triangle (origin a, axes b - a and c - a) when those axes are binary64,
-    # so the native admits a carrier rounding a point of the plane
-    # (declared-plane rounding-box admission).
-    if periodic_state is None:
-        representatives = _declared_face_planes(points, source_faces[representative_rows])
-        face_planes = representatives[face_groups]
-        if implicit_groups:
-            face_planes[implicit_rows] = np.nan
-        elif derive_cartesian_seams and not has_authored_rounding:
-            seam_keys, endpoint_witnesses = _cartesian_source_seams(
-                points,
-                vertex_ids,
-                vertex_row_by_id,
-                constrained_faces,
-                face_groups,
-                representatives,
-                edge_id_by_key,
-                live_segment_keys,
-                fixed,
-            )
-    else:
-        face_planes = np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64)
-    declared_source_faces = frozenset(
-        frozenset(constrained_faces[row][1])
-        for row in np.flatnonzero(~np.isnan(face_planes[:, 0, 0])).tolist()
-    )
-    witness_strata = np.zeros((vertex_ids.size,), dtype=np.int8)
-    witness_entities = np.full((vertex_ids.size,), -1, dtype=np.int32)
-    witness_parameters = np.zeros((vertex_ids.size, 2), dtype=np.float64)
-    source_segment_keys = live_segment_keys
-    source_segment_ids = live_segment_ids
-    source_segments = live_segments
-    if seam_keys:
-        # Live constraints keep their original IDs. The source bank
-        # interleaves ridge primitives in the same stable physical ID order.
-        source_segment_keys = live_segment_keys + seam_keys
-        source_segment_keys.sort(key=lambda key: edge_id_by_key[key])
-        source_segment_ids = np.asarray(
-            [edge_id_by_key[key] for key in source_segment_keys], dtype=np.int64
-        )
-        source_segments = np.asarray(
-            [(vertex_row_by_id[a], vertex_row_by_id[b]) for a, b in source_segment_keys],
-            dtype=np.int32,
-        )
-    source_segment_vertices = {
-        row: frozenset(key) for row, key in enumerate(source_segment_keys)
-    }
-    source_segment_group_rows = {
-        int(identifier): row for row, identifier in enumerate(source_segment_ids.tolist())
-    }
-    for row, (key, endpoint) in endpoint_witnesses.items():
-        # One primitive per source group; witness entities index primitive rows.
-        witness_strata[row] = 1  # SourceStratum::kSegment
-        witness_entities[row] = source_segment_group_rows[edge_id_by_key[key]]
-        witness_parameters[row, 0] = endpoint
-    source_complex = TetMeshSourceComplex(
-        points=points,
-        faces=source_faces,
-        face_group_rows=face_groups,
-        face_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
-        segments=source_segments,
-        segment_group_rows=np.arange(source_segment_ids.size, dtype=np.int32),
-        segment_tolerances=np.zeros((source_segment_ids.size,), dtype=np.float64),
-        witness_strata=witness_strata,
-        witness_entities=witness_entities,
-        witness_parameters=witness_parameters,
-        face_ids=source_face_ids,
-        segment_ids=source_segment_ids,
-        face_planes=face_planes,
-        face_plane_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
-    )
+    source_complex = boundary.source
 
     source_map = geometry.source_map
     frame_id = coordinate_contract.reference_frame
@@ -2328,7 +2543,7 @@ def _prepare_native_state(
         else TetMeshImplicitSource(
             implicit_source.value,
             implicit_source.gradient,
-            np.asarray(sorted(implicit_groups), dtype=np.int32),
+            np.asarray(sorted(boundary.implicit_groups), dtype=np.int32),
             implicit_source.tolerance,
             0,
             implicit_source.source_id,
@@ -2340,19 +2555,19 @@ def _prepare_native_state(
 
     native = TetMesh3D(
         points,
-        source_cells.astype(np.int32),
+        native_cells,
         regions,
-        source_faces,
-        source_face_ids[face_groups],
-        live_segments,
-        live_segment_ids,
+        source_complex.faces,
+        boundary.face_sources,
+        boundary.live_segments,
+        boundary.live_segment_ids,
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
         protection_radii=np.zeros((vertex_ids.size,), dtype=np.float64),
         protected_vertices=np.asarray(fixed, dtype=np.int8),
         vertex_ids=vertex_ids,
         cell_ids=source_cell_ids,
-        facet_ids=source_face_row_ids,
-        segment_ids=live_segment_ids,
+        facet_ids=boundary.facet_ids,
+        segment_ids=boundary.live_segment_ids,
         source=source_complex,
         implicit_source=native_implicit,
         source_id=source_identity[0],
@@ -2361,47 +2576,6 @@ def _prepare_native_state(
         frame_id=source_identity[3],
         periodic_state=periodic_state,
     )
-    snapshot = native.arrays()
-    native_vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
-    native_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
-    if set(native_vertex_ids.tolist()) != set(vertex_ids.tolist()) or set(
-        native_cell_ids.tolist()
-    ) != set(source_cell_ids.tolist()):
-        raise ValueError("Native tetra source IDs do not preserve exact lifted ancestry.")
-    source_vertex_row_by_id = {
-        int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
-    }
-    source_block_by_cell_id = {
-        int(identifier): int(block)
-        for identifier, block in zip(
-            source_cell_ids.tolist(), source_cell_blocks.tolist(), strict=True
-        )
-    }
-    vertex_target_ids = {
-        int(identifier): int(identifier) for identifier in native_vertex_ids.tolist()
-    }
-    cell_target_ids = {
-        int(identifier): int(identifier) for identifier in native_cell_ids.tolist()
-    }
-    cell_blocks = {
-        int(identifier): source_block_by_cell_id[int(identifier)]
-        for identifier in native_cell_ids.tolist()
-    }
-    cell_ancestry = {
-        int(identifier): {int(identifier): EntityLineageKind.PRESERVED}
-        for identifier in native_cell_ids.tolist()
-    }
-    vertex_stencils = {
-        int(identifier): {int(identifier): Fraction(1)}
-        for identifier in native_vertex_ids.tolist()
-    }
-    metric_by_vertex = {
-        int(identifier): metric[source_vertex_row_by_id[int(identifier)]].copy()
-        for identifier in native_vertex_ids.tolist()
-    }
-    fixed_vertices_native = {
-        int(vertex_ids[row]) for row in np.flatnonzero(fixed).tolist()
-    }
     families = tuple((block.name, block.cell_kind) for block in mesh.blocks)
     periodic_vertex_windings = (
         {
@@ -2414,12 +2588,11 @@ def _prepare_native_state(
     )
     return _NativeState(
         native=native,
-        snapshot=snapshot,
+        exact_source=exact_source,
         source_mesh=mesh,
         source_points=points,
-        source_exact_points=exact_source_points,
         source_has_authored_rounding=has_authored_rounding,
-        implicit_groups=implicit_groups,
+        implicit_groups=boundary.implicit_groups,
         target_mesh=mesh,
         periodic_vertex_windings=periodic_vertex_windings,
         periodic_state=periodic_state,
@@ -2427,38 +2600,26 @@ def _prepare_native_state(
         source_metric_log=_metric_logarithms(metric),
         source_cell_ids=source_cell_ids,
         source_vertex_ids=vertex_ids,
-        source_vertex_rows=source_vertex_row_by_id,
         source_cell_vertices=source_cells,
         source_cell_regions=regions,
+        source_region_volumes=_SourceRegionVolumes(points, source_cells, regions),
         source_cell_blocks=source_cell_blocks,
-        source_region_volumes=_region_volumes(points, source_cells, regions),
         source_identity=source_identity,
-        vertex_target_ids=vertex_target_ids,
-        cell_target_ids=cell_target_ids,
-        cell_blocks=cell_blocks,
-        cell_ancestry=cell_ancestry,
-        vertex_stencils=vertex_stencils,
-        metric_by_vertex=metric_by_vertex,
-        fixed_vertices=fixed_vertices_native,
-        protected_edge_ids=protected_edge_ids,
-        source_edge_ids=edge_id_by_key,
-        edge_classes=edge_class_by_key,
-        source_face_group_rows=source_face_group_rows,
-        source_segment_group_rows=source_segment_group_rows,
-        source_face_vertices=source_face_vertices,
-        source_segment_vertices=source_segment_vertices,
-        declared_source_faces=declared_source_faces,
-        source_group_triangles=dict(source_group_triangles),
-        next_native_vertex=int(np.max(native_vertex_ids)) + 1,
-        next_native_cell=int(np.max(native_cell_ids)) + 1,
-        next_native_facet=(
-            int(np.max(snapshot.facet_ids)) + 1 if snapshot.facet_ids.size else 0
-        ),
-        next_native_segment=(
-            int(np.max(snapshot.segment_ids)) + 1 if snapshot.segment_ids.size else 0
-        ),
+        initial_fixed_ids=vertex_ids[fixed],
+        source_face_ids=source_complex.face_ids,
+        source_segment_ids=source_complex.segment_ids,
+        protected_edge_keys=boundary.protected_edge_keys,
+        source_edge_codes=edge_codes,
+        source_faces=source_complex.faces,
+        source_face_groups=source_complex.face_group_rows,
+        source_face_declared=~np.isnan(source_complex.face_planes[:, 0, 0]),
+        source_segments=source_complex.segments,
+        next_native_vertex=int(np.max(vertex_ids)) + 1,
+        next_native_cell=int(np.max(source_cell_ids, initial=-1)) + 1,
+        next_native_facet=int(np.max(boundary.facet_ids, initial=-1)) + 1,
+        next_native_segment=int(np.max(boundary.live_segment_ids, initial=-1)) + 1,
         next_target_vertex=int(np.max(vertex_ids)) + 1,
-        next_target_cell=int(np.max(source_cell_ids)) + 1,
+        next_target_cell=int(np.max(source_cell_ids, initial=-1)) + 1,
         block_families=families,
         history_vertex=[],
         history_cells=[],
@@ -7851,7 +8012,7 @@ def execute_tetra_metric_adaptation(
             lower=lower,
         )
     adaptation = state.native.metric_adapt(
-        int(state.snapshot.generation),
+        state.native.generation,
         **_metric_adapt_inputs(state),
         lower=lower,
         topology_operations=topology_operations,
@@ -7884,7 +8045,7 @@ def execute_tetra_metric_adaptation(
         )
     edit, target_metric = _adapted_edit(state, adaptation, snapshot)
     evidence = _adapted_evidence(state, adaptation, snapshot, lower)
-    return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
+    return TetraMetricOutcome(edit, target_metric, evidence, state.exact_source)
 
 
 def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
@@ -7895,8 +8056,13 @@ def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
     IDs coincide.
     """
     source_ids = state.source_vertex_ids
-    vertex_order = np.argsort(source_ids, kind="stable")
-    vertex_ids = source_ids[vertex_order]
+    if np.all(source_ids[1:] > source_ids[:-1]):
+        vertex_ids = source_ids
+        vertex_order = np.arange(source_ids.size, dtype=np.int32)
+    else:
+        order = np.argsort(source_ids, kind="stable")
+        vertex_ids = source_ids[order]
+        vertex_order = order.astype(np.int32)
     cell_ids = state.source_cell_ids
     return {
         "source_points": state.source_points,
@@ -7909,7 +8075,7 @@ def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
         ),
         "vertex_ids": vertex_ids,
         "stencil_offsets": np.arange(vertex_ids.size + 1, dtype=np.int64),
-        "stencil_rows": vertex_order.astype(np.int32),
+        "stencil_rows": vertex_order,
         "stencil_weights": np.ones(vertex_ids.size, dtype=np.float64),
         "vertex_target_ids": vertex_ids,
         "cell_ids": cell_ids,
@@ -7920,9 +8086,7 @@ def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
         "ancestry_kinds": np.full(
             cell_ids.size, int(EntityLineageKind.PRESERVED), dtype=np.int32
         ),
-        "protected_edges": np.asarray(
-            sorted(state.protected_edge_ids), dtype=np.int64
-        ).reshape((-1, 2)),
+        "protected_edges": state.protected_edge_keys,
         "next_ids": (
             state.next_native_vertex,
             state.next_native_cell,
@@ -7943,9 +8107,12 @@ def _id_relations(
     if np.all(targets[:-1] <= targets[1:]):
         # A stable one-column sort retains the original target order within
         # each source. Distinct pairs need neither kind sorting nor deduplication.
-        order = np.argsort(sources, kind="stable")
-        source = sources[order]
-        target = targets[order]
+        order = (
+            slice(None)
+            if np.all(sources[:-1] <= sources[1:])
+            else np.argsort(sources, kind="stable")
+        )
+        source, target = sources[order], targets[order]
         if not np.any((source[:-1] == source[1:]) & (target[:-1] == target[1:])):
             return EntityRelations(
                 dimension,
@@ -8000,6 +8167,11 @@ def _tetra_intermediate_relations(
 ) -> EntityRelations:
     """Explicit edge or facet lineage from canonical native tetra stencils."""
     width = dimension + 1
+    if not target_rows.size:
+        empty = np.empty((0, width), dtype=np.int64)
+        return EntityRelations(
+            dimension, empty, empty.copy(), np.empty(0, dtype=np.int32)
+        )
     target_keys = target_vertex_ids[target_rows]
     source_keys = sorted_rows(entity_keys(source, dimension))
     identity = row_positions(source_keys, target_keys)
@@ -8008,7 +8180,13 @@ def _tetra_intermediate_relations(
     # Terms of a native stencil are distinct. A single over-width stencil
     # rules out refinement, but never an identity relation. Only gather the
     # bounded prefix needed by the remaining rows, even for wide stencils.
-    eligible = np.flatnonzero(np.all(stencil_counts[target_rows] <= width, axis=1))
+    identity_stencil = (stencil_counts == 1) & (
+        stencil_sources[:, 0] == target_vertex_ids
+    )
+    eligible = np.flatnonzero(
+        np.all(stencil_counts[target_rows] <= width, axis=1)
+        & ~np.all(identity_stencil[target_rows], axis=1)
+    )
     gathered = stencil_sources[:, :width][target_rows[eligible]]
     gathered = gathered.reshape(eligible.size, width * gathered.shape[-1])
     gathered.sort(axis=1)
@@ -8065,16 +8243,58 @@ def _related_tetra_entities(
     support_sizes: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Enumerate only target edges/facets that could have source lineage."""
+    """Enumerate candidate edges/facets from ascending cell and corner rows."""
     width = corners.shape[1]
-    # Identity needs only retained IDs; refinement needs every corner's
-    # complete source support to fit within one entity of this dimension.
-    # A tetrahedron with too few eligible corners cannot supply either.
     eligible = retained | (support_sizes <= width)
-    if not np.all(eligible):
-        cells = cells[np.count_nonzero(eligible[cells], axis=1) >= width]
-    rows = np.sort(cells[:, corners], axis=2).reshape((-1, width))
-    return sorted_unique_rows(rows)
+    if np.all(eligible):
+        return sorted_unique_rows(cells[:, corners].reshape((-1, width)))
+    cells = cells[np.count_nonzero(eligible[cells], axis=1) >= width]
+    rows = cells[:, corners].reshape((-1, width))
+    return sorted_unique_rows(rows[np.all(eligible[rows], axis=1)])
+
+
+def _adapted_stencils(
+    adaptation: TetMeshMetricAdaptation,
+    source_vertex_ids: np.ndarray,
+    order: np.ndarray,
+    rank: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Densify native CSR in target-ID order, sorting only each stencil."""
+    starts = adaptation.stencil_offsets
+    counts = np.diff(starts)
+    owners = np.repeat(np.arange(counts.size), counts)
+    columns = np.arange(owners.size) - starts[owners]
+    rows = rank[owners]
+    width = max(int(np.max(counts, initial=0)), 1)
+    sources = np.full((order.size, width), -1, dtype=np.int64)
+    weights = np.zeros((order.size, width), dtype=np.float64)
+    valid = np.zeros((order.size, width), dtype=np.bool_)
+    sources[rows, columns] = source_vertex_ids[adaptation.stencil_rows]
+    weights[rows, columns] = adaptation.stencil_weights
+    valid[rows, columns] = True
+    stencil_counts = counts[order]
+    if width > 1:
+        # Inactive slots already form a suffix and cannot enter the sort.
+        reversed_terms = (sources[:, :-1] > sources[:, 1:]) & valid[:, 1:]
+        unordered = np.flatnonzero(np.any(reversed_terms, axis=1))
+        if unordered.size:
+            keys = sources[unordered]
+            permutation = np.argsort(
+                np.where(keys >= 0, keys, np.iinfo(np.int64).max), axis=1, kind="stable"
+            )
+            sources[unordered] = np.take_along_axis(keys, permutation, axis=1)
+            weights[unordered] = np.take_along_axis(
+                weights[unordered], permutation, axis=1
+            )
+    return sources, weights, valid, stencil_counts
+
+
+def _native_rows(ordered: np.ndarray, snapshot_ids: np.ndarray, /) -> np.ndarray:
+    """Snapshot slots -> native result rows, with no search for identical banks."""
+    if np.array_equal(ordered, snapshot_ids):
+        return np.arange(ordered.size, dtype=np.int64)
+    return np.searchsorted(ordered, snapshot_ids)
 
 
 def _adapted_edit(
@@ -8088,51 +8308,56 @@ def _adapted_edit(
     Vertices are ordered by target ID; each block lists its cells by target
     cell ID; stencils name source vertex IDs in ascending order.
     """
-    native_ids = adaptation.vertex_ids.astype(np.int64)
     target_ids = adaptation.vertex_target_ids.astype(np.int64)
-    rows = np.searchsorted(native_ids, np.asarray(snapshot.vertex_ids, dtype=np.int64))
-    points = np.empty((native_ids.size, 3), dtype=np.float64)
-    points[rows] = np.asarray(snapshot.points, dtype=np.float64)
-    order = np.argsort(target_ids, kind="stable")
+    rows = _native_rows(adaptation.vertex_ids, snapshot.vertex_ids)
+    order = (
+        np.arange(target_ids.size, dtype=np.int64)
+        if np.all(target_ids[:-1] < target_ids[1:])
+        else np.argsort(target_ids, kind="stable")
+    )
     rank = np.empty_like(order)
     rank[order] = np.arange(order.size)
+    snapshot_to_target = rank[rows]
+    points = np.empty((rows.size, 3), dtype=np.float64)
+    points[snapshot_to_target] = snapshot.points
     target_vertex_ids = target_ids[order]
 
-    counts = np.diff(adaptation.stencil_offsets)
-    term_rows = rank[np.repeat(np.arange(counts.size), counts)]
-    term_sources = state.source_vertex_ids[adaptation.stencil_rows]
-    term_order = np.lexsort((term_sources, term_rows))
-    term_rows = term_rows[term_order]
-    term_sources = term_sources[term_order]
-    starts = np.zeros(order.size + 1, dtype=np.int64)
-    starts[1:] = np.cumsum(np.bincount(term_rows, minlength=order.size))
-    columns = np.arange(term_rows.size) - starts[term_rows]
-    width = max(int(np.max(counts, initial=0)), 1)
-    stencil_sources = np.full((order.size, width), -1, dtype=np.int64)
-    stencil_weights = np.zeros((order.size, width), dtype=np.float64)
-    stencil_valid = np.zeros((order.size, width), dtype=np.bool_)
-    stencil_sources[term_rows, columns] = term_sources
-    stencil_weights[term_rows, columns] = adaptation.stencil_weights[term_order]
-    stencil_valid[term_rows, columns] = True
-    stencil_counts = counts[order]
+    stencil_sources, stencil_weights, stencil_valid, stencil_counts = _adapted_stencils(
+        adaptation, state.source_vertex_ids, order, rank
+    )
 
     cell_target_ids = adaptation.cell_target_ids.astype(np.int64)
-    cell_rows = np.searchsorted(
-        adaptation.cell_ids.astype(np.int64),
-        np.asarray(snapshot.cell_ids, dtype=np.int64),
-    )
+    cell_rows = _native_rows(adaptation.cell_ids, snapshot.cell_ids)
     cells = np.empty((cell_target_ids.size, 4), dtype=np.int32)
-    cells[cell_rows] = rank[rows[np.asarray(snapshot.tetrahedra, dtype=np.int64)]]
-    block_ids: list[np.ndarray] = []
-    block_cells: list[np.ndarray] = []
-    for block_index in range(len(state.block_families)):
-        members = np.flatnonzero(adaptation.cell_blocks == block_index)
-        members = members[np.argsort(cell_target_ids[members], kind="stable")]
-        block_cells.append(cells[members])
-        block_ids.append(cell_target_ids[members])
+    cells[cell_rows] = snapshot_to_target[snapshot.tetrahedra]
+    blocks = adaptation.cell_blocks
+    block_count = len(state.block_families)
+    if (
+        block_count == 1
+        and np.all(blocks == 0)
+        and np.all(cell_target_ids[:-1] < cell_target_ids[1:])
+    ):
+        block_cells, block_ids = (cells,), (cell_target_ids,)
+    else:
+        by_block = np.lexsort((cell_target_ids, blocks))
+        starts = np.searchsorted(blocks[by_block], np.arange(block_count + 1))
+        sorted_block_cells, sorted_block_ids = cells[by_block], cell_target_ids[by_block]
+        block_cells = tuple(
+            sorted_block_cells[start:end]
+            for start, end in zip(starts[:-1], starts[1:], strict=True)
+        )
+        block_ids = tuple(
+            sorted_block_ids[start:end]
+            for start, end in zip(starts[:-1], starts[1:], strict=True)
+        )
     retained = np.isin(target_vertex_ids, state.source_vertex_ids, assume_unique=True)
-    edge_rows = _related_tetra_entities(cells, _TETRA_EDGES, retained, stencil_counts)
-    face_rows = _related_tetra_entities(cells, _TETRA_FACES, retained, stencil_counts)
+    sorted_cells = np.sort(cells, axis=1)
+    edge_rows = _related_tetra_entities(
+        sorted_cells, _TETRA_EDGES, retained, stencil_counts
+    )
+    face_rows = _related_tetra_entities(
+        sorted_cells, np.sort(_TETRA_FACES, axis=1), retained, stencil_counts
+    )
 
     relation_sources = adaptation.vertex_relations[:, 0].astype(np.int64)
     preserved = np.setdiff1d(target_vertex_ids[retained], relation_sources)
@@ -8185,7 +8410,7 @@ def _adapted_edit(
         _id_relations(3, ancestors, cell_targets, cell_kinds),
     )
     edit = CellTopologyEdit(
-        coordinates=points[order],
+        coordinates=points,
         vertex_global_ids=target_vertex_ids,
         blocks=source_family_blocks(
             state.block_families, tuple(block_cells), tuple(block_ids)
@@ -8206,6 +8431,56 @@ def _row_member(rows: np.ndarray, table: np.ndarray, /) -> np.ndarray:
         return pairs.view(np.dtype((np.void, 16))).reshape((-1,))
 
     return np.isin(keys(rows), keys(table))
+
+
+def _blocked_short_edges(
+    state: _NativeState,
+    adaptation: TetMeshMetricAdaptation,
+    snapshot: TetMeshArrays,
+    snapshot_to_native: np.ndarray,
+    short_edges: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Only boundary removal needs the exact source carrier and survivor stencil."""
+    protected = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
+    ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+    removable = ~protected
+    if state.fixed_vertices:
+        removable &= ~np.isin(ids, tuple(state.fixed_vertices))
+    boundary = np.zeros(ids.size, dtype=np.bool_)
+    boundary[snapshot.faces] = boundary[snapshot.segments] = True
+    bulk_admitted = np.any((removable & ~boundary)[short_edges], axis=1)
+    blocked = ~bulk_admitted
+    ambiguous = np.flatnonzero(blocked & np.any(removable[short_edges], axis=1))
+    if not ambiguous.size:
+        return blocked
+    records = _snapshot_boundary_records(
+        snapshot, state.source_face_group_rows, state.source_segment_group_rows
+    )
+    offsets = adaptation.stencil_offsets
+
+    def admitted(removed: int, kept: int) -> bool:
+        if not removable[removed]:
+            return False
+        kept_row = snapshot_to_native[kept]
+        support = state.source_vertex_ids[
+            adaptation.stencil_rows[offsets[kept_row] : offsets[kept_row + 1]]
+        ]
+        return _collapse_admitted(
+            state,
+            records,
+            int(ids[removed]),
+            int(ids[kept]),
+            removed_protected=False,
+            kept_protected=bool(protected[kept]),
+            kept_support=frozenset(support.tolist()),
+        )
+
+    for row, (first, second) in zip(
+        ambiguous, short_edges[ambiguous].tolist(), strict=True
+    ):
+        blocked[row] = not (admitted(first, second) or admitted(second, first))
+    return blocked
 
 
 def _adapted_evidence(
@@ -8242,7 +8517,7 @@ def _adapted_evidence(
             status is not TetraMetricStatus.COMPLETE
             or counters["retriangulations"] != 1
             or adaptation.unrepresentable_edges.size
-            or state.protected_edge_ids
+            or state.protected_edge_keys.size
             or snapshot.segments.size
             or not 6 <= closed.edge_count <= 6 * cell_count
             or not lower <= closed.minimum_length <= closed.maximum_length <= _UPPER
@@ -8270,14 +8545,19 @@ def _adapted_evidence(
             implicit_refusals=implicit_refusals,
         )
 
-    native_ids = adaptation.vertex_ids.astype(np.int64)
     snapshot_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
-    rows = np.searchsorted(native_ids, snapshot_ids)
+    rows = _native_rows(adaptation.vertex_ids, snapshot.vertex_ids)
     targets = adaptation.vertex_target_ids.astype(np.int64)[rows]
     points = np.asarray(snapshot.points, dtype=np.float64)
     metrics = adaptation.metrics[rows]
-    cells = np.asarray(snapshot.tetrahedra, dtype=np.int64).reshape((-1, 4))
-    edges = sorted_unique_rows(np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)))
+    cells = snapshot.tetrahedra
+    ordered_cells = np.sort(cells, axis=1)
+    edge_keys = np.unique(
+        _packed_row_edges(
+            ordered_cells[:, _TETRA_EDGES[:, 0]], ordered_cells[:, _TETRA_EDGES[:, 1]]
+        )
+    )
+    edges = np.stack((edge_keys >> 32, edge_keys & 0xFFFFFFFF), axis=1).astype(np.int32)
     reverse = snapshot_ids[edges[:, 0]] > snapshot_ids[edges[:, 1]]
     measurement_edges = edges
     if np.any(reverse):
@@ -8285,10 +8565,9 @@ def _adapted_evidence(
         measurement_edges[reverse] = edges[reverse, ::-1]
     lengths = metric_lengths(points, metrics, measurement_edges)
     protected = np.zeros(edges.shape[0], dtype=np.bool_)
-    if state.protected_edge_ids:
+    if state.protected_edge_keys.size:
         protected = _row_member(
-            np.sort(targets[edges], axis=1),
-            np.asarray(sorted(state.protected_edge_ids), dtype=np.int64),
+            np.sort(targets[edges], axis=1), state.protected_edge_keys
         )
     segment_mask = np.asarray(snapshot.protected_segments, dtype=np.bool_)
     if np.any(segment_mask):
@@ -8303,52 +8582,33 @@ def _adapted_evidence(
     def unmet(outside: np.ndarray) -> tuple[TetraMetricUnmetEdge, ...]:
         if outside.size == 0:
             return ()
-        records = _snapshot_boundary_records(
-            snapshot, state.source_face_group_rows, state.source_segment_group_rows
-        )
-        protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
-        row_by_id = {
-            identifier: row for row, identifier in enumerate(snapshot_ids.tolist())
-        }
-        offsets = adaptation.stencil_offsets
-
-        def admitted(removed: int, kept: int) -> bool:
-            kept_row = int(rows[row_by_id[kept]])
-            support = state.source_vertex_ids[
-                adaptation.stencil_rows[offsets[kept_row] : offsets[kept_row + 1]]
-            ]
-            return _collapse_admitted(
-                state,
-                records,
-                removed,
-                kept,
-                removed_protected=bool(protected_vertices[row_by_id[removed]]),
-                kept_protected=bool(protected_vertices[row_by_id[kept]]),
-                kept_support=frozenset(support.tolist()),
+        edge_rows = edges[outside]
+        pairs = np.sort(targets[edge_rows], axis=1)
+        measured = lengths[outside]
+        short = np.flatnonzero(measured <= _UPPER)
+        kinds = np.full(outside.size, 1, dtype=np.int8)
+        if short.size:
+            blocked = _blocked_short_edges(
+                state, adaptation, snapshot, rows, edge_rows[short]
             )
-
-        pairs = np.sort(targets[edges[outside]], axis=1)
-        split_refused = _row_member(pairs, unrepresentable)
-        witnesses = []
-        for edge, pair, length, refused in zip(
-            snapshot_ids[edges[outside]].tolist(),
-            pairs.tolist(),
-            lengths[outside].tolist(),
-            split_refused.tolist(),
-            strict=True,
-        ):
-            if length > _UPPER:
-                kind = (
-                    TetraMetricUnmetKind.UNREPRESENTABLE
-                    if refused
-                    else TetraMetricUnmetKind.UNIMPROVED
-                )
-            elif admitted(edge[0], edge[1]) or admitted(edge[1], edge[0]):
-                kind = TetraMetricUnmetKind.UNIMPROVED
-            else:
-                kind = TetraMetricUnmetKind.SOURCE_BOUNDARY
-            witnesses.append(TetraMetricUnmetEdge(kind, (pair[0], pair[1]), length))
-        return tuple(sorted(witnesses, key=lambda row: (row.kind.value, row.vertex_ids)))
+            kinds[short[blocked]] = 0
+        if unrepresentable.size:
+            kinds[(measured > _UPPER) & _row_member(pairs, unrepresentable)] = 2
+        labels = (
+            TetraMetricUnmetKind.SOURCE_BOUNDARY,
+            TetraMetricUnmetKind.UNIMPROVED,
+            TetraMetricUnmetKind.UNREPRESENTABLE,
+        )
+        order = np.lexsort((pairs[:, 1], pairs[:, 0], kinds))
+        return tuple(
+            TetraMetricUnmetEdge(labels[kind], (first, second), length)
+            for kind, (first, second), length in zip(
+                kinds[order].tolist(),
+                pairs[order].tolist(),
+                measured[order].tolist(),
+                strict=True,
+            )
+        )
 
     return _metric_evidence(
         status,
@@ -8451,7 +8711,7 @@ def _execute_native_state(
             break
     edit, target_metric = _assemble_native_edit(state)
     evidence = _tetra_evidence(state, counters, passes, status, lower=lower)
-    return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
+    return TetraMetricOutcome(edit, target_metric, evidence, state.exact_source)
 
 
 def _intermediate_relations(

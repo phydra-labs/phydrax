@@ -2362,18 +2362,27 @@ def _piecewise_linear_geometry(mesh: CellMesh, geometry: CellGeometrySpec, /) ->
     try:
         elements, routes, coefficients = geometry.resolve(mesh)
         points = np.asarray(coefficients, dtype=np.float64)
+        mesh_points = np.asarray(mesh.coordinates, dtype=np.float64)
+        shared_bank = np.array_equal(points, mesh_points)
         for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
             if not isinstance(element, ScalarCoordinateElement):
                 return False
-            linear = coordinate_source_basis(lagrange_element(block.cell_kind, 1))
-            vertices = np.asarray(block.vertices, dtype=np.int64)
-            for row, route_row in enumerate(np.asarray(route, dtype=np.int64)):
+            nodal = lagrange_element(block.cell_kind, 1)
+            vertices = np.asarray(block.vertices)
+            rows = np.asarray(route)
+            if element is nodal:
+                # The nodal coefficients uniquely determine this P1 map.
+                if not (shared_bank and np.array_equal(rows, vertices)) and (
+                    not np.array_equal(points[rows], mesh_points[vertices])
+                ):
+                    return False
+                continue
+            linear = coordinate_source_basis(nodal)
+            for row, route_row in enumerate(rows):
                 actual = coordinate_map_expressions(
                     element, points[route_row], cell_row=row
                 )
-                corner_points = np.asarray(mesh.coordinates, dtype=np.float64)[
-                    vertices[row]
-                ]
+                corner_points = mesh_points[vertices[row]]
                 expected = linear_combinations(
                     linear,
                     tuple(
@@ -3235,6 +3244,33 @@ def _metric_exact_source_vertices(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[tuple[Fraction, ...], ...]:
     """Read the rational physical vertex bank from the accepted coordinate map."""
+    if (
+        geometry.exact_coordinate_bank is not None
+        and geometry.coordinates.shape[0] == mesh.vertex_global_ids.size
+        and all(block.cell_kind == "tetrahedron" for block in mesh.blocks)
+    ):
+        # A vertex-indexed nodal map reads its exact coefficient at each
+        # reference corner. An authored bank also rules out chart lifting.
+        elements, routes, _ = geometry.resolve(mesh)
+        nodal = lagrange_element("tetrahedron", 1)
+        if all(
+            element is nodal
+            and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+        ):
+            covered = np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_)
+            for block in mesh.blocks:
+                covered[np.asarray(block.vertices)] = True
+            if not np.all(covered):
+                raise ValueError(
+                    "Exact source geometry does not cover every metric vertex."
+                )
+            rows = tuple(geometry.source_coordinates())
+            if all(isinstance(value, Fraction) for point in rows for value in point):
+                return tuple(
+                    tuple(value for value in point if isinstance(value, Fraction))
+                    for point in rows
+                )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     bank: dict[int, tuple[Fraction, ...]] = {}
     for block in mesh.blocks:

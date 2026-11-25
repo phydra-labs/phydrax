@@ -84,6 +84,31 @@ void plane_normal(const double* plane, Expansion* normal) {
   normal[2] = Expansion::product(u[0], v[1]) - Expansion::product(u[1], v[0]);
 }
 
+// Dropping the fixed coordinate is an exact orthogonal projection for a
+// Cartesian plane. Cyclic tangent axes preserve the cross product sign.
+int cartesian_plane_axis(const double* plane) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if (plane[3 + axis] == 0.0 && plane[6 + axis] == 0.0) return axis;
+  }
+  return -1;
+}
+
+using ProjectedPoint = std::array<double, 2>;
+
+ProjectedPoint cartesian_projection(const double* point, int axis) {
+  return {point[(axis + 1) % 3], point[(axis + 2) % 3]};
+}
+
+int cartesian_orientation(const ProjectedPoint& a, const ProjectedPoint& b,
+                          const ProjectedPoint& c) {
+  return orient2d(a.data(), b.data(), c.data());
+}
+
+FacetCoverageBounds cartesian_bounds(const double* point, int axis) {
+  const auto p = cartesian_projection(point, axis);
+  return {{p[0], p[1]}, {p[0], p[1]}, true};
+}
+
 // n.(point - origin), exactly.
 Expansion plane_offset(const double* plane, const Expansion* normal, const double* point) {
   return normal[0] * Expansion::difference(point[0], plane[0]) +
@@ -127,21 +152,30 @@ int projected_orientation(const Normal* n, const Expansion* a, const Expansion* 
 // Whether the projected closed segment pq meets the open interior of the
 // positively oriented projected triangle t (separating-axis test over the
 // triangle's edges and the segment's line, all exact).
-template <typename Normal>
-bool segment_meets_open_triangle(const Normal* n, const Expansion* p, const Expansion* q,
-                                 const Expansion* const* t) {
+template <typename Point, typename Orientation>
+bool meets_open_triangle(const Point& p, const Point& q, const Point* t,
+                         const Orientation& orientation) {
   for (int edge = 0; edge < 3; ++edge) {
-    const Expansion* a = t[edge];
-    const Expansion* b = t[(edge + 1) % 3];
-    if (projected_orientation(n, a, b, p) <= 0 && projected_orientation(n, a, b, q) <= 0) {
+    const Point& a = t[edge];
+    const Point& b = t[(edge + 1) % 3];
+    if (orientation(a, b, p) <= 0 && orientation(a, b, q) <= 0) {
       return false;
     }
   }
-  const int sides[3] = {projected_orientation(n, p, q, t[0]), projected_orientation(n, p, q, t[1]),
-                        projected_orientation(n, p, q, t[2])};
+  const int sides[3] = {orientation(p, q, t[0]), orientation(p, q, t[1]),
+                        orientation(p, q, t[2])};
   const bool nonnegative = sides[0] >= 0 && sides[1] >= 0 && sides[2] >= 0;
   const bool nonpositive = sides[0] <= 0 && sides[1] <= 0 && sides[2] <= 0;
   return !nonnegative && !nonpositive;
+}
+
+template <typename Normal>
+bool segment_meets_open_triangle(const Normal* n, const Expansion* p, const Expansion* q,
+                                 const Expansion* const* t) {
+  return meets_open_triangle(p, q, t, [n](const Expansion* a, const Expansion* b,
+                                        const Expansion* c) {
+    return projected_orientation(n, a, b, c);
+  });
 }
 
 bool declared_plane_point(const double* plane, const double* parameters, Expansion* point) {
@@ -663,6 +697,8 @@ bool TetMesh::plane_carrier(std::int32_t row, const double* parameters, double* 
 bool TetMesh::plane_admits(std::int32_t row, const double* carrier) const {
   const double* plane = face_plane(row);
   if (plane == nullptr) return false;
+  const int axis = cartesian_plane_axis(plane);
+  if (axis >= 0 && carrier[axis] == plane[axis]) return true;
   Expansion normal[3];
   plane_normal(plane, normal);
   const Expansion offset = plane_offset(plane, normal, carrier);
@@ -876,16 +912,20 @@ void TetMesh::prepare_declared_group(const DeclaredGroup& declared,
   if (declared.rows.empty()) return;
   const double* plane = face_plane(declared.rows.front());
   if (plane == nullptr) return;
+  const int cartesian = metric_active_ ? -1 : cartesian_plane_axis(plane);
   Dyadic normal[3];
   if (metric_active_) {
     affine_projection_normal(plane, metric_, normal);
-  } else {
+  } else if (cartesian < 0) {
     Expansion expansion[3];
     plane_normal(plane, expansion);
     for (int axis = 0; axis < 3; ++axis) normal[axis] = exact::to_dyadic(expansion[axis]);
   }
-  int projection_axis = 0;
-  while (projection_axis < 3 && normal[projection_axis].sign() == 0) ++projection_axis;
+  int projection_axis = cartesian;
+  if (projection_axis < 0) {
+    projection_axis = 0;
+    while (projection_axis < 3 && normal[projection_axis].sign() == 0) ++projection_axis;
+  }
   if (projection_axis == 3) return;
 
   // Every declared row has a nonzero projected orientation, established by
@@ -908,8 +948,12 @@ void TetMesh::prepare_declared_group(const DeclaredGroup& declared,
       auto [found, inserted] = vertices.try_emplace(vertex);
       if (inserted) {
         const double* point = source_points_.data() + 3 * static_cast<std::size_t>(vertex);
-        const Dyadic exact_point[3]{Dyadic(point[0]), Dyadic(point[1]), Dyadic(point[2])};
-        found->second = projected_bounds(normal, exact_point, projection_axis, unit);
+        if (cartesian >= 0) {
+          found->second = cartesian_bounds(point, cartesian);
+        } else {
+          const Dyadic exact_point[3]{Dyadic(point[0]), Dyadic(point[1]), Dyadic(point[2])};
+          found->second = projected_bounds(normal, exact_point, projection_axis, unit);
+        }
       }
       if (corner == 0) {
         box = found->second;
@@ -955,10 +999,20 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   const std::int32_t plane_row = group.rows.front();
   const double* plane = face_plane(plane_row);
   if (plane == nullptr) return false;
+  const int cartesian = metric_active_ ? -1 : cartesian_plane_axis(plane);
+  // A validated segment endpoint is exactly its binary64 carrier, just as
+  // an unwitnessed point is. Retain the rational projection for all others.
+  bool binary = cartesian >= 0;
+  for (int corner = 0; binary && corner < 3; ++corner) {
+    const SourceWitness& witness = *witness_records[corner];
+    binary = witness.stratum == SourceStratum::kNone ||
+        (witness.stratum == SourceStratum::kSegment &&
+         (witness.parameters[0] == 0.0 || witness.parameters[0] == 1.0));
+  }
   Expansion corners[3][3];
   for (int corner = 0; corner < 3; ++corner) {
     if (!plane_admits(plane_row, carriers[corner]) ||
-        !witness_position(*witness_records[corner], carriers[corner], corners[corner])) {
+        (!binary && !witness_position(*witness_records[corner], carriers[corner], corners[corner]))) {
       return false;
     }
   }
@@ -966,9 +1020,20 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   Dyadic physical_normal[3];
   if (metric_active_) affine_projection_normal(plane, metric_, physical_normal);
   else plane_normal(plane, normal);
-  const int side = metric_active_
-      ? projected_orientation(physical_normal, corners[0], corners[1], corners[2])
-      : projected_orientation(normal, corners[0], corners[1], corners[2]);
+  ProjectedPoint projected[3];
+  int side;
+  if (binary) {
+    for (int corner = 0; corner < 3; ++corner) {
+      projected[corner] = cartesian_projection(carriers[corner], cartesian);
+    }
+    const int orientation2d = cartesian_orientation(projected[0], projected[1], projected[2]);
+    side = normal[cartesian].sign() * orientation2d;
+    if (orientation2d < 0) std::swap(projected[1], projected[2]);
+  } else {
+    side = metric_active_
+        ? projected_orientation(physical_normal, corners[0], corners[1], corners[2])
+        : projected_orientation(normal, corners[0], corners[1], corners[2]);
+  }
   if (side == 0 || side != orientation * group.orientation) return false;
   const Expansion* triangle[3] = {corners[0], side > 0 ? corners[1] : corners[2],
                                   side > 0 ? corners[2] : corners[1]};
@@ -976,12 +1041,23 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
                        prepared->coverage_index.valid();
   Dyadic exact_normal[3];
   if (indexed) {
-    for (int axis = 0; axis < 3; ++axis) {
-      exact_normal[axis] = metric_active_ ? physical_normal[axis] : exact::to_dyadic(normal[axis]);
+    if (cartesian >= 0) {
+      exact_normal[cartesian] = Dyadic(1.0);
+    } else {
+      for (int axis = 0; axis < 3; ++axis) {
+        exact_normal[axis] = metric_active_ ? physical_normal[axis] : exact::to_dyadic(normal[axis]);
+      }
     }
   }
   Expansion ends[2][3];
   const auto crosses_boundary = [&](const std::array<std::int32_t, 2>& edge) {
+    if (binary) {
+      const auto p = cartesian_projection(
+          source_points_.data() + 3 * static_cast<std::size_t>(edge[0]), cartesian);
+      const auto q = cartesian_projection(
+          source_points_.data() + 3 * static_cast<std::size_t>(edge[1]), cartesian);
+      return meets_open_triangle(p, q, projected, cartesian_orientation);
+    }
     for (int end = 0; end < 2; ++end) {
       const double* source = source_points_.data() +
           3 * static_cast<std::size_t>(edge[static_cast<std::size_t>(end)]);
@@ -997,12 +1073,17 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
     FacetCoverageBounds triangle_bounds{};
     const Dyadic unit(1.0);
     for (int corner = 0; corner < 3; ++corner) {
-      Dyadic exact_point[3];
-      for (int axis = 0; axis < 3; ++axis) {
-        exact_point[axis] = exact::to_dyadic(corners[corner][axis]);
+      FacetCoverageBounds point_bounds;
+      if (binary) {
+        point_bounds = cartesian_bounds(carriers[corner], cartesian);
+      } else {
+        Dyadic exact_point[3];
+        for (int axis = 0; axis < 3; ++axis) {
+          exact_point[axis] = exact::to_dyadic(corners[corner][axis]);
+        }
+        point_bounds = projected_bounds(exact_normal, exact_point,
+                                        prepared->declared_projection_axis, unit);
       }
-      const auto point_bounds = projected_bounds(exact_normal, exact_point,
-                                                  prepared->declared_projection_axis, unit);
       if (corner == 0) {
         triangle_bounds = point_bounds;
       } else {
@@ -1028,7 +1109,9 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   // n.((q - p) x (3 centroid - 3 p)) has the sign of the centroid's side.
   Expansion sum[3];
   for (int axis = 0; axis < 3; ++axis) {
-    sum[axis] = corners[0][axis] + corners[1][axis] + corners[2][axis];
+    sum[axis] = binary
+        ? Expansion(carriers[0][axis]) + Expansion(carriers[1][axis]) + Expansion(carriers[2][axis])
+        : corners[0][axis] + corners[1][axis] + corners[2][axis];
   }
   const auto contains_centroid = [&](std::int32_t row) {
     const double* points[3];
@@ -1036,6 +1119,29 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
       points[corner] = source_points_.data() +
                        3 * static_cast<std::size_t>(source_faces_[3 * static_cast<std::size_t>(row) +
                                                                   static_cast<std::size_t>(corner)]);
+    }
+    if (binary) {
+      const ProjectedPoint p[3]{
+          cartesian_projection(points[0], cartesian), cartesian_projection(points[1], cartesian),
+          cartesian_projection(points[2], cartesian)};
+      // A matching primitive contains the exact centroid regardless of its
+      // cyclic corner order (the source projection is nondegenerate).
+      const auto matches = [&](const ProjectedPoint& q) {
+        return q == projected[0] || q == projected[1] || q == projected[2];
+      };
+      if (matches(p[0]) && matches(p[1]) && matches(p[2])) return true;
+      const int x = (cartesian + 1) % 3, y = (cartesian + 2) % 3;
+      const int sense = cartesian_orientation(p[0], p[1], p[2]);
+      for (int edge = 0; edge < 3; ++edge) {
+        const auto& u = p[edge];
+        const auto& v = p[(edge + 1) % 3];
+        const Expansion dx = Expansion::difference(v[0], u[0]);
+        const Expansion dy = Expansion::difference(v[1], u[1]);
+        const Expansion cx = sum[x] - Expansion(u[0]).scaled(3.0);
+        const Expansion cy = sum[y] - Expansion(u[1]).scaled(3.0);
+        if ((dx * cy - dy * cx).sign() * sense < 0) return false;
+      }
+      return true;
     }
     if (group.orientation < 0) std::swap(points[1], points[2]);
     bool inside = true;
