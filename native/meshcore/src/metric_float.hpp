@@ -76,6 +76,11 @@ double tetra_quality(const double* corners, const double* metrics) noexcept;
 double tetra_quality(const double* corners, const double* metrics,
                      const double* log_determinants) noexcept;
 
+// The same score from the signed corner determinant and a sum of squared
+// edges measured and accumulated in tetrahedron corner order.
+double tetra_quality_from_measurements(double determinant, double squares,
+                                       const double* log_determinants) noexcept;
+
 // log det M as tetra_quality evaluates it, for a caller's per-vertex cache.
 double log_determinant(const double* metric) noexcept;
 

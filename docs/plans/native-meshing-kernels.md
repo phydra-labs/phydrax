@@ -501,6 +501,12 @@ and 1.612 s vs 0.356 s for anisotropic adaptation. The isotropic
 checkpoint `a20d61cb8f` took 3.467 s vs 0.280 s. The two refinement
 clocks still miss.
 
+Reusing relocation-star measurements left coordinates, connectivity,
+mesh, transition, lineage, stencil, metric, and evidence identities
+identical on all three 388-cell cases. In one before/after construction
+comparison, iso took 3.366 s then 2.989 s and aniso took 1.517 s then
+1.494 s. These are local Phydrax samples, not new paired MMG3D clocks.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a

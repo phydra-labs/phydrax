@@ -29,6 +29,7 @@ constexpr std::int64_t kLastStep = 2200;
 constexpr std::int64_t kAllCarriers = 54;
 constexpr std::uint8_t kMeasured = 1;
 constexpr std::uint8_t kNeighborFirst = 2;
+constexpr std::uint8_t kQualityReverse = 4;
 
 bool same_point(const double* a, const double* b) noexcept {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
@@ -117,7 +118,7 @@ bool RelocationSearch::raw_goal(double* goal) {
   return false;
 }
 
-bool RelocationSearch::floor_oriented(const double* position) const noexcept {
+bool RelocationSearch::floor_oriented(const double* position, double* determinants) const noexcept {
   double corners[12];
   for (std::int64_t cell = 0; cell < cell_count_; ++cell) {
     for (std::size_t slot = 0; slot < 4; ++slot) {
@@ -129,8 +130,49 @@ bool RelocationSearch::floor_oriented(const double* position) const noexcept {
     double relative = 0.0;
     relative_determinant(corners, determinant, relative);
     if (!(determinant > 0.0) || !(relative > determinant_floor_)) return false;
+    if (determinants != nullptr) determinants[cell] = determinant;
   }
   return true;
+}
+
+void RelocationSearch::prepare_quality() {
+  quality_logs_.reserve(static_cast<std::size_t>(point_count_));
+  quality_logs_.push_back(0.0);
+  for (std::int64_t row = 1; row < point_count_; ++row) {
+    quality_logs_.push_back(log_determinant(metrics_.data() + 9 * row));
+  }
+  const auto rows_count = static_cast<std::size_t>(point_count_);
+  quality_edges_.resize(static_cast<std::size_t>(cell_count_));
+  quality_squares_.reserve(2 * rows_count + 6 * quality_edges_.size());
+  quality_squares_.resize(2 * rows_count);
+  quality_determinants_.resize(quality_edges_.size());
+  for (std::size_t cell = 0; cell < quality_edges_.size(); ++cell) {
+    const auto* rows = cells_.data() + 4 * cell;
+    auto& edges = quality_edges_[cell];
+    std::size_t edge = 0;
+    for (std::size_t first = 0; first < 4; ++first) {
+      for (std::size_t second = first + 1; second < 4; ++second) {
+        const auto a = rows[first];
+        const auto b = rows[second];
+        auto& term = edges[edge++];
+        if (a != 0 && b != 0) {
+          const double fixed = length(point(a), point(b), metrics_.data() + 9 * a,
+                                      metrics_.data() + 9 * b);
+          term = quality_squares_.size();
+          quality_squares_.push_back(fixed * fixed);
+        } else if (a == b) {
+          term = 0;
+          quality_self_edge_ = true;
+        } else {
+          const auto neighbor = static_cast<std::size_t>(a == 0 ? b : a);
+          auto& flags = spoke_flags_[neighbor - 1];
+          const bool reverse = ((flags & kNeighborFirst) != 0) != (a != 0);
+          term = reverse ? rows_count + neighbor : neighbor;
+          if (reverse) flags |= kQualityReverse;
+        }
+      }
+    }
+  }
 }
 
 RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
@@ -165,36 +207,47 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
   const bool decreased = smaller(long_, before_long_) ||
                          (long_ == before_long_ && smaller(short_, before_short_));
   if (equal ? mode_.band_only : !decreased) return Verdict::kRejected;
-  if (!floor_oriented(position)) return Verdict::kRejected;
-  if (!equal && !mode_.report_quality && !shape) return Verdict::kAdmitted;
+  if (!equal && !mode_.report_quality && !shape) {
+    return floor_oriented(position) ? Verdict::kAdmitted : Verdict::kRejected;
+  }
 
-  // Prepare only on the first candidate that reaches the shape test.
-  if (quality_logs_.empty()) {
-    quality_logs_.reserve(static_cast<std::size_t>(point_count_));
-    quality_logs_.push_back(0.0);
-    for (std::int64_t row = 1; row < point_count_; ++row) {
-      quality_logs_.push_back(log_determinant(metrics_.data() + 9 * row));
-    }
+  // Band uses persistent endpoint order; the shape uses corner order.
+  if (quality_logs_.empty()) prepare_quality();
+  if (!floor_oriented(position, quality_determinants_.data())) return Verdict::kRejected;
+  const auto rows_count = static_cast<std::size_t>(point_count_);
+  for (std::size_t row = 1; row < rows_count; ++row) {
+    const double forward = lengths[row - 1];
+    quality_squares_[row] = forward * forward;
+    const auto flags = spoke_flags_[row - 1];
+    if ((flags & kQualityReverse) == 0) continue;
+    const double* neighbor = point(static_cast<std::int64_t>(row));
+    const double* tensor = metrics_.data() + 9 * row;
+    const double reverse = (flags & kNeighborFirst) != 0
+                               ? length(position, neighbor, metric, tensor)
+                               : length(neighbor, position, tensor, metric);
+    quality_squares_[rows_count + row] = reverse * reverse;
+  }
+  if (quality_self_edge_) {
+    const double self = length(position, position, metric, metric);
+    quality_squares_[0] = self * self;
   }
   quality_logs_.front() = log_determinant(metric);
 
   const bool mean_shape = shape && !mode_.minimum_shape;
-  double corners[12];
-  double tensors[36];
   double logs[4];
   double measure = 0.0;
   bool undefined = false;
-  for (std::int64_t cell = 0; cell < cell_count_; ++cell) {
+  for (std::size_t cell = 0; cell < quality_edges_.size(); ++cell) {
     for (std::size_t slot = 0; slot < 4; ++slot) {
-      const std::int64_t row = cells_[4 * static_cast<std::size_t>(cell) + slot];
-      const double* values = row == 0 ? position : point(row);
-      const double* tensor =
-          row == 0 ? metric : metrics_.data() + 9 * static_cast<std::size_t>(row);
-      for (std::size_t axis = 0; axis < 3; ++axis) corners[3 * slot + axis] = values[axis];
-      for (std::size_t entry = 0; entry < 9; ++entry) tensors[9 * slot + entry] = tensor[entry];
-      logs[slot] = quality_logs_[static_cast<std::size_t>(row)];
+      const auto row = static_cast<std::size_t>(cells_[4 * cell + slot]);
+      logs[slot] = quality_logs_[row];
     }
-    const double value = tetra_quality(corners, tensors, logs);
+    const auto& terms = quality_edges_[cell];
+    double squares = quality_squares_[terms[0]];
+    for (std::size_t edge = 1; edge < terms.size(); ++edge) {
+      squares += quality_squares_[terms[edge]];
+    }
+    const double value = tetra_quality_from_measurements(quality_determinants_[cell], squares, logs);
     if (shape && !std::isfinite(value)) return Verdict::kRejected;
     if (mean_shape) {
       measure += value;

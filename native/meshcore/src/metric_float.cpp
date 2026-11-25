@@ -206,14 +206,33 @@ double tetra_quality(const double* corners, const double* metrics) noexcept {
   return tetra_quality(corners, metrics, logs);
 }
 
+namespace {
+
+double mean_log_determinant(const double* log_determinants) noexcept {
+  double value = log_determinants[0];
+  for (std::size_t corner = 1; corner < 4; ++corner) {
+    value = value + log_determinants[corner];
+  }
+  return value * 0.25;
+}
+
+double finish_tetra_quality(double determinant, double squares, double mean_log) noexcept {
+  const double volume = magnitude(determinant) / 6.0;
+  const double metric_volume = volume * deterministic::exp(0.5 * mean_log);
+  if (!(metric_volume > 0.0 && squares > 0.0)) return 0.0;
+  return canonical(12.0 * deterministic::pow_two_thirds(3.0 * metric_volume) / squares);
+}
+
+}  // namespace
+
+double tetra_quality_from_measurements(double determinant, double squares,
+                                       const double* log_determinants) noexcept {
+  return finish_tetra_quality(determinant, squares, mean_log_determinant(log_determinants));
+}
+
 double tetra_quality(const double* corners, const double* metrics,
                      const double* log_determinants) noexcept {
-  double log_determinant = 0.0;
-  for (std::size_t corner = 0; corner < 4; ++corner) {
-    const double value = log_determinants[corner];
-    log_determinant = corner == 0 ? value : log_determinant + value;
-  }
-  log_determinant = log_determinant * 0.25;
+  const double average_log = mean_log_determinant(log_determinants);
   double squares = 0.0;
   bool first_edge = true;
   for (std::size_t first = 0; first < 4; ++first) {
@@ -225,10 +244,7 @@ double tetra_quality(const double* corners, const double* metrics,
       first_edge = false;
     }
   }
-  const double volume = magnitude(corner_determinant(corners)) / 6.0;
-  const double metric_volume = volume * deterministic::exp(0.5 * log_determinant);
-  if (!(metric_volume > 0.0 && squares > 0.0)) return 0.0;
-  return canonical(12.0 * deterministic::pow_two_thirds(3.0 * metric_volume) / squares);
+  return finish_tetra_quality(corner_determinant(corners), squares, average_log);
 }
 
 void tensor_properties(const double* tensor, bool& symmetric,

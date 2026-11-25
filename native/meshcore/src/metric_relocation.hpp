@@ -131,7 +131,8 @@ class RelocationSearch {
     return points_.data() + 3 * static_cast<std::size_t>(row);
   }
   bool raw_goal(double* goal);
-  bool floor_oriented(const double* position) const noexcept;
+  bool floor_oriented(const double* position, double* determinants = nullptr) const noexcept;
+  void prepare_quality();
   Verdict evaluate(const double* position, const double* metric, double* lengths,
                    double& quality);
 
@@ -158,6 +159,12 @@ class RelocationSearch {
   RelocationMode mode_;
   // Stationary corner logs are immutable; entry zero follows the candidate.
   std::vector<double> quality_logs_;
+  // Each cell indexes its six ordered terms: band-direction spokes, reverse
+  // spokes when needed, then stationary edges. Row zero is a repeated mover.
+  std::vector<std::array<std::size_t, 6>> quality_edges_;
+  std::vector<double> quality_squares_;
+  std::vector<double> quality_determinants_;
+  bool quality_self_edge_ = false;
 
   // The cursor: the pull and step of the next raw goal, the goals seen, the
   // stencils examined, and for a refining search the admitted goals and the

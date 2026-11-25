@@ -746,9 +746,10 @@
 - Native 3D boundary edits reuse exact source-facet coverage and rim
   indexes across edits of the same mesh. Witness, orientation, coverage,
   and rollback checks are unchanged.
-- Native metric relocation reuses stationary corner metric logarithmic
-  determinants within a candidate search. Quality reduction order,
-  transported metrics, and accepted edits are unchanged.
+- Native metric relocation reuses stationary corner log determinants and
+  stationary squared edge lengths within each search. Shape scoring reuses
+  the orientation determinant and band spoke measurements when their
+  direction agrees. Quality reduction order and accepted edits are unchanged.
 - Native metric adaptation skips an unused shape measurement when a
   relocation strictly improves the edge band. Shape still decides
   equal-band moves and is still reported by the relocation proposal API.
