@@ -140,15 +140,17 @@ struct Run {
   TetEditStatus status = TetEditStatus::kApplied;
 };
 
-Run adapt_constant_metric(TetMesh& mesh, std::span<const double> points,
-                          std::span<const std::int32_t> tetrahedra, double c,
-                          double lower, bool topology, bool relocation = true) {
+Run adapt_diagonal_metric(TetMesh& mesh, std::span<const double> points,
+                          std::span<const std::int32_t> tetrahedra,
+                          std::array<double, 3> diagonal, double lower, bool topology,
+                          bool relocation = true, std::span<const std::uint64_t> protected_edges = {}) {
   Run run;
   PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
   metric::AdaptInput input;
   input.source_points.assign(points.begin(), points.end());
-  const double tensor[9] = {c, 0, 0, 0, c, 0, 0, 0, c};
-  const double logarithm[9] = {std::log(c), 0, 0, 0, std::log(c), 0, 0, 0, std::log(c)};
+  const double tensor[9] = {diagonal[0], 0, 0, 0, diagonal[1], 0, 0, 0, diagonal[2]};
+  double logarithm[9];
+  PHX_CHECK(metric::logarithm(tensor, logarithm));
   const auto count = points.size() / 3;
   for (std::size_t row = 0; row < count; ++row) {
     input.source_metrics.insert(input.source_metrics.end(), tensor, tensor + 9);
@@ -181,6 +183,7 @@ Run adapt_constant_metric(TetMesh& mesh, std::span<const double> points,
   input.lower = lower;
   input.topology_operations = topology;
   input.relocation = relocation;
+  input.protected_edges.assign(protected_edges.begin(), protected_edges.end());
   run.status = metric::adapt_metric(mesh, input, run.output);
   PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
   return run;
@@ -204,7 +207,7 @@ void check_rounded_axis_edge_split() {
   const auto setup = mesh.build(points, cell, regions, faces, groups, {}, {}, {}, {});
   PHX_CHECK(setup == PHX_MC_OK);
   if (setup != PHX_MC_OK) return;
-  const Run run = adapt_constant_metric(mesh, points, cell, 9.0, kLower, true, false);
+  const Run run = adapt_diagonal_metric(mesh, points, cell, {9.0, 9.0, 9.0}, kLower, true, false);
   PHX_CHECK(run.status == TetEditStatus::kApplied);
   PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
   PHX_CHECK(run.after.cells.size() == 2);
@@ -296,7 +299,7 @@ Run adapt_cube(int n, double c, CubeBoundary boundary = CubeBoundary::kUnbound,
   }
   PHX_CHECK(mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides, {}, {}, {},
                        {}, &source, fixed) == PHX_MC_OK);
-  return adapt_constant_metric(mesh, cube.points, cube.tetrahedra, c, lower, !witnessed);
+  return adapt_diagonal_metric(mesh, cube.points, cube.tetrahedra, {c, c, c}, lower, !witnessed);
 }
 
 // The result's contract, checked from its snapshot alone.
@@ -399,7 +402,8 @@ void completed_shape_cannot_reopen_the_requested_band() {
   PHX_CHECK(mesh.build(points, tetrahedra, regions, faces, groups, {}, {}, {}, {},
                        &source, {}) == PHX_MC_OK);
   constexpr double lower = .9;
-  const Run run = adapt_constant_metric(mesh, points, tetrahedra, 1.0, lower, true, false);
+  const Run run = adapt_diagonal_metric(mesh, points, tetrahedra, {1.0, 1.0, 1.0}, lower,
+                                        true, false);
   PHX_CHECK(run.status == TetEditStatus::kApplied);
   PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
   PHX_CHECK(run.output.counters.splits == 1);
@@ -613,6 +617,44 @@ void metric_uses_the_last_available_target_cell_ids() {
   PHX_CHECK(assigned == expected);
 }
 
+void tensor_adaptation_retries_after_coarse_exhaustion() {
+  constexpr double height = 1.0 / 512.0;
+  constexpr double axial_metric = 0.5 + 1.0 / 1024.0;
+  const std::array<double, 15> points{1, 0, 0, -.5, 1, 0, -.5, -1, 0, 0, 0, 1, 0, 0, height};
+  const std::array<std::int32_t, 16> cells{4, 1, 2, 3, 0, 4, 2, 3, 0, 1, 4, 3, 0, 1, 2, 4};
+  const std::array<std::int32_t, 12> faces{1, 2, 3, 0, 3, 2, 0, 1, 3, 0, 2, 1};
+  const std::array<std::int32_t, 4> groups{0, 1, 2, 3};
+  const std::array<std::int32_t, 4> regions{};
+  const std::array<std::int8_t, 5> fixed{1, 1, 1, 1, 0};
+  const std::array<std::uint64_t, 18> edges{0, 1, 0, 2, 0, 3, 0, 4, 1,
+                                          2, 1, 3, 1, 4, 2, 3, 2, 4};
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  const auto setup = mesh.build(points, cells, regions, faces, groups, {}, {}, {}, {},
+                                nullptr, fixed);
+  PHX_CHECK(setup == PHX_MC_OK);
+  if (setup != PHX_MC_OK) return;
+
+  // Only the near-normal spoke to the apex is measured. The other three
+  // contribute symmetric pulls, and no adjacent mover is free for a cage.
+  // The coarse downward steps cross the base; a finer step can close the
+  // band while keeping all four cells on the original side of that face.
+  PHX_CHECK(std::sqrt(axial_metric) * (1.0 - height) < kLower);
+  const Run run = adapt_diagonal_metric(mesh, points, cells, {1.0, 0.75, axial_metric},
+                                        kLower, false, true, edges);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  PHX_CHECK(run.output.counters.relocations > 0);
+  PHX_CHECK(run.after.cells.size() == 4);
+  const auto mover = std::ranges::find(run.after.vertices, 4, &phx::mc::TetSnapshotVertex::id);
+  PHX_CHECK(mover != run.after.vertices.end());
+  if (mover == run.after.vertices.end()) return;
+  const auto& p = mover->carrier;
+  PHX_CHECK(p[2] > 0.0 && p[2] < height);
+  const double measured = std::sqrt(p[0] * p[0] + 0.75 * p[1] * p[1] +
+                                    axial_metric * (1.0 - p[2]) * (1.0 - p[2]));
+  PHX_CHECK(measured >= kLower && measured <= kUpper);
+}
+
 }  // namespace
 
 int main() {
@@ -625,6 +667,7 @@ int main() {
   check_witnessed_boundary_relocation();
   check_source_only_seam_relocates_across_a_primitive();
   check_source_only_seam_refuses_a_tilted_declaration();
+  tensor_adaptation_retries_after_coarse_exhaustion();
   metric_worksets_ignore_physical_vertex_order();
   metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");
