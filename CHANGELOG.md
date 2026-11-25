@@ -25,6 +25,9 @@
 - Tetrahedral ring reconnection rejects forbidden diagonals before searching
   their subpolygons. It retains the same admissible triangulations, tie order,
   quality arithmetic and edit evidence.
+- Completed scalar tetrahedral refinement directs its bounded polishing
+  sweeps to lower-quality stars before the worst-cell repairs. The strict
+  edge band is unchanged; the selected edits and output identities can change.
 - Native CAD solids with compatible hard whole-wall protection use the
   native construction and two-sided certificate, reporting the protected
   bound after proof. Newly admitted requests can change mesh identity.
