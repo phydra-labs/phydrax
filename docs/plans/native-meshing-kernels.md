@@ -717,11 +717,11 @@ single quiet run of the final integrated tree.
 
 | Route | Matched comparison | Limit |
 |---|---|---|
-| F2 linear CAD | Original large quadric on `7e00f7048c`: native 1.125606 s versus HXT 1.132836 s at eight workers, all quality gates pass | Quiet construction comparison (board `93155cbf`), not proof latency |
+| F2 linear CAD | Original large quadric on `7e00f7048c`: native 1.125606 s versus HXT 1.132836 s at eight workers, all quality gates pass | Quiet construction comparison (board `93155cbf`), not proof latency. An earlier loaded campaign passed 15 of 16 clocks, with identical native mesh/evidence banks per size and no registered quality misses |
 | F10 affine point location | `2c2f3e5890`: all eight comparisons against libigl 2.6.3 pass; eight-worker 100k and 1M clocks are 18.229/19.586 ms and 128.491/179.771 ms | Query only; both tools have zero wrong, missed, or extra locations |
 | F6b no-op adaptation | Original Box-12/25/55, 12/12 against Omega_h 9.34.13 with attested 1/2/4/8 OpenMP teams; eight-worker native/reference minima 2.538/2.771, 14.418/17.315, and 119.839/144.523 ms | Unchanged source and metric IDs; edited F6 is separate |
 | F8 unlayered hex-dominant | Original sphere and quadric, 4/4 each against actual `snappyHexMesh` ranks with invariant native outputs | cfMesh did not run matched teams |
-| F8 two layers | Original sphere's skewness improves to 0.495351 versus 0.497436 with the thickness-floor guard | Eight-rank timing under load is not qualified; layered quadric reference fails the independent decomposition check |
+| F8 two layers | Original sphere against eight actual `snappyHexMesh` ranks: native skewness 0.495351 versus 0.497436; both native layers meet their projected thickness floors | Native 5.115514 s beats the live 5.193225 s but misses the historical 5.066336 s limit. One-minute load 6.892→6.282 excludes quiet acceptance. Layered quadric reference fails the independent decomposition check |
 | F9 prism layers | Original sphere h = 0.1 passes live Gmsh at 1/2/4/8 requests with native output invariance | cfMesh output on the other layer rows fails its own `checkMesh` gate |
 
 Raw receipts are in the coordination board under
