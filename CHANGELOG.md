@@ -16,6 +16,9 @@
   authored vertices, hole domains and constraint ancestry are retained.
 - Quadratic geometry validity prepares one ordered sparse derivative stencil
   per bank without changing exact verdicts, bounds, or geometry.
+- Tetrahedral ring reconnection rejects forbidden diagonals before searching
+  their subpolygons. It retains the same admissible triangulations, tie order,
+  quality arithmetic and edit evidence.
 - Native CAD solids with compatible hard whole-wall protection use the
   native construction and two-sided certificate, reporting the protected
   bound after proof. Newly admitted requests can change mesh identity.
