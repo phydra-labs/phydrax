@@ -571,6 +571,51 @@ separate one-ULP crossing fixture. Wider dyadic coordinates now use the
 native validity proof with the same directed determinant bounds and map
 digests. Separate certification and transfer took 10.864 s.
 
+The scalar constructor keeps only still-refining tetrahedra in its midpoint
+search. It proposes site moves from the linearized edge-length and shape
+constraints, keeps a move only if the nonlinear objective improves, and
+repairs the remaining vertex stars. A failed local repair can still trigger
+a full solve. Neither the model nor its stopping rule certifies the mesh:
+the commit checks the transported lengths, wall coverage, positive
+orientations, and exact material ancestry on the proposed connectivity.
+
+For a completed single-region box with no protected edges or segments, the
+transaction returns measurements from the committed cells. Band lengths use
+stable endpoint ID order; cell quality uses the cell's corner order, which
+can differ by a rounding bit for a graded metric. Region volume is summed
+in stable cell ID order. Other edits still measure the published mesh.
+This avoids a second edge census without changing public evidence identity.
+
+At `199cb7ad95` all three registered 10,452-source-cell comparisons completed
+with no inverted cells, out-of-band edges, or representability failures.
+The table uses the minimum of three matched single-thread constructions;
+MMG3D did not perform Phydrax certification or transfer.
+
+| Field | Cells | Construction / MMG3D (s) | Worst shape / MMG3D | Mean shape / MMG3D | Midpoint band share / MMG3D | Certification and transfer (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| Scalar | 216,819 | 1.983116 / 2.020 | .603730 / .449760 | .867248 / .844584 | .824690 / .774439 | 9.286741 |
+| Tensor | 17,280 | .698390 / 1.204 | .438163 / .336147 | .858165 / .847227 | .980082 / .934636 | 1.695569 |
+| Coarsening | 1,842 | 1.113186 / .337 rerun | .609989 / .474811 | .831027 / .82651 | .870894 / .79391 | 1.042495 |
+
+The scalar samples were 2.074463, 1.983116 and 1.996572 s; its timing win is
+small. Coarsening passes the approved 1.3195 s ceiling, not the raw MMG3D
+clock. On the 388-cell scalar crop the constructor produced 6,281 cells in
+.073428 s versus .282 s, worst shape .603876 versus .520730, mean .857148
+versus .839835, and midpoint share .849226 versus .837952. Result, stencil,
+lineage, and evidence IDs were unchanged across worker requests 1/2/4/8.
+On these four cases the exhaustive and fused consumers on the same candidate
+mesh agreed on every public evidence field and all nine result identities.
+These measurements do not establish performance at larger sizes.
+
+The same 388-cell tensor crop produces 200 cells with minimum shape
+.783146 versus .297498, mean .868128 versus .677317, and midpoint share
+.994819 versus .422650. Construction took .554119, .022225 and .021946 s;
+the first call was slower than MMG3D's .347 s minimum. On the coarsening
+crop, construction took .076769 s at best versus .206 s, worst shape
+.602177 versus .581358, with all science gates met. MMG3D 5.8.0 ran three
+times per field on the same crop inputs; each final output mesh matched
+the independently scored reference file byte-for-byte.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a

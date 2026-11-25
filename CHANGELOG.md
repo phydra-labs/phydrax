@@ -18,6 +18,10 @@
   `TetraMetricEvidence.retriangulations` distinguishes it from
   local tetrahedral edits. The counter is always stored but contributes to
   the evidence fingerprint only when at least one retessellation committed.
+  Wider initial site spacing and local correction can change the scalar
+  output mesh and its IDs. Eligible completed boxes now reuse committed
+  measurements instead of rebuilding the full edge census; for the same
+  mesh this preserves every public metric evidence field and fingerprint.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;
