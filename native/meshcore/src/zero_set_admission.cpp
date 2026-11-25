@@ -921,12 +921,19 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
 // the surface, down to a target diameter of radius / 2, evaluating at most
 // request.cover_budget boxes. Every zero of f in the domain lies in a leaf
 // (the tree's inclusion), so when no leaf is left outside, every zero lies
-// within `bound` (the largest leaf reach, < radius) of the surface.
-// `outside` counts the leaves left outside, -1 when the target level exceeds
-// the tree's, -2 when the run would exceed the budget; `boxes` accumulates
-// the boxes evaluated.
+// within `bound` (the largest leaf reach, < radius) of the surface. A leaf
+// holding a zero at distance delta from the surface is accepted only once its
+// diameter is below about radius - delta, so when every refused leaf's reach
+// is within one leaf diameter of `radius`, the cover is run again down to
+// half the slack between `radius` and `forward` (the proved surface to zero
+// set distance, which the reverse distance typically matches), never past
+// the tree's last level. A refused leaf farther out keeps the refusal
+// without the finer run. `outside` counts the leaves left outside by the
+// last run, -1 when radius / 2 exceeds the tree's level, -2 when a run would
+// exceed the budget; `boxes` accumulates the boxes evaluated by both runs.
 int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshSource& surface,
-                     double radius, int64_t& outside, double& bound, int64_t& boxes) {
+                     double radius, double forward, int64_t& outside, double& bound,
+                     int64_t& boxes) {
   const double* lower = request.domain;
   const double* upper = request.domain + 3;
   const phx_mc_interval_box_program& field = request.value;
@@ -935,7 +942,6 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
       field.index_count,     field.parameters,        field.parameter_count,
       field.workspace_lower, field.workspace_upper,   field.workspace_size,
       field.outputs[0],      field.guards,            field.guard_count};
-  bound = 0;
   const auto reach = [&](const std::array<double, 6>& box) {
     return box_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]});
   };
@@ -946,33 +952,52 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
     return true;
   };
   // A radius whose target level exceeds the tree's limit cannot be covered.
-  const int32_t target = phx::mc::dyadic_target_level(lower, upper, 0.5 * radius);
-  if (target > phx::mc::kMaximumBoxTreeLevel) {
+  const int32_t coarsest = phx::mc::dyadic_target_level(lower, upper, 0.5 * radius);
+  if (coarsest > phx::mc::kMaximumBoxTreeLevel) {
     outside = -1;
     return PHX_MC_OK;
   }
   std::vector<phx::mc::DyadicLeaf> leaves;
-  int64_t evaluated = 0;
-  const int32_t status = phx::mc::possible_zero_leaves(interval, lower, upper, target, &accept,
-                                                       request.cover_budget, evaluated, leaves);
-  boxes += evaluated;
-  if (status == PHX_MC_CAPACITY_EXCEEDED) {
-    outside = -2;
-    return PHX_MC_OK;
-  }
-  if (status != PHX_MC_OK) return status;
-  // Leaves the predicate did not accept: refused at the target level, or
-  // stopped at the representability limit before it was offered.
-  outside = 0;
-  for (const phx::mc::DyadicLeaf& leaf : leaves) {
-    if (leaf.accepted) continue;
-    const double r = reach(leaf.box);
-    if (r < radius)
-      bound = std::max(bound, r);
-    else
+  bool near = true;
+  const auto run = [&](int32_t target) -> int32_t {
+    bound = 0;
+    leaves.clear();
+    int64_t evaluated = 0;
+    const int32_t status = phx::mc::possible_zero_leaves(interval, lower, upper, target, &accept,
+                                                         request.cover_budget, evaluated, leaves);
+    boxes += evaluated;
+    if (status == PHX_MC_CAPACITY_EXCEEDED) {
+      outside = -2;
+      return PHX_MC_OK;
+    }
+    if (status != PHX_MC_OK) return status;
+    // Leaves the predicate did not accept: refused at the target level, or
+    // stopped at the representability limit before it was offered.
+    outside = 0;
+    near = true;
+    for (const phx::mc::DyadicLeaf& leaf : leaves) {
+      if (leaf.accepted) continue;
+      const double r = reach(leaf.box);
+      if (r < radius) {
+        bound = std::max(bound, r);
+        continue;
+      }
       ++outside;
-  }
-  return PHX_MC_OK;
+      const Point low{leaf.box[0], leaf.box[1], leaf.box[2]};
+      const Point high{leaf.box[3], leaf.box[4], leaf.box[5]};
+      const double diameter = norm_upper(enclosed_difference(high, low));
+      near = near && r - diameter < radius;
+    }
+    return PHX_MC_OK;
+  };
+  int32_t status = run(coarsest);
+  if (status != PHX_MC_OK || outside <= 0 || !near) return status;
+  const double slack = radius - forward;
+  if (!(slack > 0)) return PHX_MC_OK;
+  const int32_t finer = std::min(phx::mc::kMaximumBoxTreeLevel,
+                                 phx::mc::dyadic_target_level(lower, upper, 0.5 * slack));
+  if (finer <= coarsest) return PHX_MC_OK;
+  return run(finer);
 }
 
 // Zero set -> surface (see phx_mc_zero_set_certify), by one of two proofs.
@@ -983,15 +1008,17 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
 // alone, reverse = its bound. Proof 1 stands only within the tolerance (else
 // the cover alone is tried). With `wants_room`, a tube proof that holds but
 // bounds the zero set beyond the tolerance stops there instead (UNRESOLVED,
-// *wants_room set): the surface needs room, not the cover alone. counters
-// receives (tube triangles refused in its last round; cover leaves left
-// outside by the last cover run, -1 or -2 as cover_within, -3 when a surface
-// vertex lies outside the domain; the proof, 1 tube or 2 cover; boxes
-// evaluated).
+// *wants_room set): the surface needs room, not the cover alone. The cover
+// alone refines into the slack left by `forward`, the proved surface to zero
+// set distance (see cover_within); the tube's cover keeps radius / 2.
+// counters receives (tube triangles refused in its last round; cover leaves
+// left outside by the last cover run, -1 or -2 as cover_within, -3 when a
+// surface vertex lies outside the domain; the proof, 1 tube or 2 cover;
+// boxes evaluated).
 int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
                          const std::vector<Point>& points, const std::vector<Triangle>& triangles,
                          const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
-                         double& reverse, int64_t* counters, bool* wants_room) {
+                         double forward, double& reverse, int64_t* counters, bool* wants_room) {
   // The cover proves every zero in the domain near the surface; a surface
   // that leaves the domain is not what that proves.
   const double* lower = request.domain;
@@ -1011,7 +1038,7 @@ int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
   if (surface.bind(points, triangles) != PHX_MC_OK) return PHX_MC_INTERNAL_ERROR;
   double bound = 0;
   if (status == PHX_MC_OK) {
-    status = cover_within(request, surface, tube.rho, counters[1], bound, counters[3]);
+    status = cover_within(request, surface, tube.rho, 0.0, counters[1], bound, counters[3]);
     if (status != PHX_MC_OK) return status;
     if (counters[1] == 0 && std::min(tube.reverse, bound) <= request.tolerance) {
       reverse = std::min(tube.reverse, bound);
@@ -1023,7 +1050,8 @@ int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
       return PHX_MC_UNRESOLVED;
     }
   }
-  status = cover_within(request, surface, request.tolerance, counters[1], bound, counters[3]);
+  status = cover_within(request, surface, request.tolerance, forward, counters[1], bound,
+                        counters[3]);
   if (status != PHX_MC_OK) return status;
   if (counters[1] != 0) return PHX_MC_UNRESOLVED;
   reverse = bound;
@@ -1158,13 +1186,14 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   // repaired into the tighter band once (before any cover-alone run) and
   // both directions are decided again.
   bool wants_room = false;
-  status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
-                            request.counters + 6, certified.rounds == 1 ? &wants_room : nullptr);
+  status = zero_set_reverse(request, points, triangles, value, gradient, certified.distance,
+                            reverse, request.counters + 6,
+                            certified.rounds == 1 ? &wants_room : nullptr);
   if (wants_room) {
     status = forward(true);
     if (status != PHX_MC_OK) return status;
-    status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
-                              request.counters + 6, nullptr);
+    status = zero_set_reverse(request, points, triangles, value, gradient, certified.distance,
+                              reverse, request.counters + 6, nullptr);
   }
   if (status != PHX_MC_OK) return status;
   // Proved triangles are within the tolerance; carried triangles keep their

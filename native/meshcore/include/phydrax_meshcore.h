@@ -2671,6 +2671,9 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * the surface (box_reach, zero_set_tube.hpp) is below a radius D, and boxes
  * are subdivided otherwise down to a target diameter of D / 2; with no leaf
  * left outside, every zero lies within the largest accepted bound (< D).
+ * When the cover alone leaves only leaves whose bound is within one leaf
+ * diameter of D, it runs again down to half of D minus the proved forward
+ * distance (within the box tree's limit).
  * Two proofs: (1, tube) the tube of the surface (zero_set_tube.hpp: segments
  * y +- w(y) along interpolated vertex normals of length edge_length, adapted
  * by doubling or halving, on which f is strictly monotone with one zero, and

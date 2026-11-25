@@ -2624,6 +2624,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The zero-set certificate's cover-alone reverse proof runs once more, down
+  to half the slack between the tolerance and the proved forward distance,
+  when every refused leaf lies within one leaf diameter of the tolerance.
+  Coarse surfaces of sharp CSG fields, such as an ellipsoid united with
+  itself, now certify both ways. Proofs that already passed are unchanged.
 - Linear prism coordinate proofs verify that the retained tabulator uses the
   canonical triangle coefficients and axial nodes before reusing a cached
   basis. Altered operands leave the cell unresolved. Canonical prisms build
