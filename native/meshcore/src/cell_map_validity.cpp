@@ -1,5 +1,5 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// phx_mc_cell_map_validity: the exact validity proof of dof-linear polynomial
+// phx_mc_certify_cell_maps: the exact validity proof of dof-linear polynomial
 // cell maps (affine simplices, multilinear boxes and P1 prisms in three dimensions),
 // reproducing bit for bit the decisions, directed determinant endpoints and
 // exact-map digests of the rational per-cell proof
@@ -176,24 +176,33 @@ Big operator*(const Big& a, const Big& b) {
   return out;
 }
 
-Big shift_left(const Big& a, std::int64_t bits) {
-  if (a.zero() || bits == 0) return a;
+Big shift_left(const std::uint64_t* limb, int size, bool negative, std::int64_t bits) {
+  Big out;
+  if (size == 0) return out;
+  out.negative = negative;
+  if (bits == 0) {
+    out.size = size;
+    for (int index = 0; index < size; ++index) out.limb[index] = limb[index];
+    return out;
+  }
   const std::int64_t length =
-      (a.size - 1) * 64 + (64 - std::countl_zero(a.limb[a.size - 1])) + bits;
+      (size - 1) * 64 + (64 - std::countl_zero(limb[size - 1])) + bits;
   if (length > 64 * kLimbs) throw Undecided{};
   const std::int64_t words = bits / 64;
   const int rest = static_cast<int>(bits % 64);
-  Big out;
-  out.negative = a.negative;
   out.size = static_cast<int>((length + 63) / 64);
   std::fill(out.limb.begin(), out.limb.begin() + out.size, 0);
-  for (int index = 0; index < a.size; ++index) {
+  for (int index = 0; index < size; ++index) {
     const std::int64_t at = index + words;
-    if (at < out.size) out.limb[at] |= a.limb[index] << rest;
-    if (rest != 0 && at + 1 < out.size) out.limb[at + 1] |= a.limb[index] >> (64 - rest);
+    if (at < out.size) out.limb[at] |= limb[index] << rest;
+    if (rest != 0 && at + 1 < out.size) out.limb[at + 1] |= limb[index] >> (64 - rest);
   }
   out.trim();
   return out;
+}
+
+Big shift_left(const Big& a, std::int64_t bits) {
+  return shift_left(a.limb.data(), a.size, a.negative, bits);
 }
 
 std::int64_t bit_length(const Big& a) noexcept {
@@ -270,10 +279,10 @@ void append_decimal(const Big& a, char*& out) {
     append_unsigned(a.zero() ? 0 : a.limb[0], out);
     return;
   }
-  std::array<std::uint64_t, kLimbs> work{};
+  std::array<std::uint64_t, kLimbs> work;
   std::copy_n(a.limb.begin(), a.size, work.begin());
   int size = a.size;
-  std::array<std::uint64_t, 2 * kLimbs> chunks{};  // base 10^19, least significant first
+  std::array<std::uint64_t, 2 * kLimbs> chunks;  // base 10^19, least significant first
   int count = 0;
   constexpr std::uint64_t kBase = UINT64_C(10000000000000000000);
   while (size > 0) {
@@ -959,15 +968,22 @@ bool prove_prism(const std::array<Expression, 3>& axes, std::int64_t scale, doub
   return true;
 }
 
+// A nonzero packed reference is ±(index + 1), with the sign of its value.
+std::int64_t wide_index(std::int64_t reference) noexcept {
+  return reference > 0 ? reference - 1 : -(reference + 1);
+}
+
 constexpr std::size_t kCellChunk = 16;
 
 }  // namespace
 
-extern "C" int32_t phx_mc_cell_map_validity(
+extern "C" int32_t phx_mc_certify_cell_maps(
     int32_t domain, int64_t dof_count, const int64_t* term_starts,
     const int32_t* term_exponents, const int64_t* term_numerators,
     int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
+    int64_t wide_count, const int16_t* wide_exponents, const int64_t* wide_offsets,
+    int64_t limb_count, const uint64_t* wide_limbs,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
@@ -975,17 +991,45 @@ extern "C" int32_t phx_mc_cell_map_validity(
         kind == nullptr || kind_length < 1 || kind_length > 64 || row_count < 0 ||
         cell_count < 0 || basis_denominator_log2 < 0 || basis_denominator_log2 > 64 ||
         !(floor >= 0.0) || !(floor < 1.0) ||
+        dof_count == std::numeric_limits<int64_t>::max() ||
+        !phx::mc::addressable(dof_count + 1, 1, sizeof(int64_t)) ||
         !phx::mc::addressable(row_count, 3, sizeof(int64_t)) ||
         !phx::mc::addressable(cell_count, dof_count, sizeof(int64_t)) ||
         !phx::mc::addressable(cell_count, 16, 1) ||
+        wide_count < 0 || wide_count == std::numeric_limits<int64_t>::max() ||
+        !phx::mc::addressable(wide_count + 1, 1, sizeof(int64_t)) ||
+        !phx::mc::addressable(limb_count, 1, sizeof(uint64_t)) ||
+        limb_count < wide_count || wide_count < limb_count / kLimbs + (limb_count % kLimbs != 0) ||
+        (wide_count > 0 &&
+         (wide_exponents == nullptr || wide_offsets == nullptr || wide_limbs == nullptr)) ||
         (row_count > 0 && (significands == nullptr || exponents == nullptr)) ||
         (cell_count > 0 && (routes == nullptr || decided == nullptr || status == nullptr ||
                             lower == nullptr || upper == nullptr || digests == nullptr)) ||
         parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    if (wide_count > 0) {
+      if (wide_offsets[0] != 0 || wide_offsets[wide_count] != limb_count) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      for (int64_t i = 0; i < wide_count; ++i) {
+        const int64_t start = wide_offsets[i], end = wide_offsets[i + 1];
+        if (start < 0 || end <= start || end > limb_count || end - start > kLimbs ||
+            wide_exponents[i] == sparse_exponent || (wide_limbs[start] & 1) == 0 ||
+            wide_limbs[end - 1] == 0) {
+          return PHX_MC_INVALID_INPUT;
+        }
+      }
+    }
+    for (int64_t flat = 0; flat < 3 * row_count; ++flat) {
+      if (exponents[flat] != sparse_exponent) continue;
+      const int64_t reference = significands[flat];
+      // Check the signed range without taking abs(INT64_MIN).
+      if (reference < -wide_count || reference > wide_count) return PHX_MC_INVALID_INPUT;
+    }
     const std::int64_t term_count = term_starts[dof_count];
-    if (term_starts[0] != 0 || term_count < 0 ||
+    if (term_starts[0] != 0 || !phx::mc::addressable(term_count, 3, sizeof(int32_t)) ||
+        !phx::mc::addressable(term_count, 1, sizeof(int64_t)) ||
         (term_count > 0 && (term_exponents == nullptr || term_numerators == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1027,27 +1071,42 @@ extern "C" int32_t phx_mc_cell_map_validity(
                ++cell) {
             decided[cell] = 0;
             const int64_t* route = routes + cell * dof_count;
-            bool dense = true;
+            bool known = true;
             std::int64_t minimum = std::numeric_limits<std::int64_t>::max();
-            for (int64_t dof = 0; dof < dof_count && dense; ++dof) {
+            for (int64_t dof = 0; dof < dof_count && known; ++dof) {
               for (int axis = 0; axis < 3; ++axis) {
                 const int64_t flat = 3 * route[dof] + axis;
-                if (exponents[flat] == sparse_exponent) {
-                  dense = false;
+                const int64_t significand = significands[flat];
+                const int16_t exponent = exponents[flat];
+                if (significand == 0) {
+                  if (exponent != sparse_exponent) continue;
+                  known = false;
                   break;
                 }
-                if (significands[flat] != 0)
-                  minimum = std::min<std::int64_t>(minimum, exponents[flat]);
+                const int16_t power = exponent == sparse_exponent
+                                          ? wide_exponents[wide_index(significand)]
+                                          : exponent;
+                minimum = std::min<std::int64_t>(minimum, power);
               }
             }
-            if (!dense) continue;
+            if (!known) continue;
             if (minimum == std::numeric_limits<std::int64_t>::max()) minimum = 0;
             try {
               for (int axis = 0; axis < 3; ++axis) {
                 for (int64_t dof = 0; dof < dof_count; ++dof) {
                   const int64_t flat = 3 * route[dof] + axis;
-                  values[static_cast<std::size_t>(dof)] =
-                      shift_left(from_int64(significands[flat]), exponents[flat] - minimum);
+                  const int64_t significand = significands[flat];
+                  const int16_t exponent = exponents[flat];
+                  Big& value = values[static_cast<std::size_t>(dof)];
+                  if (exponent == sparse_exponent) {
+                    const int64_t index = wide_index(significand);
+                    const int64_t start = wide_offsets[index];
+                    value = shift_left(wide_limbs + start,
+                                       static_cast<int>(wide_offsets[index + 1] - start),
+                                       significand < 0, wide_exponents[index] - minimum);
+                  } else {
+                    value = shift_left(from_int64(significand), exponent - minimum);
+                  }
                 }
                 combine(basis, values, axes[axis]);
               }

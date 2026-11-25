@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import math
 import weakref
+from array import array
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -76,6 +77,7 @@ from ..geometry._rational import (
     binary64_difference_magnitude,
     binary64_norm_lower,
     binary64_norm_upper,
+    dyadic_entry,
     fraction_up,
 )
 from ..linalg import (
@@ -137,7 +139,7 @@ from ._exact_algebraic_geometry import (
     coefficient_endpoint,
     RadicalElement,
 )
-from ._exact_coordinate_bank import _SPARSE, ExactCoordinateBank
+from ._exact_coordinate_bank import _EXPONENT_LIMIT, _SPARSE, ExactCoordinateBank
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
 
@@ -2447,7 +2449,7 @@ def _native_cell_map_proofs(
 ]:
     """Native root proofs of P1 tetrahedra, Q1-type hexahedra and P1 prisms.
 
-    ``phx_mc_cell_map_validity`` reproduces exactly what the per-cell proof
+    ``phx_mc_certify_cell_maps`` reproduces exactly what the per-cell proof
     of ``_certify_source_block`` records (status, directed determinant
     endpoints, depth zero and the exact-map digest) for a 3D integer
     polynomial basis on exact dyadic coordinates: affine simplex, box and
@@ -2505,7 +2507,43 @@ def _native_cell_map_proofs(
 
     if not meshcore_available():
         return undecided
-    significands, exponents, _, _, _ = coordinates.canonical_parts()
+    significands, exponents, sparse_indices, _, sparse_values = (
+        coordinates.canonical_parts()
+    )
+    wide = None
+    if sparse_values:
+        packed_significands = None
+        # Pack only the wide magnitudes the kernel can read. Sparse entries
+        # we cannot encode retain their canonical zero (unknown) marker.
+        wide_exponents = array("h")
+        wide_offsets = array("q", [0])
+        wide_limbs = bytearray()
+        for flat_index, value in zip(sparse_indices, sparse_values, strict=True):
+            if type(value) is not Fraction:
+                continue
+            entry = dyadic_entry(value)
+            if entry is None:
+                continue
+            signed, exponent = entry
+            if not _SPARSE < exponent <= _EXPONENT_LIMIT:
+                continue
+            limb_count = (signed.bit_length() + 63) // 64
+            if not 1 <= limb_count <= 24:
+                continue
+            if packed_significands is None:
+                packed_significands = significands.copy().reshape(-1)
+            wide_exponents.append(exponent)
+            wide_limbs.extend(abs(signed).to_bytes(8 * limb_count, "little"))
+            wide_offsets.append(len(wide_limbs) // 8)
+            reference = len(wide_exponents)
+            packed_significands[flat_index] = reference if signed > 0 else -reference
+        if packed_significands is not None:
+            significands = packed_significands.reshape(exponents.shape)
+            wide = (
+                wide_exponents,
+                wide_offsets,
+                np.frombuffer(wide_limbs, dtype="<u8"),
+            )
     decided, status, lower, upper, digests = cell_map_validity(
         domain,
         tuple(
@@ -2523,6 +2561,7 @@ def _native_cell_map_proofs(
         routes,
         floor,
         parallelism=exact_kernel_parallelism(),
+        wide=wide,
     )
     return decided, status, lower, upper, digests
 
@@ -3542,7 +3581,7 @@ def certify_cell_geometry_validity(
     identity); it requires ``geometry`` to be the affine vertex map of a
     nonperiodic tetrahedral mesh. Otherwise every cell takes the rational proof
     and the native library is never required: where it is available,
-    ``phx_mc_cell_map_validity`` decides the root proof of P1 tetrahedra,
+    ``phx_mc_certify_cell_maps`` decides the root proof of P1 tetrahedra,
     affine or multilinear hexahedra and P1 prisms on exact dyadic coordinates with the
     rational proof's exact statuses, endpoints, depths and map digests, and
     the Python proof (the only fallback) takes every other cell.

@@ -3364,8 +3364,14 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
  * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
  * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
- * (significands, exponents: (row_count, 3); an exponent equal to
- * sparse_exponent marks a non-dyadic entry) and the integer basis phi_dof =
+ * (significands and exponents are shaped (row_count, 3)). An exponent equal to
+ * sparse_exponent makes the corresponding significand a packed reference:
+ * 0 denotes an unknown coordinate, ±(i + 1) denotes wide row i with that
+ * sign and exponent wide_exponents[i] (not sparse_exponent). Its magnitude
+ * is stored as 1..24 little-endian uint64_t limbs, odd with nonzero high
+ * limb, in [wide_offsets[i], wide_offsets[i + 1]). The wide_count + 1 offsets
+ * start at 0 and end at limb_count. For no wide rows, both counts are 0 and
+ * the three wide arrays may be null. The integer basis phi_dof =
  * sum over terms [term_starts[dof], term_starts[dof + 1]) of
  * term_numerators / 2^basis_denominator_log2 times xi^term_exponents (rows of
  * three). decided[k] = 1 when the root proof decides the cell: status[k] 0
@@ -3374,16 +3380,20 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * least-degree Bernstein control of det J on its support (multilinear,
  * prism). digests[k] (16
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
- * ASCII without quote or backslash). Undecided cells (subdivision, the
- * expanded Hadamard margin, values beyond the exact range) are left to the
- * rational proof with their other outputs unspecified. floor in [0, 1).
+ * ASCII without quote or backslash). Undecided cells (unknown coordinates,
+ * subdivision, the expanded Hadamard margin, values beyond the exact range)
+ * are left to the rational proof with their other outputs unspecified.
+ * floor in [0, 1). Invalid wide bank shape is PHX_MC_INVALID_ARGUMENT;
+ * malformed wide rows or references are PHX_MC_INVALID_INPUT.
  * Cells are decided in fixed chunks on parallelism >= 1 workers; results are
  * bit-identical for every parallelism. */
-PHX_MC_API int32_t phx_mc_cell_map_validity(
+PHX_MC_API int32_t phx_mc_certify_cell_maps(
     int32_t domain, int64_t dof_count, const int64_t* term_starts,
     const int32_t* term_exponents, const int64_t* term_numerators,
     int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
+    int64_t wide_count, const int16_t* wide_exponents, const int64_t* wide_offsets,
+    int64_t limb_count, const uint64_t* wide_limbs,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism);
 

@@ -1,5 +1,5 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// phx_mc_cell_map_validity against values of the rational per-cell proof
+// phx_mc_certify_cell_maps against values of the rational per-cell proof
 // (phydrax _certify_source_block): statuses, directed determinant endpoints
 // and BLAKE2b-128 exact-map digests of P1 tetrahedra and a Q1 hexahedron.
 #include <array>
@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -112,10 +113,11 @@ Result run(int32_t domain, const Basis& basis, const char* kind, const std::vect
   result.lower.assign(cells, 0.0);
   result.upper.assign(cells, 0.0);
   result.digests.assign(16 * cells, 0);
-  result.code = phx_mc_cell_map_validity(
+  result.code = phx_mc_certify_cell_maps(
       domain, dofs, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
       kind, static_cast<int64_t>(std::string(kind).size()),
       static_cast<int64_t>(points.size() / 3), significands.data(), exponents.data(), -32768,
+      0, nullptr, nullptr, 0, nullptr,
       cells, routes.data(), 0x1p-35, result.decided.data(), result.status.data(),
       result.lower.data(), result.upper.data(), result.digests.data(), parallelism);
   return result;
@@ -135,6 +137,86 @@ void check_tetrahedra() {
   // A non-dyadic entry leaves the cell to the rational proof.
   const Result sparse = run(0, p1(), "tetrahedron", kCube, {0, 1, 2, 4}, 2);
   PHX_CHECK(sparse.code == PHX_MC_OK && sparse.decided[0] == 0);
+}
+
+void check_wide_tetrahedra() {
+  constexpr int16_t kSparse = std::numeric_limits<int16_t>::min();
+  constexpr std::size_t kCellCount = 5;
+  const Basis basis = p1();
+  // Wide entries: + (1 + 2^-80) at y2 and - (1 + 2^-81) at y4.
+  std::array<int64_t, 21> significands{
+      0, 0, 0,  1, 1, 0,  1, 1, 0,  0, 0, 1,  1, -2, 0,  1, 0, 0,  0, 0, 0};
+  std::array<int16_t, 21> exponents{};
+  exponents[7] = exponents[13] = exponents[18] = kSparse;
+  std::array<int16_t, 2> wide_exponents{-80, -81};
+  std::array<int64_t, 3> wide_offsets{0, 2, 4};
+  std::array<uint64_t, 4> wide_limbs{1, 1u << 16, 1, 1u << 17};
+  const std::array<int64_t, 4 * kCellCount> routes{
+      0, 1, 2, 3,  0, 5, 2, 3,  0, 2, 4, 3,  0, 5, 1, 3,  0, 5, 6, 3};
+  std::array<int8_t, kCellCount> decided{};
+  std::array<int32_t, kCellCount> status{};
+  std::array<double, kCellCount> lower{}, upper{};
+  std::array<uint8_t, 16 * kCellCount> digests{};
+  const auto certify = [&](double floor) {
+    return phx_mc_certify_cell_maps(
+        0, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+        "tetrahedron", 11, 7, significands.data(), exponents.data(), kSparse,
+        2, wide_exponents.data(), wide_offsets.data(), 4, wide_limbs.data(), kCellCount,
+        routes.data(), floor, decided.data(), status.data(), lower.data(), upper.data(),
+        digests.data(), 1);
+  };
+
+  PHX_CHECK(certify(0.0) == PHX_MC_OK);
+  PHX_CHECK((decided == std::array<int8_t, kCellCount>{1, 1, 1, 1, 0}));
+  // Cancellation leaves the 80th bit, so the first cell is not flat.
+  PHX_CHECK(status[0] == 0 && lower[0] == 0x1p-80 && upper[0] == 0x1p-80);
+  PHX_CHECK(status[1] == 0 && lower[1] == 1.0 && upper[1] == std::nextafter(1.0, 2.0));
+  PHX_CHECK(status[2] == 1 && lower[2] == std::nextafter(-2.0, -3.0) && upper[2] == -2.0);
+  PHX_CHECK(status[3] == 0 && lower[3] == 1.0 && upper[3] == 1.0);
+  PHX_CHECK(hex(digests.data()) == "0b1ffa4809d3483da45318ad07fc452a");
+  PHX_CHECK(hex(digests.data() + 16) == "e55f52da8fded22fbadbb932298a66b1");
+  PHX_CHECK(hex(digests.data() + 32) == "60239ced0323fdf5e4ea798250831d0f");
+  PHX_CHECK(hex(digests.data() + 48) == "7f104a1bcbf59c5dd86df0a5dd5793ba");
+
+  // The first determinant is positive but smaller than floor times the
+  // product of column lengths. Rounding y2 to 1 instead makes it flat.
+  PHX_CHECK(certify(0x1p-80) == PHX_MC_OK);
+  PHX_CHECK(decided[0] == 1 && status[0] == 1 && lower[0] == 0x1p-80);
+  exponents[7] = 0;
+  PHX_CHECK(certify(0.0) == PHX_MC_OK);
+  PHX_CHECK(decided[0] == 1 && status[0] == 1 && lower[0] == 0.0 && upper[0] == 0.0);
+  exponents[7] = kSparse;
+
+  // An invalid reference on the last cell must not write even earlier results.
+  decided.fill(-1);
+  status.fill(-1);
+  lower.fill(-1.0);
+  upper.fill(-1.0);
+  digests.fill(0);
+  for (int64_t bad : {int64_t{3}, int64_t{-3}, std::numeric_limits<int64_t>::min()}) {
+    significands[18] = bad;
+    PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  }
+  significands[18] = 0;
+  wide_offsets[1] = 5;
+  PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  wide_offsets[1] = 2;
+  wide_offsets[2] = 3;
+  PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  wide_offsets[2] = 4;
+  wide_exponents[1] = kSparse;
+  PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  wide_exponents[1] = -81;
+  wide_limbs[0] = 2;
+  PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  wide_limbs[0] = 1;
+  wide_limbs[3] = 0;
+  PHX_CHECK(certify(0.0) == PHX_MC_INVALID_INPUT);
+  for (std::size_t cell = 0; cell < kCellCount; ++cell) {
+    PHX_CHECK(decided[cell] == -1 && status[cell] == -1);
+    PHX_CHECK(lower[cell] == -1.0 && upper[cell] == -1.0);
+  }
+  PHX_CHECK((digests == std::array<uint8_t, 16 * kCellCount>{}));
 }
 
 void check_hexahedron() {
@@ -166,27 +248,27 @@ void check_arguments() {
   int32_t status = 0;
   double lower = 0.0, upper = 0.0;
   uint8_t digest[16] = {};
-  PHX_CHECK(phx_mc_cell_map_validity(3, 4, basis.starts.data(), basis.exponents.data(),
-                                     basis.numerators.data(), 0, "tetrahedron", 11, 4,
-                                     significands.data(), exponents.data(), -32768, 1,
-                                     outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest, 1) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
-                                     basis.numerators.data(), 0, "tetrahedron", 11, 4,
-                                     significands.data(), exponents.data(), -32768, 1,
-                                     outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest, 1) == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
-                                     basis.numerators.data(), 0, "tet'", 4, 4,
-                                     significands.data(), exponents.data(), -32768, 0,
-                                     outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                3, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "tetrahedron", 11, 4, significands.data(), exponents.data(), -32768,
+                0, nullptr, nullptr, 0, nullptr, 1, outside.data(), 0.0, &decided, &status,
+                &lower, &upper, digest, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                0, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "tetrahedron", 11, 4, significands.data(), exponents.data(), -32768,
+                0, nullptr, nullptr, 0, nullptr, 1, outside.data(), 0.0, &decided, &status,
+                &lower, &upper, digest, 1) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                0, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "tet'", 4, 4, significands.data(), exponents.data(), -32768,
+                0, nullptr, nullptr, 0, nullptr, 0, outside.data(), 0.0, &decided, &status,
+                &lower, &upper, digest, 1) == PHX_MC_INVALID_ARGUMENT);
   // parallelism must be positive.
-  PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
-                                     basis.numerators.data(), 0, "tetrahedron", 11, 4,
-                                     significands.data(), exponents.data(), -32768, 0,
-                                     outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest, 0) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                0, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "tetrahedron", 11, 4, significands.data(), exponents.data(), -32768,
+                0, nullptr, nullptr, 0, nullptr, 0, outside.data(), 0.0, &decided, &status,
+                &lower, &upper, digest, 0) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // Byte-identical results for every parallelism, and across repeated runs at
@@ -257,6 +339,7 @@ void check_parallelism() {
 
 int main() {
   check_tetrahedra();
+  check_wide_tetrahedra();
   check_hexahedron();
   check_arguments();
   check_parallelism();

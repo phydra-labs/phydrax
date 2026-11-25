@@ -1,6 +1,6 @@
 """The native root proof of P1 tetrahedra, Q1 hexahedra and P1 prisms.
 
-``phx_mc_cell_map_validity`` decides the per-cell proof of
+``phx_mc_certify_cell_maps`` decides the per-cell proof of
 ``certify_cell_geometry_validity`` where its root proof suffices; the reference
 is the same certificate computed with every cell on the Python proof. Statuses,
 directed endpoints, depths, map digests and certificate identities must agree
@@ -9,23 +9,29 @@ bit for bit, including inverted, degenerate and sub-floor cells.
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 import pytest
 
 import phydrax._meshcore as meshcore_module
+import phydrax.discretization._affine_dyadic_validity as affine_validity_module
 import phydrax.discretization._cell_geometry_validity as validity_module
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import (
     CellBlock,
+    CellGeometrySpec,
     CellMesh,
     CellValidityCertificate,
     CellValidityPolicy,
     CellValidityStatus,
     certify_cell_geometry_validity,
 )
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.geometry._mesh_certificates import _same_tree_content
+from phydrax.meshing._curving import _exact_coordinate_bank_source_map
 
 
 pytestmark = pytest.mark.skipif(
@@ -88,6 +94,7 @@ def _hexahedra() -> CellMesh:
 
 def _python_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(meshcore_module, "meshcore_available", lambda: False)
+    monkeypatch.setattr(affine_validity_module, "meshcore_available", lambda: False)
 
 
 _WEDGE = np.asarray(
@@ -167,6 +174,70 @@ def test_native_root_proof_reproduces_the_rational_certificate(
     status = np.asarray(native.status)
     assert np.any(status == CellValidityStatus.CERTIFIED_VALID)
     assert np.any(status == CellValidityStatus.INVALID)
+
+
+def test_wide_exact_source_dyadics_match_independent_rational_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    zero, one = Fraction(0), Fraction(1)
+    perturbed = one + Fraction(1, 1 << 111)
+    assert float(perturbed) == 1.0
+    extents = (perturbed, -perturbed, Fraction(1, 3), RadicalElement.sqrt(Fraction(2)))
+    exact = tuple(
+        point
+        for x in extents
+        for point in (
+            (zero, zero, zero),
+            (x, zero, zero),
+            (zero, one, zero),
+            (zero, zero, one),
+        )
+    )
+    coordinates = np.asarray(exact, dtype=np.float64)
+    routes = np.arange(coordinates.shape[0], dtype=np.int64).reshape(-1, 4)
+    mesh = CellMesh(coordinates, (CellBlock("cells", "tetrahedron", routes),))
+    source_map = _exact_coordinate_bank_source_map(
+        mesh, "wide-dyadic", "test", (), exact, coordinates
+    )
+    geometry = CellGeometrySpec.power(mesh, source_map)
+    assert isinstance(geometry.source_coordinates(), ExactCoordinateBank)
+
+    with monkeypatch.context() as patch:
+        _python_only(patch)
+        rational = certify_cell_geometry_validity(geometry, mesh=mesh)
+    native_masks: list[np.ndarray] = []
+    native_proof = validity_module._native_cell_map_proofs
+
+    def record(*args: Any) -> Any:
+        result = native_proof(*args)
+        native_masks.append(result[0])
+        return result
+
+    monkeypatch.setattr(validity_module, "_native_cell_map_proofs", record)
+    native = certify_cell_geometry_validity(geometry, mesh=mesh)
+
+    # Only the two signed dyadics are decided natively in the exact-source bank.
+    np.testing.assert_array_equal(
+        native_masks, ((True, True, True, True), (True, True, False, False))
+    )
+    _assert_same(native, rational)
+    np.testing.assert_array_equal(
+        np.asarray(native.source_status),
+        (
+            CellValidityStatus.CERTIFIED_VALID,
+            CellValidityStatus.INVALID,
+            CellValidityStatus.CERTIFIED_VALID,
+            CellValidityStatus.CERTIFIED_VALID,
+        ),
+    )
+    for endpoint in ("source_determinant_lower", "source_determinant_upper"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(native, endpoint)).view(np.uint64),
+            np.asarray(getattr(rational, endpoint)).view(np.uint64),
+        )
+    digests = np.frombuffer(native.cell_map_digests, dtype=np.uint8).reshape(-1, 2, 16)
+    assert np.all(digests[:2, 1].any(axis=1))
+    assert np.all(np.any(digests[:2, 1] != digests[:2, 0], axis=1))
 
 
 def test_inverted_and_degenerate_cells_are_refused_natively(

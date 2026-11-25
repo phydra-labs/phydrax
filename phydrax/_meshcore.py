@@ -1334,7 +1334,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _I64, _P, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
     ),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
-    "phx_mc_cell_map_validity": (
+    "phx_mc_certify_cell_maps": (
         _I32,
         (
             _I32,
@@ -1349,6 +1349,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             ctypes.c_int16,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _P,
             _I64,
             _P,
             _F64,
@@ -4705,13 +4710,16 @@ def cell_map_validity(
     /,
     *,
     parallelism: int,
+    wide: tuple[object, object, object] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact root validity proof of dof-linear polynomial cell maps in 3D.
 
     ``basis`` lists each dof's integer terms ``(exponent, numerator)`` of the
     basis ``numerator / 2**denominator_log2 * xi**exponent``; the coordinate
     bank is the exact dyadic ``significands * 2**exponents`` of shape
-    ``(rows, 3)`` (``sparse_exponent`` marks non-dyadic entries). Returns
+    ``(rows, 3)``. At ``sparse_exponent``, a zero significand is unknown;
+    a signed ``±(i + 1)`` references row ``i`` of ``wide`` (exponents,
+    limb offsets, and little-endian uint64 magnitude limbs). Returns
     ``(decided, status, lower, upper, digests)``: a decided cell's
     ``CellValidityStatus`` value (0 certified, 1 invalid), directed
     determinant endpoints and exact-map digest equal those of the rational
@@ -4728,6 +4736,33 @@ def cell_map_validity(
         or route_array.shape[1] != len(basis)
     ):
         raise ValueError("Cell map validity requires (rows, 3) banks and dof routes.")
+    wide_args: tuple[int, int | None, int | None, int, int | None] = (
+        0,
+        None,
+        None,
+        0,
+        None,
+    )
+    if wide is not None:
+        wide_exponents = np.ascontiguousarray(wide[0], dtype=np.int16)
+        wide_offsets = np.ascontiguousarray(wide[1], dtype=np.int64)
+        wide_limbs = np.ascontiguousarray(wide[2], dtype=np.uint64)
+        if (
+            wide_exponents.ndim != 1
+            or wide_offsets.shape != (wide_exponents.size + 1,)
+            or wide_limbs.ndim != 1
+        ):
+            raise ValueError(
+                "Cell map validity requires one offset per wide entry and a final offset."
+            )
+        if wide_exponents.size:
+            wide_args = (
+                wide_exponents.size,
+                wide_exponents.ctypes.data,
+                wide_offsets.ctypes.data,
+                wide_limbs.size,
+                wide_limbs.ctypes.data,
+            )
     starts = np.zeros((len(basis) + 1,), dtype=np.int64)
     starts[1:] = np.cumsum([len(terms) for terms in basis])
     term_exponents = np.asarray(
@@ -4743,7 +4778,7 @@ def cell_map_validity(
     lower = np.zeros((count,), dtype=np.float64)
     upper = np.zeros((count,), dtype=np.float64)
     digests = np.zeros((count, 16), dtype=np.uint8)
-    result = load_meshcore()["phx_mc_cell_map_validity"](
+    result = load_meshcore()["phx_mc_certify_cell_maps"](
         {"simplex": 0, "box": 1, "prism": 2}[domain],
         len(basis),
         starts.ctypes.data,
@@ -4756,6 +4791,7 @@ def cell_map_validity(
         significand_array.ctypes.data,
         exponent_array.ctypes.data,
         int(sparse_exponent),
+        *wide_args,
         count,
         route_array.ctypes.data,
         float(floor),
