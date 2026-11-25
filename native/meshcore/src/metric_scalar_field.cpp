@@ -24,7 +24,9 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
                              const BoxPoint& maximum) {
   const std::size_t vertices = input.source_points.size() / 3;
   const std::size_t cells = input.source_cells.size() / 4;
-  if (vertices == 0 || vertices > kMaxScalarSites || cells == 0 || cells > kMaxScalarCells ||
+  // Sample hints are int32 cell rows; the transaction owns the source cap.
+  if (vertices == 0 || cells == 0 || vertices > 4 * cells ||
+      cells > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
       3 * vertices != input.source_points.size() || 4 * cells != input.source_cells.size() ||
       input.source_logarithms.size() != 9 * vertices || input.source_metrics.size() != 9 * vertices) {
     return false;
@@ -32,8 +34,8 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
   low = minimum;
   high = maximum;
   for (int k = 0; k < 3; ++k) if (!(low[k] < high[k])) return false;
-  double min_metric = std::numeric_limits<double>::infinity();
-  double max_metric = 0.0;
+  minimum_log_rate = std::numeric_limits<double>::infinity();
+  maximum_log_rate = -std::numeric_limits<double>::infinity();
   for (std::size_t i = 0; i < vertices; ++i) {
     const auto* metric = input.source_metrics.data() + 9 * i;
     const auto* log = input.source_logarithms.data() + 9 * i;
@@ -42,11 +44,9 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
       if (j % 4 == 0 ? metric[j] != metric[0] || log[j] != log[0] :
                        metric[j] != 0.0 || log[j] != 0.0) return false;
     }
-    min_metric = std::min(min_metric, metric[0]);
-    max_metric = std::max(max_metric, metric[0]);
+    minimum_log_rate = std::min(minimum_log_rate, 0.5 * log[0]);
+    maximum_log_rate = std::max(maximum_log_rate, 0.5 * log[0]);
   }
-  if (min_metric == max_metric) return false;
-  maximum_size = 1.0 / std::sqrt(min_metric);
   std::vector<double> lower(3 * cells), upper(3 * cells);
   tets_.resize(cells);
   double estimated_work = 0.0;
@@ -73,14 +73,13 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
     const auto b = geometry::difference(corners[2], tet.origin);
     const auto c = geometry::difference(corners[3], tet.origin);
     const double volume6 = std::abs(geometry::dot(a.data(), geometry::cross(b, c).data()));
-    // Dimensionless metric volume, estimated at the barycenter. This only
-    // selects a refinement construction; no bound or certificate uses it.
+    // Dimensionless metric volume, estimated at the barycenter. It bounds the
+    // proposal's resources; no bound or certificate uses it.
     const double mean3 = 0.75 * ((rates[0] + rates[1]) + (rates[2] + rates[3]));
     estimated_work += volume6 * deterministic::exp(mean3);
   }
-  if (!(estimated_work > 2.0 * static_cast<double>(cells) &&
-        estimated_work <= static_cast<double>(kMaxScalarCells))) return false;
-  boxes_.prepare(lower, upper, 0b111, 4'000'000);
+  if (!(estimated_work > 0.0 && estimated_work <= static_cast<double>(kMaxScalarCells))) return false;
+  boxes_.prepare(lower, upper, 0b111, 64 * cells);
   return boxes_.indexed();
 }
 

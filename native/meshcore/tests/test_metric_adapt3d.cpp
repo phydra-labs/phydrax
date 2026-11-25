@@ -370,12 +370,14 @@ void check_refinement() {
 }
 
 void check_coarsening() {
-  // h = 1/4 against the target 1/2: interior and boundary collapses (the
-  // cube sides keep fewer vertices).
+  // h = 1/4 against the target 1/2 on an unprotected single-region box: the
+  // whole-box route coarsens it in one retessellation, and the cube sides
+  // keep fewer vertices.
   const Run run = adapt_cube(4, 4.0);
   check_result(run, 4.0);
-  PHX_CHECK(run.output.counters.collapses > 0);
+  PHX_CHECK(run.output.counters.retriangulations == 1);
   PHX_CHECK(boundary_vertices(run.after) < boundary_vertices(run.before));
+  PHX_CHECK(run.after.cells.size() < run.before.cells.size());
 }
 
 void check_completion_tolerance_does_not_skip_eligible_collapses() {

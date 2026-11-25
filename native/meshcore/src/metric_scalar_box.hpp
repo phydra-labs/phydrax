@@ -25,7 +25,9 @@ class ScalarBoxField {
   bool prepare(const AdaptInput& input, const BoxPoint& low, const BoxPoint& high);
   bool sample(const BoxPoint& x, ScalarBoxSample& sample) const;
   BoxPoint low{}, high{};
-  double maximum_size = 0.0;
+  // Extremes of the source vertex log rates. The log-P1 field interpolates
+  // them, so every sample lies in this closed interval.
+  double minimum_log_rate = 0.0, maximum_log_rate = 0.0;
  private:
   struct Element {
     BoxPoint origin;
@@ -43,15 +45,19 @@ struct ScalarBoxSites {
   std::vector<BoxCell> cells;
 };
 
-inline constexpr std::size_t kMaxScalarSites = 100'000;
-inline constexpr std::size_t kMaxScalarCells = 600'000;
+// Output resources of one proposal, independent of the source size.
+inline constexpr std::size_t kMaxScalarSites = 400'000;
+inline constexpr std::size_t kMaxScalarCells = 2'500'000;
 
 // Expected geometric/resource refusals decline a proposal. Fatal native
 // errors must reach the C boundary rather than trigger another algorithm.
 bool scalar_topology_accepted(std::int32_t status);
 
-// Seed with separated metric edge midpoints; rebuild the 12 seams in
-// integrated metric length. Candidate rows are deterministic, not original IDs.
+// Seed a coarse lattice of the box and split its metric-long edges at
+// separated metric midpoints, sampling the source field at every new site;
+// then rebuild the 12 seams in integrated metric length. The source vertices
+// are not retained, so refinement and coarsening use the same construction.
+// Candidate rows are deterministic, not original IDs.
 bool seed_scalar_box(const AdaptInput& input, const ScalarBoxField& field, ScalarBoxSites& sites);
 bool fill_scalar_wall_gaps(const ScalarBoxField& field, ScalarBoxSites& sites);
 

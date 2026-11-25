@@ -22,7 +22,7 @@ namespace phx::mc::metric {
 namespace {
 
 constexpr double kSeparation = 0.75;  // Reserve room for source-transported relaxation.
-constexpr int kSplitRounds = 16;
+constexpr int kSplitRounds = 40;
 constexpr std::array<std::array<int, 2>, 6> kEdges{{
     {0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3},
 }};
@@ -199,26 +199,46 @@ struct AcceptedSplit {
   BoxPoint point;
   LogRate rate;
   std::int32_t link;
+  std::int32_t cell;  // Source cell holding the site; the next sample's hint.
 };
 
-bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
-                 std::vector<BoxPoint>& points, std::vector<LogRate>& rates) {
-  std::vector<BoxCell> cells(input.source_cells.size() / 4), next_cells;
-  for (std::size_t row = 0; row < cells.size(); ++row) {
-    for (int j = 0; j < 4; ++j) {
-      const auto source = input.source_cells[4 * row + j];
-      if (source < 0 || static_cast<std::size_t>(source) >= points.size()) return false;
-      cells[row][j] = static_cast<std::int32_t>(source);
-    }
-    std::sort(cells[row].begin(), cells[row].end());
+// The eight box corners and the six Kuhn tetrahedra along the monotone
+// corner paths. Splitting refines this lattice to the metric density.
+bool initial_lattice(const ScalarBoxField& field, std::vector<BoxPoint>& points,
+                     std::vector<LogRate>& rates, std::vector<std::int32_t>& cells,
+                     std::vector<BoxCell>& lattice) {
+  for (unsigned corner = 0; corner < 8; ++corner) {
+    BoxPoint p;
+    for (int a = 0; a < 3; ++a) p[a] = ((corner >> a) & 1U) != 0 ? field.high[a] : field.low[a];
+    ScalarBoxSample sample;
+    if (!field.sample(p, sample)) return false;
+    points.push_back(p);
+    rates.push_back(log_rate(sample.log_rate));
+    cells.push_back(sample.cell);
   }
+  constexpr std::array<std::array<unsigned, 2>, 6> kPaths{{
+      {0, 1}, {0, 2}, {1, 0}, {1, 2}, {2, 0}, {2, 1},
+  }};
+  for (const auto& [first, second] : kPaths) {
+    const unsigned near = 1U << first;
+    lattice.push_back({0, static_cast<std::int32_t>(near),
+                       static_cast<std::int32_t>(near | (1U << second)), 7});
+  }
+  return true;
+}
 
-  const auto [minimum_row, maximum_row] = std::minmax_element(rates.begin(), rates.end(),
-      [](LogRate a, LogRate b) { return a.log < b.log; });
-  const LogRate minimum = *minimum_row;
+bool split_sites(const ScalarBoxField& field, std::vector<BoxCell> cells,
+                 std::vector<BoxPoint>& points, std::vector<LogRate>& rates,
+                 std::vector<std::int32_t>& hints) {
+  std::vector<BoxCell> next_cells;
+  for (auto& cell : cells) std::sort(cell.begin(), cell.end());
+
+  // The field interpolates the source vertex log rates, so these extremes
+  // bound the rate of every site any round can add.
+  const LogRate minimum = log_rate(field.minimum_log_rate);
   const double max_radius = kSeparation / minimum.rate;
   if (!std::isfinite(max_radius)) return false;
-  const double min_radius = kSeparation / maximum_row->rate;
+  const double min_radius = kSeparation / deterministic::exp(field.maximum_log_rate);
   double extent = 0.0;
   for (int a = 0; a < 3; ++a) extent = std::max(extent, field.high[a] - field.low[a]);
   // Finer buckets for the dense end of the field. Keep even the widest
@@ -273,9 +293,13 @@ bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
       if (t <= 0.0 || t >= 1.0) continue;
       BoxPoint p;
       for (int j = 0; j < 3; ++j) p[j] = std::lerp(points[a][j], points[b][j], t);
-      // Each template edge stays in an original P1 simplex (or on its
-      // boundary), so the endpoint logs determine its midpoint log.
-      const LogRate rate = log_rate(std::lerp(rates[a].log, rates[b].log, t));
+      // A lattice edge may cross many source cells; sample the log-P1
+      // source field at the site instead of interpolating endpoint logs.
+      ScalarBoxSample sample;
+      sample.cell = hints[a];
+      if (!field.sample(p, sample)) return false;
+      const LogRate rate = log_rate(sample.log_rate);
+      if (!(rate.rate > 0.0) || !std::isfinite(rate.rate)) return false;
       // The mean rate increases in either endpoint log, so the global
       // minimum bounds the physical query radius for this trial.
       const double radius = kSeparation / mean_rate(minimum, rate);
@@ -305,7 +329,7 @@ bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
       if (points.size() + accepted.size() == kMaxScalarSites) return false;
       const auto link = first + static_cast<std::int32_t>(accepted.size());
       grid.insert(p, link);
-      accepted.push_back({proposal.key, p, rate, link});
+      accepted.push_back({proposal.key, p, rate, link, sample.cell});
     }
     if (accepted.empty()) break;
 
@@ -319,6 +343,7 @@ bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
       grid.relabel(split.link, row);
       points.push_back(split.point);
       rates.push_back(split.rate);
+      hints.push_back(split.cell);
     }
 
     masks.resize(cells.size());
@@ -370,18 +395,22 @@ int wall_rank(const BoxPoint& p, const ScalarBoxField& field) {
   return rank;
 }
 
-bool redistribute_seams(const ScalarBoxField& field, std::size_t source_count,
-                        const std::vector<LogRate>& rates, std::vector<BoxPoint>& points) {
+// The log-P1 field is linear between consecutive source vertices on a seam,
+// so those vertices are exact knots of its integrated metric length.
+bool redistribute_seams(const ScalarBoxField& field, const AdaptInput& input,
+                        std::vector<BoxPoint>& points) {
   struct Knot { double coordinate; LogRate rate; };
   std::array<std::vector<Knot>, 12> knots;
+  const std::size_t source_count = input.source_points.size() / 3;
   for (std::size_t row = 0; row < source_count; ++row) {
-    const auto& p = points[row];
+    const BoxPoint p{input.source_points[3 * row], input.source_points[3 * row + 1],
+                     input.source_points[3 * row + 2]};
     for (int axis = 0; axis < 3; ++axis) {
       const auto [u, v] = kFixedAxes[axis];
       if ((p[u] != field.low[u] && p[u] != field.high[u]) ||
           (p[v] != field.low[v] && p[v] != field.high[v])) continue;
       const int seam = 4 * axis + 2 * (p[u] == field.high[u]) + (p[v] == field.high[v]);
-      knots[seam].push_back({p[axis], rates[row]});
+      knots[seam].push_back({p[axis], log_rate(0.5 * input.source_logarithms[9 * row])});
     }
   }
   points.erase(std::remove_if(points.begin(), points.end(), [&](const BoxPoint& p) {
@@ -514,28 +543,17 @@ bool collect_wall_gaps(const ScalarBoxField& field, int face, PointAt point_at,
 
 bool seed_scalar_box(const AdaptInput& input, const ScalarBoxField& field, ScalarBoxSites& sites) {
   const std::size_t count = input.source_points.size() / 3;
-  if (count < 8 || count > kMaxScalarSites || input.source_points.size() != 3 * count ||
-      input.source_logarithms.size() != 9 * count || input.source_cells.empty() ||
-      input.source_cells.size() % 4 != 0 || input.source_cells.size() / 4 > kMaxScalarCells) {
+  if (count < 8 || input.source_points.size() != 3 * count ||
+      input.source_logarithms.size() != 9 * count) {
     return false;
   }
   ScalarBoxSites candidate;
-  candidate.points.reserve(count);
   std::vector<LogRate> rates;
-  rates.reserve(count);
-  for (std::size_t row = 0; row < count; ++row) {
-    BoxPoint p;
-    for (int a = 0; a < 3; ++a) {
-      p[a] = input.source_points[3 * row + a];
-      if (!(p[a] >= field.low[a] && p[a] <= field.high[a])) return false;
-    }
-    const auto rate = log_rate(0.5 * input.source_logarithms[9 * row]);
-    if (!(rate.rate > 0.0) || !std::isfinite(rate.rate)) return false;
-    candidate.points.push_back(p);
-    rates.push_back(rate);
-  }
-  if (!split_sites(input, field, candidate.points, rates) ||
-      !redistribute_seams(field, count, rates, candidate.points)) return false;
+  std::vector<std::int32_t> hints;
+  std::vector<BoxCell> lattice;
+  if (!initial_lattice(field, candidate.points, rates, hints, lattice) ||
+      !split_sites(field, std::move(lattice), candidate.points, rates, hints) ||
+      !redistribute_seams(field, input, candidate.points)) return false;
   candidate.samples.resize(candidate.points.size());
   for (std::size_t row = 0; row < candidate.points.size(); ++row) {
     if (!field.sample(candidate.points[row], candidate.samples[row])) return false;
