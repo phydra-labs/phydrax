@@ -189,6 +189,54 @@ class SeparationGrid {
   std::vector<Link> links_;
 };
 
+// Finer buckets for the dense end of the field. Keep even the widest
+// physical query within four bucket widths without clipping its radius.
+double separation_width(const ScalarBoxField& field, double separation) {
+  const double max_radius = separation / deterministic::exp(field.minimum_log_rate);
+  const double min_radius = separation / deterministic::exp(field.maximum_log_rate);
+  if (!std::isfinite(max_radius)) return 0.0;
+  double extent = 0.0;
+  for (int a = 0; a < 3; ++a) extent = std::max(extent, field.high[a] - field.low[a]);
+  return std::max({std::sqrt(max_radius) * std::sqrt(min_radius), 0.25 * max_radius,
+                   std::ldexp(extent, -20)});
+}
+
+// Metric separation of one trial site from retained sites. The mean rate
+// increases in either endpoint log, so the field minimum bounds the
+// physical query radius.
+class SeparationProbe {
+ public:
+  SeparationProbe(const BoxPoint& p, LogRate rate, LogRate minimum, double separation)
+      : p_(p), rate_(rate), separation_(separation),
+        radius_(separation / mean_rate(minimum, rate)),
+        padded_(radius_ + radius_ * (8 * std::numeric_limits<double>::epsilon())),
+        radius_squared_(padded_ * padded_ * kBroadPad),
+        separation_squared_(separation * separation * kBroadPad) {}
+
+  double radius() const { return radius_; }
+
+  bool conflicts(const BoxPoint& q, LogRate other) const {
+    const double squared = distance_squared(p_, q);
+    double d;
+    if (normal_squared_distance(squared)) {
+      // The log-linear mean is at least the geometric mean. With a
+      // roundoff margin this saves expm1 for nonconflicting neighbors.
+      const auto [lo, hi] = std::minmax(rate_.rate, other.rate);
+      if (squared > radius_squared_ || (squared * lo) * hi > separation_squared_) return false;
+      d = std::sqrt(squared);
+    } else {
+      d = distance(p_, q);
+    }
+    return d <= padded_ && d * mean_rate(rate_, other) < separation_;
+  }
+
+ private:
+  static constexpr double kBroadPad = 1.0 + 32 * std::numeric_limits<double>::epsilon();
+  BoxPoint p_;
+  LogRate rate_;
+  double separation_, radius_, padded_, radius_squared_, separation_squared_;
+};
+
 struct LongEdge {
   EdgeKey key;
   double length;
@@ -233,18 +281,8 @@ bool split_sites(const ScalarBoxField& field, std::vector<BoxCell> cells,
   std::vector<BoxCell> next_cells;
   for (auto& cell : cells) std::sort(cell.begin(), cell.end());
 
-  // The field interpolates the source vertex log rates, so these extremes
-  // bound the rate of every site any round can add.
   const LogRate minimum = log_rate(field.minimum_log_rate);
-  const double max_radius = kSeparation / minimum.rate;
-  if (!std::isfinite(max_radius)) return false;
-  const double min_radius = kSeparation / deterministic::exp(field.maximum_log_rate);
-  double extent = 0.0;
-  for (int a = 0; a < 3; ++a) extent = std::max(extent, field.high[a] - field.low[a]);
-  // Finer buckets for the dense end of the field. Keep even the widest
-  // physical query within four bucket widths without clipping its radius.
-  const double width = std::max({std::sqrt(max_radius) * std::sqrt(min_radius),
-                                 0.25 * max_radius, std::ldexp(extent, -20)});
+  const double width = separation_width(field, kSeparation);
   if (!(width > 0.0) || !std::isfinite(width)) return false;
   SeparationGrid grid(field.low, width, points.size());
   for (std::size_t row = 0; row < points.size(); ++row) {
@@ -300,31 +338,11 @@ bool split_sites(const ScalarBoxField& field, std::vector<BoxCell> cells,
       if (!field.sample(p, sample)) return false;
       const LogRate rate = log_rate(sample.log_rate);
       if (!(rate.rate > 0.0) || !std::isfinite(rate.rate)) return false;
-      // The mean rate increases in either endpoint log, so the global
-      // minimum bounds the physical query radius for this trial.
-      const double radius = kSeparation / mean_rate(minimum, rate);
-      const double padded_radius = radius + radius * (8 * std::numeric_limits<double>::epsilon());
-      constexpr double kBroadPad = 1.0 + 32 * std::numeric_limits<double>::epsilon();
-      constexpr double kSeparationSquared = kSeparation * kSeparation * kBroadPad;
-      const double radius_squared = padded_radius * padded_radius * kBroadPad;
-      const auto conflicts = [&](const BoxPoint& q, LogRate other) {
-        const double squared = distance_squared(p, q);
-        double d;
-        if (normal_squared_distance(squared)) {
-          // The log-linear mean is at least the geometric mean. With a
-          // roundoff margin this saves expm1 for nonconflicting neighbors.
-          const auto [lo, hi] = std::minmax(rate.rate, other.rate);
-          if (squared > radius_squared || (squared * lo) * hi > kSeparationSquared) return false;
-          d = std::sqrt(squared);
-        } else {
-          d = distance(p, q);
-        }
-        return d <= padded_radius && d * mean_rate(rate, other) < kSeparation;
-      };
-      if (grid.any(p, radius, [&](std::int32_t row) {
-        if (row < first) return conflicts(points[row], rates[row]);
+      const SeparationProbe probe(p, rate, minimum, kSeparation);
+      if (grid.any(p, probe.radius(), [&](std::int32_t row) {
+        if (row < first) return probe.conflicts(points[row], rates[row]);
         const auto& other = accepted[row - first];
-        return conflicts(other.point, other.rate);
+        return probe.conflicts(other.point, other.rate);
       })) continue;
       if (points.size() + accepted.size() == kMaxScalarSites) return false;
       const auto link = first + static_cast<std::int32_t>(accepted.size());
@@ -560,6 +578,82 @@ bool seed_scalar_box(const AdaptInput& input, const ScalarBoxField& field, Scala
   }
   sites = std::move(candidate);
   return true;
+}
+
+std::int64_t split_scalar_edges(const ScalarBoxField& field, ScalarBoxSites& sites, double separation) {
+  const std::size_t count = sites.points.size();
+  if (sites.samples.size() != count || count >= kMaxScalarSites || !(separation > 0.0)) return -1;
+  std::vector<LogRate> rates(count);
+  for (std::size_t row = 0; row < count; ++row) {
+    rates[row] = log_rate(sites.samples[row].log_rate);
+    if (!(rates[row].rate > 0.0) || !std::isfinite(rates[row].rate)) return -1;
+  }
+  const auto& points = sites.points;
+  // A conforming tetrahedral ball has at most C + 2V distinct edges.
+  KeyMap seen(sites.cells.size() + 2 * count);
+  std::vector<LongEdge> proposals;
+  for (const auto& cell : sites.cells) {
+    for (const auto& [i, j] : kEdges) {
+      const auto a = cell[i], b = cell[j];
+      if (a < 0 || b < 0 || static_cast<std::size_t>(a) >= count ||
+          static_cast<std::size_t>(b) >= count || a == b) return -1;
+      const auto key = topology::undirected_edge(a, b);
+      auto& slot = seen.slot(key);
+      if (slot != -1) continue;
+      slot = -2;
+      const auto [u, v] = edge_rows(key);
+      const double length = distance(points[u], points[v]) * mean_rate(rates[u], rates[v]);
+      if (!std::isfinite(length)) return -1;
+      if (length > kUpperLength) proposals.push_back({key, length});
+    }
+  }
+  if (proposals.empty()) return 0;
+  std::sort(proposals.begin(), proposals.end(), [](const LongEdge& a, const LongEdge& b) {
+    return a.length == b.length ? a.key < b.key : a.length > b.length;
+  });
+
+  const LogRate minimum = log_rate(field.minimum_log_rate);
+  const double width = separation_width(field, separation);
+  if (!(width > 0.0) || !std::isfinite(width)) return -1;
+  SeparationGrid grid(field.low, width, count);
+  for (std::size_t row = 0; row < count; ++row) grid.insert(points[row], static_cast<std::int32_t>(row));
+  std::vector<AcceptedSplit> accepted;
+  const auto first = static_cast<std::int32_t>(count);
+  for (const auto& proposal : proposals) {
+    const auto [a, b] = edge_rows(proposal.key);
+    const double delta = rates[b].log - rates[a].log;
+    const double t = static_cast<double>(round_even(1024.0 * metric_fraction(delta, 0.5))) / 1024.0;
+    if (t <= 0.0 || t >= 1.0) continue;
+    BoxPoint p;
+    for (int j = 0; j < 3; ++j) p[j] = std::lerp(points[a][j], points[b][j], t);
+    ScalarBoxSample sample;
+    sample.cell = sites.samples[a].cell;
+    if (!field.sample(p, sample)) return -1;
+    const LogRate rate = log_rate(sample.log_rate);
+    if (!(rate.rate > 0.0) || !std::isfinite(rate.rate)) return -1;
+    const SeparationProbe probe(p, rate, minimum, separation);
+    if (grid.any(p, probe.radius(), [&](std::int32_t row) {
+      if (row < first) return probe.conflicts(points[row], rates[row]);
+      const auto& other = accepted[row - first];
+      return probe.conflicts(other.point, other.rate);
+    })) continue;
+    if (count + accepted.size() == kMaxScalarSites) return -1;
+    const auto link = first + static_cast<std::int32_t>(accepted.size());
+    grid.insert(p, link);
+    accepted.push_back({proposal.key, p, rate, link, sample.cell});
+  }
+  // Greedy priority is length order; new rows are assigned in key order.
+  std::sort(accepted.begin(), accepted.end(), [](const AcceptedSplit& a, const AcceptedSplit& b) {
+    return a.key < b.key;
+  });
+  for (const auto& split : accepted) {
+    ScalarBoxSample sample;
+    sample.cell = split.cell;
+    if (!field.sample(split.point, sample)) return -1;
+    sites.points.push_back(split.point);
+    sites.samples.push_back(sample);
+  }
+  return static_cast<std::int64_t>(accepted.size());
 }
 
 bool fill_scalar_wall_gaps(const ScalarBoxField& field, ScalarBoxSites& sites) {

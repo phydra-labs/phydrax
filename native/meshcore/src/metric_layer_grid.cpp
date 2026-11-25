@@ -790,10 +790,22 @@ std::optional<MetricBoxGrid> propose_scalar_box_grid(
     return std::nullopt;
   }
   if (!correct_scalar_box(field, sites, lower)) {
-    // Moving sites cannot create missing wall sites. Only rebuild when a
-    // separated, chart-bound proposal can actually fill a boundary gap.
-    if (!fill_scalar_wall_gaps(field, sites) || !relax_scalar_box(field, sites, smoothing_steps) ||
-        !correct_scalar_box(field, sites, lower)) return std::nullopt;
+    // Relaxation can leave metric-long Delaunay edges that no move repairs.
+    // Split them below the seed separation, with short re-relaxations.
+    constexpr int density_rounds = 3, density_steps = 2;
+    constexpr double density_separation = 0.6;
+    for (int round = 0; round < density_rounds; ++round) {
+      const auto added = split_scalar_edges(field, sites, density_separation);
+      if (added < 0) return std::nullopt;
+      if (added == 0) break;
+      if (!relax_scalar_box(field, sites, density_steps)) return std::nullopt;
+    }
+    if (!correct_scalar_box(field, sites, lower)) {
+      // Moving sites cannot create missing wall sites. Only rebuild when a
+      // separated, chart-bound proposal can actually fill a boundary gap.
+      if (!fill_scalar_wall_gaps(field, sites) || !relax_scalar_box(field, sites, smoothing_steps) ||
+          !correct_scalar_box(field, sites, lower)) return std::nullopt;
+    }
   }
   MetricBoxGrid grid;
   grid.cells = std::move(sites.cells);
