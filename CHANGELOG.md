@@ -757,6 +757,10 @@
 - The bounded tensor search uses fewer optimizer steps for short-edge
   cages and screens edges whose endpoint norms are both inside the
   inset band. The exhaustive budget and final edit checks are unchanged.
+- After net refinement of a scalar tetrahedral metric, mean polishing runs
+  at most four sweeps before the existing worst-cell repair. Coarsening and
+  tensor routes retain their existing polish; band and embedding checks
+  are unchanged. Refined mesh and evidence identities can change.
 - Native metric adaptation skips an unused shape measurement when a
   relocation strictly improves the edge band. Shape still decides
   equal-band moves and is still reported by the relocation proposal API.

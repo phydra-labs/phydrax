@@ -72,6 +72,7 @@ constexpr double kDeterminantFloor = 0x1p-22;
 constexpr double kImprovement = 1e-6;
 constexpr int kSplitBits = 5;
 constexpr std::int32_t kNoBlock = -1;
+constexpr std::int64_t kScalarShapeSweeps = 4;
 constexpr double kShapeCageTarget = 0.61;
 constexpr double kShapeCageFloor = 0.60;
 constexpr std::size_t kShapeCageVertices = 40;
@@ -416,7 +417,7 @@ class Adapter {
 
   // Relocations of interior vertices to exact source carriers (in place).
   std::int64_t relocate_sweep(bool closed_band_shape = false);
-  std::int64_t smooth_shape();
+  std::int64_t smooth_shape(std::int64_t maximum_sweeps);
   std::int64_t lift_shape_tail();
   std::int64_t lift_shape_cages();
   std::int64_t repair_band_cages();
@@ -3195,7 +3196,7 @@ void Adapter::assign_carrier(std::int32_t vertex, Stencil stencil, const double*
   if (source_targets_.contains(target)) relocated_sources_.insert(target);
 }
 
-std::int64_t Adapter::smooth_shape() {
+std::int64_t Adapter::smooth_shape(std::int64_t maximum_sweeps) {
   // Seed the interior frontier once. Local commits requeue the changed
   // star; its mean shape must increase with all spokes still in band.
   // Protected and boundary vertices are never moved here.
@@ -3209,11 +3210,11 @@ std::int64_t Adapter::smooth_shape() {
     dirty_[kRelocatePhase].push_back(vertex);
   }
   std::int64_t sweeps = 0;
-  for (;;) {
+  for (; sweeps < maximum_sweeps; ++sweeps) {
     const auto applied = relocate_sweep(true);
     if (fatal_ != TetEditStatus::kApplied || applied == 0) return sweeps;
-    ++sweeps;
   }
+  return sweeps;
 }
 
 std::int64_t Adapter::lift_shape_tail() {
@@ -4114,7 +4115,12 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
         passes += shaped;
       }
       if (input_.relocation && carriers_) {
-        passes += smooth_shape();
+        // Net refinement grows the global mean frontier. Bound that optional
+        // work before lifting the worst cells; keep full polish after coarsening.
+        const bool scalar_refinement = !tensor_field && counters_.splits > counters_.collapses;
+        const auto budget = scalar_refinement ? kScalarShapeSweeps
+                                               : std::numeric_limits<std::int64_t>::max();
+        passes += smooth_shape(budget);
         if (fatal_ != TetEditStatus::kApplied) return fatal_;
         passes += lift_shape_tail();
         if (fatal_ != TetEditStatus::kApplied) return fatal_;

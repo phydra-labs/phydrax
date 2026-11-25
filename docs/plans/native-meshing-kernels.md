@@ -526,6 +526,16 @@ decreases slightly from 0.39228 to 0.38849, still above MMG3D's 0.29750.
 Mean shape is 0.78020 vs 0.67732 and midpoint band share is 0.90758 vs
 0.42265. This is a faster diagnostic, not a construction win.
 
+After net scalar refinement, at most four interior mean-shape sweeps
+precede the unchanged worst-cell repair. Mean stationarity is not a completion
+criterion. The coarsening and tensor routes retain their prior polish.
+On the isotropic crop the new paired construction sample is **2.027 s
+vs 0.278 s**. Worst shape rises from 0.54005 to 0.60997 (MMG3D 0.52073),
+mean remains above the reference (0.85607 vs 0.83983), and midpoint band
+share is 0.89728 vs 0.83795. There are no residuals or inversions.
+The coarsening crop retains its measured science, bit for bit. Neither
+the isotropic clock nor any larger refinement row is qualified here.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
