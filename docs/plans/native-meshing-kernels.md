@@ -441,10 +441,11 @@ The original construction reference is the authenticated 0.377 s, with the
 approved 3.5× allowance (1.3195 s). The previous coarsening result missed
 worst-cell shape at 0.03891 versus MMG3D's 0.47481, despite passing time.
 With local coupled repairs, the same 10,452-cell input completes with zero
-out-of-band edges or inversions. Minimum shape is 0.60998 versus 0.47481,
-mean shape 0.83013 versus 0.82651, and midpoint band share 0.87295 versus
-0.79391. It passes the registered gates at 1.253 s in one construction
-sample. This timing exception is not a speed win over the 0.337 s MMG3D rerun.
+out-of-band edges or inversions. Minimum shape is 0.60997 versus 0.47481,
+mean shape 0.83015 versus 0.82651, and midpoint band share 0.87257 versus
+0.79391. It passes the registered gates at 1.092 s, the lowest of three
+construction runs. This timing exception is not a speed win over the
+0.337 s MMG3D rerun.
 
 The regenerated Gmsh 4.15.2 cube banks use source sizes 0.0782, 0.0363,
 and 0.01685. The smallest source and coarsening target match the original
@@ -487,9 +488,14 @@ An independently retransported diagnostic on its unchanged connectivity
 reaches 0.58362 minimum and 0.80534 mean with zero native out-of-band edges
 and certified global embedding. It establishes feasibility, not that the
 adapter constructs the result.
-The first native coupled repair reaches 0.60329 minimum, but its
-0.78367 mean still misses the live reference. The isotropic crop reaches
-0.43866 minimum, still below 0.52073. Neither crop is accepted.
+
+Native coupled repair clears both shape gates on the coarsening crop:
+0.60218 minimum and 0.80042 mean, versus MMG3D's 0.58136 and 0.79798.
+The isotropic crop also passes its scientific gates, with 0.54005
+minimum and 0.86074 mean versus 0.52073 and 0.83983. Both finish with
+zero out-of-band edges or inversions. In the single paired samples,
+construction was 0.136 s vs 0.205 s for coarsening and 3.467 s vs
+0.280 s for isotropic adaptation. The latter still misses speed.
 
 ### Implicit carrier remesh and proof
 

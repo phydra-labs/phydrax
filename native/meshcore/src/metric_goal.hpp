@@ -115,13 +115,14 @@ struct ShapeCageEdge {
 
 // Each cell lists four point rows, ordered with det(p1-p0, p2-p0, p3-p0) > 0.
 // Proposes a descent step from zero for the shape and inset scalar-band
-// penalties. True writes physical displacements bounded by radius per variable;
-// false leaves displacement untouched. A proposal need not meet either goal:
-// the caller must validate the rounded cage with native predicates and metrics.
+// penalties. Mean polishing adds an average-shape reward to that merit.
+// True writes physical displacements bounded by radius; false leaves them
+// untouched. The caller must validate the rounded cage with native
+// predicates and metrics.
 bool propose_shape_cage(std::span<const ShapeCagePoint> points,
                         std::span<const std::array<std::size_t, 4>> cells,
                         std::span<const ShapeCageEdge> edges, double radius,
                         double minimum_length, double target_shape,
-                        std::span<double> displacement);
+                        std::span<double> displacement, bool improve_mean = false);
 
 }  // namespace phx::mc::metric

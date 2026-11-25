@@ -73,6 +73,7 @@ constexpr double kImprovement = 1e-6;
 constexpr int kSplitBits = 5;
 constexpr std::int32_t kNoBlock = -1;
 constexpr double kShapeCageTarget = 0.61;
+constexpr double kShapeCageFloor = 0.60;
 constexpr std::size_t kShapeCageVertices = 40;
 constexpr std::size_t kShapeCageCells = 256;
 
@@ -432,15 +433,18 @@ class Adapter {
     std::size_t variables = 0;
     double minimum_distance = std::numeric_limits<double>::infinity();
     double minimum_shape = std::numeric_limits<double>::infinity();
+    double sum_shape = 0.0;
   };
   double geometric_cell_shape(std::int32_t slot) const;
   std::optional<CageMover> cage_mover(std::int32_t vertex,
                                     const LocalIncidence::Star& star);
-  bool prepare_shape_cage(std::int32_t seed, ShapeCage& cage);
+  bool prepare_shape_cage(std::int32_t seed, ShapeCage& cage, bool whole);
   TetEditStatus commit_shape_cage(const ShapeCage& cage, std::int32_t seed,
                                  double seed_shape, std::span<const double> displacement,
-                                 std::span<double> transported_scales, bool& applied);
-  TetEditStatus relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied);
+                                 std::span<double> transported_scales, bool improve_mean,
+                                 bool& applied);
+  TetEditStatus relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied,
+                                   bool improve_mean = false);
   enum class ShapeGoal { kBand, kMean, kMinimum };
   TetEditStatus relocate(std::int32_t vertex, bool& applied, ShapeGoal goal);
   bool clearance_pull(std::int32_t vertex, std::int32_t cell, double* pull) const;
@@ -3283,29 +3287,38 @@ std::optional<Adapter::CageMover> Adapter::cage_mover(
   return CageMover{vertex, *chart, axes};
 }
 
-bool Adapter::prepare_shape_cage(std::int32_t seed, ShapeCage& cage) {
+bool Adapter::prepare_shape_cage(std::int32_t seed, ShapeCage& cage, bool whole) {
   const auto vertex_id = [&](std::int32_t vertex) { return mesh_.vertex_id(vertex); };
   const auto cell_id = [&](std::int32_t slot) { return mesh_.cell_id(slot); };
   const auto& tetrahedron = mesh_.tet(seed);
   std::vector<std::int32_t> candidates(tetrahedron.v, tetrahedron.v + 4);
   std::ranges::sort(candidates, {}, vertex_id);
-  const auto in_seed = [&](std::int32_t vertex) {
-    return std::find(tetrahedron.v, tetrahedron.v + 4, vertex) != tetrahedron.v + 4;
-  };
-  std::vector<std::int32_t> star;
-  for (std::int32_t vertex : tetrahedron.v) {
-    incidence_.collect_star(vertex, star);
-    if (star.size() > kShapeCageCells) return false;
-    for (std::int32_t slot : star) {
-      for (std::int32_t other : mesh_.tet(slot).v) {
-        if (!in_seed(other)) candidates.push_back(other);
+  if (whole) {
+    for (std::size_t row = 0; row < mesh_.vertex_slot_count(); ++row) {
+      const auto vertex = static_cast<std::int32_t>(row);
+      if (!mesh_.live_vertex(vertex)) continue;
+      if (std::ranges::find(candidates, vertex) == candidates.end()) candidates.push_back(vertex);
+      if (candidates.size() > kShapeCageVertices) return false;
+    }
+    std::ranges::sort(candidates, {}, vertex_id);
+  } else {
+    const auto in_seed = [&](std::int32_t vertex) {
+      return std::find(tetrahedron.v, tetrahedron.v + 4, vertex) != tetrahedron.v + 4;
+    };
+    std::vector<std::int32_t> star;
+    for (std::int32_t vertex : tetrahedron.v) {
+      incidence_.collect_star(vertex, star);
+      if (star.size() > kShapeCageCells) return false;
+      for (std::int32_t slot : star) {
+        for (std::int32_t other : mesh_.tet(slot).v) {
+          if (!in_seed(other)) candidates.push_back(other);
+        }
       }
     }
+    // Keep seed corners first. Other vertices follow persistent ID order.
+    std::ranges::sort(std::span(candidates).subspan(4), {}, vertex_id);
+    candidates.erase(std::unique(candidates.begin() + 4, candidates.end()), candidates.end());
   }
-  // Seed corners are considered first, followed by their one-ring in
-  // persistent vertex order. Only whole stars may enter the capped overlay.
-  std::ranges::sort(std::span(candidates).subspan(4), {}, vertex_id);
-  candidates.erase(std::unique(candidates.begin() + 4, candidates.end()), candidates.end());
   std::vector<std::int32_t> united;
   for (std::int32_t vertex : candidates) {
     const auto local = incidence_.vertex_star(vertex);
@@ -3330,6 +3343,7 @@ bool Adapter::prepare_shape_cage(std::int32_t seed, ShapeCage& cage) {
     const double quality = geometric_cell_shape(slot);
     if (!(quality > 0.0) || !std::isfinite(quality)) return false;
     cage.minimum_shape = std::min(cage.minimum_shape, quality);
+    if (whole) cage.sum_shape += quality;
   }
   std::ranges::sort(cage.rows, {}, vertex_id);
   cage.rows.erase(std::unique(cage.rows.begin(), cage.rows.end()), cage.rows.end());
@@ -3390,7 +3404,8 @@ bool Adapter::prepare_shape_cage(std::int32_t seed, ShapeCage& cage) {
 
 TetEditStatus Adapter::commit_shape_cage(
     const ShapeCage& cage, std::int32_t seed, double seed_shape,
-    std::span<const double> displacement, std::span<double> transported_scales, bool& applied) {
+    std::span<const double> displacement, std::span<double> transported_scales,
+    bool improve_mean, bool& applied) {
   struct Move {
     std::array<double, 3> point;
     Stencil stencil;
@@ -3461,6 +3476,8 @@ TetEditStatus Adapter::commit_shape_cage(
   std::vector<std::int32_t> changed_cells;
   changed_cells.reserve(cage.cells.size());
   edit.removed_cell_ids.reserve(cage.cells.size());
+  double sum_shape = 0.0;
+  const double retained_shape = std::min(cage.minimum_shape, kShapeCageFloor);
   for (std::size_t i = 0; i < cage.cells.size(); ++i) {
     const auto& cell = cage.cells[i];
     const auto slot = cage.slots[i];
@@ -3474,16 +3491,20 @@ TetEditStatus Adapter::commit_shape_cage(
     double relative = 0.0;
     relative_determinant(corners.data(), determinant, relative);
     const double quality = geometric_shape(corners.data(), determinant);
-    if (!(determinant > 0.0 && relative > kDeterminantFloor) ||
-        !(quality > cage.minimum_shape + kImprovement) ||
-        (slot == seed && !(quality > seed_shape + kImprovement))) {
+    const bool shape_gain = improve_mean
+                                ? quality >= retained_shape
+                                : quality > cage.minimum_shape + kImprovement &&
+                                      (slot != seed || quality > seed_shape + kImprovement);
+    if (!(determinant > 0.0 && relative > kDeterminantFloor) || !shape_gain) {
       return TetEditStatus::kApplied;
     }
+    if (improve_mean) sum_shape += quality;
     if (changed) {
       changed_cells.push_back(slot);
       edit.removed_cell_ids.push_back(mesh_.cell_id(slot));
     }
   }
+  if (improve_mean && !(sum_shape > cage.sum_shape + kImprovement)) return TetEditStatus::kApplied;
   TetEditStatus status = TetEditStatus::kRejectedTopology;
   if (!mesh_.apply_relocation_edit(edit, status)) status = TetEditStatus::kRejectedTopology;
   if (status != TetEditStatus::kApplied) {
@@ -3506,26 +3527,48 @@ TetEditStatus Adapter::commit_shape_cage(
   return TetEditStatus::kApplied;
 }
 
-TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied) {
+TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape, bool& applied,
+                                           bool improve_mean) {
   applied = false;
   ShapeCage cage;
-  if (!prepare_shape_cage(seed, cage)) return TetEditStatus::kApplied;
+  if (!prepare_shape_cage(seed, cage, improve_mean)) return TetEditStatus::kApplied;
   std::vector<double> displacement(cage.variables);
   std::vector<double> scales(cage.edges.size());
-  const double radius = 0.5 * cage.minimum_distance;
-  for (int correction = 0; correction < 5; ++correction) {
-    if (!propose_shape_cage(cage.points, cage.cells, cage.edges, radius,
-                            shape_lower(), kShapeCageTarget, displacement)) {
-      break;
+  const double target =
+      improve_mean ? std::min(cage.minimum_shape, kShapeCageFloor) + 0.002 : kShapeCageTarget;
+  const int attempts = !improve_mean && seed_shape < kShapeCageFloor - 0.05 ? 2 : 1;
+  bool proposed = false;
+  for (int attempt = 0; attempt < attempts; ++attempt) {
+    // When the full floor is locally obstructed, a wider cage step toward
+    // a smaller gain can improve the minimum without breaking the band.
+    const double radius = (attempt == 0 ? 0.5 : 0.75) * cage.minimum_distance;
+    const double goal = attempt == 0 ? target : 0.5 * (seed_shape + target);
+    for (int correction = 0; correction < 5; ++correction) {
+      if (!propose_shape_cage(cage.points, cage.cells, cage.edges, radius,
+                              shape_lower(), goal, displacement, improve_mean)) {
+        break;
+      }
+      proposed = true;
+      std::ranges::fill(scales, 0.0);
+      const auto status =
+          commit_shape_cage(cage, seed, seed_shape, displacement, scales, improve_mean, applied);
+      if (status != TetEditStatus::kApplied || applied) return status;
+      if (!std::ranges::all_of(scales, [](double scale) { return scale > 0.0; })) break;
+      // Correct the frozen source sizes with the measured transported
+      // sizes. The next candidate must still meet the same exact band.
+      for (std::size_t i = 0; i < scales.size(); ++i) {
+        cage.edges[i].scale += 0.75 * (scales[i] - cage.edges[i].scale);
+      }
     }
-    std::ranges::fill(scales, 0.0);
-    const auto status = commit_shape_cage(cage, seed, seed_shape, displacement, scales, applied);
-    if (status != TetEditStatus::kApplied || applied) return status;
-    if (!std::ranges::all_of(scales, [](double scale) { return scale > 0.0; })) break;
-    // Correct the proposal model with the exact candidate's transported
-    // endpoint sizes, not a relaxed limit on its measured edges.
-    for (std::size_t i = 0; i < scales.size(); ++i) {
-      cage.edges[i].scale += 0.75 * (scales[i] - cage.edges[i].scale);
+  }
+  if (improve_mean && proposed) {
+    // Rounding and transport can put the full step just below the retained
+    // shape floor. A shorter joint move is subjected to the same exact gate.
+    for (int backtrack = 0; backtrack < 3; ++backtrack) {
+      for (double& coordinate : displacement) coordinate *= 0.75;
+      const auto status =
+          commit_shape_cage(cage, seed, seed_shape, displacement, scales, true, applied);
+      if (status != TetEditStatus::kApplied || applied) return status;
     }
   }
   return TetEditStatus::kApplied;
@@ -3534,33 +3577,57 @@ TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape,
 std::int64_t Adapter::lift_shape_cages() {
   std::vector<std::pair<double, std::uint64_t>> ordered;
   const auto& complex = mesh_.complex();
-  for (std::size_t row = 0; row < complex.tets.size(); ++row) {
-    const auto slot = static_cast<std::int32_t>(row);
-    const auto& cell = complex.tets[row];
-    if (!complex.live(slot) || is_ghost(cell) ||
-        !std::ranges::all_of(cell.v, [&](std::int32_t vertex) { return scalar_metric(metric(vertex)); })) {
-      continue;
+  std::size_t cell_count = 0;
+  std::optional<std::uint64_t> polish_seed;
+  std::int64_t sweeps = 0;
+  for (; sweeps < 3; ++sweeps) {
+    ordered.clear();
+    const double threshold = sweeps == 0 ? kShapeCageTarget : kShapeCageFloor;
+    for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+      const auto slot = static_cast<std::int32_t>(row);
+      const auto& cell = complex.tets[row];
+      if (!complex.live(slot) || is_ghost(cell)) continue;
+      if (sweeps == 0) ++cell_count;
+      if (!std::ranges::all_of(cell.v, [&](std::int32_t vertex) {
+            return scalar_metric(metric(vertex));
+          })) continue;
+      const double quality = geometric_cell_shape(slot);
+      if (quality > 0.0 && quality < threshold) {
+        ordered.emplace_back(quality, mesh_.cell_id(slot));
+      }
     }
-    const double quality = geometric_cell_shape(slot);
-    if (quality > 0.0 && quality < kShapeCageTarget) {
-      ordered.emplace_back(quality, mesh_.cell_id(slot));
+    std::sort(ordered.begin(), ordered.end());
+    if (ordered.empty()) break;
+    if (!polish_seed) polish_seed = ordered.front().second;
+    bool applied = false;
+    for (const auto& [prior, id] : ordered) {
+      const auto slot = mesh_.cell_slot(id);
+      const double quality = applied ? geometric_cell_shape(slot) : prior;
+      if (!(quality > 0.0 && quality < threshold)) continue;
+      bool done = false;
+      const auto status = relocate_shape_cage(slot, quality, done);
+      if (status != TetEditStatus::kApplied) {
+        fatal_ = status;
+        return sweeps;
+      }
+      applied = applied || done;
+    }
+    if (!applied) break;
+  }
+  if (sweeps > 0 && cell_count <= kShapeCageCells && polish_seed) {
+    const auto slot = mesh_.cell_slot(*polish_seed);
+    for (int pass = 0; pass < 3; ++pass) {
+      bool polished = false;
+      const auto status = relocate_shape_cage(slot, geometric_cell_shape(slot), polished, true);
+      if (status != TetEditStatus::kApplied) {
+        fatal_ = status;
+        break;
+      }
+      if (!polished) break;
+      ++sweeps;
     }
   }
-  std::sort(ordered.begin(), ordered.end());
-  bool applied = false;
-  for (const auto& [prior, id] : ordered) {
-    const auto slot = mesh_.cell_slot(id);
-    const double quality = applied ? geometric_cell_shape(slot) : prior;
-    if (!(quality > 0.0 && quality < kShapeCageTarget)) continue;
-    bool done = false;
-    const auto status = relocate_shape_cage(slot, quality, done);
-    if (status != TetEditStatus::kApplied) {
-      fatal_ = status;
-      return applied ? 1 : 0;
-    }
-    applied = applied || done;
-  }
-  return applied ? 1 : 0;
+  return sweeps;
 }
 
 std::int64_t Adapter::relocate_sweep(bool closed_band_shape) {

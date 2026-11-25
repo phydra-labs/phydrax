@@ -504,7 +504,7 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
                         std::span<const std::array<std::size_t, 4>> cells,
                         std::span<const ShapeCageEdge> edges, double radius,
                         double minimum_length, double target_shape,
-                        std::span<double> displacement) {
+                        std::span<double> displacement, bool improve_mean) {
   constexpr double kInset = 0.001;
   const double lower = minimum_length + kInset;
   constexpr double kUpper = kUpperLength - kInset;
@@ -536,6 +536,7 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
   using Point = std::array<double, 3>;
   std::vector<Point> trial(points.size());
   std::vector<double> position(displacement.size(), 0.0);
+  const double mean_weight = improve_mean ? 0.025 / static_cast<double>(cells.size()) : 0.0;
   const auto difference = [](const Point& a, const Point& b) -> Point {
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
   };
@@ -596,9 +597,9 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
       if (!(squared > 0.0) || !finite(squared)) return kInvalid;
       const double shape = 12.0 * deterministic::cube_root(volume * volume * 0.25) / squared;
       if (!(shape > 0.0) || !finite(shape)) return kInvalid;
-      const double residual = shape - target_shape;
-      if (residual >= 0.0) continue;
-      value += residual * residual;
+      const double residual = std::min(0.0, shape - target_shape);
+      if (residual == 0.0 && mean_weight == 0.0) continue;
+      value += residual * residual + mean_weight * (1.0 - shape);
 
       // q is proportional to volume^(2/3) / squared. Differentiate both factors.
       for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -617,7 +618,7 @@ bool propose_shape_cage(std::span<const ShapeCagePoint> points,
           d_shape[axis] =
               shape * (2.0 * d_volume[i][axis] / (3.0 * volume) - d_squared[axis] / squared);
         }
-        add_gradient(cell[i], d_shape, 2.0 * residual);
+        add_gradient(cell[i], d_shape, 2.0 * residual - mean_weight);
       }
     }
     return value;

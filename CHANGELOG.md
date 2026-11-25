@@ -2636,8 +2636,10 @@
   bounded joint relocation of their adjacent vertices. Proposals are
   rechecked after exact carrier selection and metric transport; every
   touched edge retains the metric band and the existing exact transaction
-  validates orientation and boundary coverage. Adapted geometry,
-  interpolation stencils, and evidence IDs can change.
+  validates orientation and boundary coverage. On bounded small meshes,
+  shape polishing can improve the mean without falling below the retained
+  worst-shape floor. Adapted geometry, interpolation stencils, and evidence
+  IDs can change.
 - Tetrahedral metric adaptation can split an axis-aligned hull edge when
   the source stencil and edge parameter round to the same interior point
   even if the exact split point is not representable. Exact facet
