@@ -23,6 +23,7 @@
 #include "check.hpp"
 #include "metric_adapt3d.hpp"
 #include "metric_float.hpp"
+#include "metric_layer_grid.hpp"
 #include "metric_scalar_box.hpp"
 #include "plc3d.hpp"
 #include "predicates.hpp"
@@ -736,6 +737,49 @@ void whole_box_measurements_match_committed_mesh() {
   PHX_CHECK(bits(measured.total_region_volume) == bits(total_volume));
 }
 
+void dense_layer_source_admits_a_sparse_output_grid() {
+  // The old source-sized projection replicated these 48,000 tetrahedra
+  // into more than four million buckets, although only 16 columns are used.
+  const Cube cube = kuhn_cube(20);
+  metric::AdaptInput input;
+  input.source_points = cube.points;
+  input.source_cells.assign(cube.tetrahedra.begin(), cube.tetrahedra.end());
+  std::vector<Dyadic> numerators;
+  numerators.reserve(input.source_points.size());
+  constexpr double denominator = 0x1p57;
+  for (double coordinate : input.source_points) {
+    numerators.emplace_back(coordinate * denominator);
+  }
+  const metric::CarrierSource source(input.source_points, std::move(numerators),
+                                     Dyadic(denominator), input.source_cells);
+  for (std::size_t row = 0; row < cube.points.size(); row += 3) {
+    const double rate = 3.2 + cube.points[row + 2];
+    const std::array<double, 9> tensor{6.76, 0, 0, 0, 6.76, 0, 0, 0, rate * rate};
+    std::array<double, 9> log;
+    PHX_CHECK(metric::logarithm(tensor.data(), log.data()));
+    input.source_metrics.insert(input.source_metrics.end(), tensor.begin(), tensor.end());
+    input.source_logarithms.insert(input.source_logarithms.end(), log.begin(), log.end());
+  }
+  const auto grid = metric::propose_metric_layer_grid(input, source, {0, 0, 0}, {1, 1, 1});
+  PHX_CHECK(grid.has_value());
+  if (!grid) return;
+  PHX_CHECK(grid->vertices.size() == 80);
+  PHX_CHECK(grid->cells.size() == 180);
+  for (const auto& cell : grid->cells) {
+    PHX_CHECK(orient3d(grid->vertices[cell[0]].point.data(), grid->vertices[cell[1]].point.data(),
+                       grid->vertices[cell[2]].point.data(), grid->vertices[cell[3]].point.data()) > 0);
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        const auto [a, b] = std::minmax(cell[i], cell[j]);
+        const double length = metric::length(grid->vertices[a].point.data(),
+                                             grid->vertices[b].point.data(),
+                                             grid->tensors[a].data(), grid->tensors[b].data());
+        PHX_CHECK(length >= metric::kLowerLength && length <= metric::kUpperLength);
+      }
+    }
+  }
+}
+
 void coplanar_wall_retile_preserves_the_footprint() {
   metric::ScalarBoxField field;
   field.low = {-1.0, -1.0, 0.0};
@@ -823,6 +867,7 @@ int main() {
   check_source_only_seam_refuses_a_tilted_declaration();
   tensor_adaptation_retries_after_coarse_exhaustion();
   whole_box_measurements_match_committed_mesh();
+  dense_layer_source_admits_a_sparse_output_grid();
   coplanar_wall_retile_preserves_the_footprint();
   original_cell_stencils_require_the_exact_binary64_rounding(false);
   original_cell_stencils_require_the_exact_binary64_rounding(true);
