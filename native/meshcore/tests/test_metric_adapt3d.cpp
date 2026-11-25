@@ -10,6 +10,7 @@
 // boundary face on its cube side.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -144,16 +145,21 @@ struct Run {
 Run adapt_diagonal_metric(TetMesh& mesh, std::span<const double> points,
                           std::span<const std::int32_t> tetrahedra,
                           std::array<double, 3> diagonal, double lower, bool topology,
-                          bool relocation = true, std::span<const std::uint64_t> protected_edges = {}) {
+                          bool relocation = true, std::span<const std::uint64_t> protected_edges = {},
+                          double axial_grade = 0.0) {
   Run run;
   PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
   metric::AdaptInput input;
   input.source_points.assign(points.begin(), points.end());
-  const double tensor[9] = {diagonal[0], 0, 0, 0, diagonal[1], 0, 0, 0, diagonal[2]};
+  double tensor[9] = {diagonal[0], 0, 0, 0, diagonal[1], 0, 0, 0, diagonal[2]};
   double logarithm[9];
-  PHX_CHECK(metric::logarithm(tensor, logarithm));
   const auto count = points.size() / 3;
   for (std::size_t row = 0; row < count; ++row) {
+    if (axial_grade != 0.0) {
+      const double rate = axial_grade + points[3 * row + 2];
+      tensor[8] = rate * rate;
+    }
+    PHX_CHECK(metric::logarithm(tensor, logarithm));
     input.source_metrics.insert(input.source_metrics.end(), tensor, tensor + 9);
     input.source_logarithms.insert(input.source_logarithms.end(), logarithm, logarithm + 9);
     input.source_vertex_ids.push_back(row);
@@ -358,6 +364,7 @@ void check_refinement() {
   // h = 1/2 against the target 1/4: interior and boundary splits.
   const Run run = adapt_cube(2, 16.0);
   check_result(run, 16.0);
+  PHX_CHECK(!run.output.closed_measurements);
   PHX_CHECK(run.output.counters.splits > 0);
   PHX_CHECK(run.after.cells.size() > run.before.cells.size());
 }
@@ -656,6 +663,79 @@ void tensor_adaptation_retries_after_coarse_exhaustion() {
   PHX_CHECK(measured >= kLower && measured <= kUpper);
 }
 
+void whole_box_measurements_match_committed_mesh() {
+  const Cube cube = kuhn_cube(2);
+  constexpr std::int32_t region = 47;
+  const std::vector<std::int32_t> regions(cube.tetrahedra.size() / 4, region);
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  const auto status = mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides,
+                                 {}, {}, {}, {});
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  auto run = adapt_diagonal_metric(mesh, cube.points, cube.tetrahedra, {6.76, 6.76, 10.24},
+                                   metric::kLowerLength, true, true, {}, 3.2);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.status == metric::AdaptStatus::kComplete);
+  PHX_CHECK(run.output.counters.retriangulations == 1);
+  PHX_CHECK(run.output.closed_measurements.has_value());
+  if (!run.output.closed_measurements) return;
+
+  // Read the committed corner banks, in stable cell ID order as exported.
+  const auto& output = run.output;
+  std::map<std::uint64_t, const double*> points;
+  for (const auto& vertex : run.after.vertices) points.emplace(vertex.id, vertex.carrier.data());
+  const auto tensor = [&](std::uint64_t id) {
+    return output.metrics.data() +
+           9 * (std::lower_bound(output.vertex_ids.begin(), output.vertex_ids.end(), id) -
+                output.vertex_ids.begin());
+  };
+  std::ranges::sort(run.after.cells, {}, &TetSnapshotCell::id);
+  std::set<std::pair<std::uint64_t, std::uint64_t>> edges;
+  double minimum_quality = std::numeric_limits<double>::infinity();
+  double total_volume = 0.0;
+  bool has_reversed_asymmetry = false;
+  for (const auto& cell : run.after.cells) {
+    PHX_CHECK(cell.region == region);
+    double corners[12], tensors[36];
+    for (int i = 0; i < 4; ++i) {
+      const std::uint64_t a = cell.vertices[i];
+      const double* p = points.at(a);
+      const double* m = tensor(a);
+      std::copy_n(p, 3, corners + 3 * i);
+      std::copy_n(m, 9, tensors + 9 * i);
+      for (int j = i + 1; j < 4; ++j) {
+        const std::uint64_t b = cell.vertices[j];
+        edges.emplace(std::minmax(a, b));
+        if (!has_reversed_asymmetry && a > b) {
+          const double* q = points.at(b);
+          const double* n = tensor(b);
+          has_reversed_asymmetry = metric::length(p, q, m, n) != metric::length(q, p, n, m);
+        }
+      }
+    }
+    minimum_quality = std::min(minimum_quality, metric::tetra_quality(corners, tensors));
+    double determinant, relative;
+    metric::relative_determinant(corners, determinant, relative);
+    total_volume += std::abs(determinant) / 6.0;
+  }
+  PHX_CHECK(has_reversed_asymmetry);
+  double minimum_length = std::numeric_limits<double>::infinity();
+  double maximum_length = 0.0;
+  for (const auto& [a, b] : edges) {
+    const double length = metric::length(points.at(a), points.at(b), tensor(a), tensor(b));
+    minimum_length = std::min(minimum_length, length);
+    maximum_length = std::max(maximum_length, length);
+  }
+  const auto bits = [](double x) { return std::bit_cast<std::uint64_t>(x); };
+  const auto& measured = *output.closed_measurements;
+  PHX_CHECK(measured.edge_count == static_cast<std::int64_t>(edges.size()));
+  PHX_CHECK(measured.region == region);
+  PHX_CHECK(bits(measured.minimum_length) == bits(minimum_length));
+  PHX_CHECK(bits(measured.maximum_length) == bits(maximum_length));
+  PHX_CHECK(bits(measured.minimum_metric_quality) == bits(minimum_quality));
+  PHX_CHECK(bits(measured.total_region_volume) == bits(total_volume));
+}
+
 void coplanar_wall_retile_preserves_the_footprint() {
   metric::ScalarBoxField field;
   field.low = {-1.0, -1.0, 0.0};
@@ -677,6 +757,58 @@ void coplanar_wall_retile_preserves_the_footprint() {
   PHX_CHECK(cells == unchanged);
 }
 
+void original_cell_stencils_require_the_exact_binary64_rounding(bool cancels) {
+  const double left = cancels ? -1.0 : 1.0;
+  const double right = cancels ? 3.0 : std::nextafter(3.0, 4.0);
+  const std::array<double, 12> points{left, 0, 0, right, 0, 0, left, 1, 0, left, 0, 1};
+  const std::array<std::int32_t, 4> tet{0, 1, 2, 3};
+  const std::array<std::int32_t, 12> faces{1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  const std::array<std::int32_t, 4> sources{0, 0, 0, 0};
+  const std::array<std::int32_t, 1> region{0};
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(mesh.build(points, tet, region, faces, sources, {}, {}, {}, {}) == PHX_MC_OK);
+  TetEditBatch batch;
+  batch.expected_generation = mesh.generation();
+  batch.identity_bound = mesh.identity_bound();
+  batch.source_id = mesh.source_id();
+  batch.source_revision = mesh.source_revision();
+  batch.source_map_id = mesh.source_map_id();
+  batch.frame_id = mesh.frame_id();
+  batch.periodic_identity = mesh.periodic_identity();
+  auto& op = batch.operations.emplace_back();
+  op.kind = TetEditKind::kRetriangulate;
+  op.removed_cell_ids = {0};
+  auto& site = op.changed_vertices.emplace_back();
+  site.id = 4;
+  site.carrier = {cancels ? -0.0 : std::nextafter(1.5, 2.0), 0.25, 0.25};
+  site.ancestry = {{0, {}, 0.25}, {1, {}, 0.25}, {2, {}, 0.25}, {3, {}, 0.25}};
+  for (int k = 0; k < 4; ++k) {
+    auto& child = op.replacement_cells.emplace_back();
+    child.id = static_cast<std::uint64_t>(k + 1);
+    child.region = 0;
+    child.vertices = {0, 1, 2, 3};
+    child.vertices[k] = 4;
+    child.facet_sources.fill(kNoConstraint);
+    child.facet_sources[k] = 0;
+    child.ancestor_cell_ids = {0};
+  }
+  const std::array<std::uint64_t, 4> source_ids{0, 1, 2, 3};
+  std::vector<TetEditResult> results;
+  // Both the incorrect tie endpoint and -0 lie inside the same simplex.
+  // Only the exact material stencil distinguishes the wrong carrier.
+  PHX_CHECK(mesh.apply_edit_batch(batch, results, source_ids) == TetEditStatus::kInvalidGeometry);
+  PHX_CHECK(mesh.generation() == batch.expected_generation);
+  site.carrier[0] = cancels ? 0.0 : 1.5;
+  PHX_CHECK(mesh.apply_edit_batch(batch, results, source_ids) == TetEditStatus::kApplied);
+  TetMeshSnapshot snapshot;
+  PHX_CHECK(mesh.snapshot(snapshot) == TetEditStatus::kApplied);
+  PHX_CHECK(snapshot.cells.size() == 4 && mesh.cell_slot(0) < 0);
+  for (const auto& child : snapshot.cells) {
+    PHX_CHECK(child.ancestor_cell_ids == std::vector<std::uint64_t>{0});
+    PHX_CHECK(child.edit_kind == static_cast<std::int32_t>(TetEditKind::kRetriangulate));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -690,7 +822,10 @@ int main() {
   check_source_only_seam_relocates_across_a_primitive();
   check_source_only_seam_refuses_a_tilted_declaration();
   tensor_adaptation_retries_after_coarse_exhaustion();
+  whole_box_measurements_match_committed_mesh();
   coplanar_wall_retile_preserves_the_footprint();
+  original_cell_stencils_require_the_exact_binary64_rounding(false);
+  original_cell_stencils_require_the_exact_binary64_rounding(true);
   metric_worksets_ignore_physical_vertex_order();
   metric_uses_the_last_available_target_cell_ids();
   return phx::mc::test::finish("test_metric_adapt3d");

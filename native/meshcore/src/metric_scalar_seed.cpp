@@ -21,7 +21,7 @@
 namespace phx::mc::metric {
 namespace {
 
-constexpr double kSeparation = 0.7072;  // Just inside the strict unit band.
+constexpr double kSeparation = 0.75;  // Reserve room for source-transported relaxation.
 constexpr int kSplitRounds = 16;
 constexpr std::array<std::array<int, 2>, 6> kEdges{{
     {0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3},
@@ -236,15 +236,14 @@ bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
   std::vector<AcceptedSplit> accepted;
   std::vector<std::uint8_t> masks;
   std::int32_t first_new_row = 0;
-  std::size_t new_cell_count = cells.size();
+  std::size_t retired_cells = 0;
   for (int round = 0; round < kSplitRounds; ++round) {
     // A conforming tetrahedral ball has at most C + 2V distinct edges;
     // only rows containing a site added in the last round can add edges.
-    KeyMap edges(std::min(6 * new_cell_count, cells.size() + 2 * points.size()));
+    KeyMap edges(std::min(6 * cells.size(), retired_cells + cells.size() + 2 * points.size()));
     proposals.clear();
     accepted.clear();
     for (const auto& cell : cells) {
-      if (cell.back() < first_new_row) continue;
       for (int edge = 0; edge < 6; ++edge) {
         // Old corner pairs already formed edges in the preceding round.
         // An unchanged midpoint rejected then is still rejected: its logs
@@ -324,26 +323,27 @@ bool split_sites(const AdaptInput& input, const ScalarBoxField& field,
 
     masks.resize(cells.size());
     std::size_t count = 0;
-    new_cell_count = 0;
     for (std::size_t row = 0; row < cells.size(); ++row) {
       unsigned mask = 0;
       for (int edge = 0; edge < 6; ++edge) {
         if (edges.find(edge_key(cells[row], edge)) >= 0) mask |= 1U << edge;
       }
       masks[row] = static_cast<std::uint8_t>(mask);
-      if (mask != 0 && !templates[mask].build(mask)) return false;
-      if (mask != 0) new_cell_count += templates[mask].count;
-      count += mask == 0 ? 1 : templates[mask].count;
-      if (count > kMaxScalarCells) return false;
+      if (mask == 0) {
+        // All edges were considered, and no endpoint or conflicting site
+        // can disappear. Only descendants of split cells can add edges.
+        ++retired_cells;
+      } else {
+        if (!templates[mask].build(mask)) return false;
+        count += templates[mask].count;
+      }
+      if (retired_cells + count > kMaxScalarCells) return false;
     }
     next_cells.clear();
     next_cells.reserve(count);
     for (std::size_t row = 0; row < cells.size(); ++row) {
       const unsigned mask = masks[row];
-      if (mask == 0) {
-        next_cells.push_back(cells[row]);
-        continue;
-      }
+      if (mask == 0) continue;
       std::array<std::int32_t, 10> local;
       std::copy(cells[row].begin(), cells[row].end(), local.begin());
       for (int edge = 0; edge < 6; ++edge) {

@@ -996,6 +996,13 @@ typedef struct phx_mc_metric_adaptation_output {
 PHX_MC_API int32_t phx_mc_metric_adaptation_export(
     const phx_mc_metric_adaptation* result, const phx_mc_metric_adaptation_output* banks,
     int64_t counter_capacity);
+/* Optional complete measurements of a committed whole-box result. The four
+ * values, in order, are minimum length, maximum length, minimum metric
+ * quality, and total volume of the single reported region. When unavailable,
+ * edge_count, region, and all four values are set to zero. Null arguments
+ * return PHX_MC_INVALID_ARGUMENT without writing outputs. */
+PHX_MC_API int32_t phx_mc_metric_adaptation_closed_measurements(
+    const phx_mc_metric_adaptation* result, int64_t* edge_count, int32_t* region, double* values);
 PHX_MC_API void phx_mc_metric_adaptation_free(phx_mc_metric_adaptation* result);
 PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 

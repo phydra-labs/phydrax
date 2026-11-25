@@ -209,6 +209,28 @@ int32_t phx_mc_metric_adaptation_export(const phx_mc_metric_adaptation* result,
   });
 }
 
+int32_t phx_mc_metric_adaptation_closed_measurements(const phx_mc_metric_adaptation* result,
+                                                     int64_t* edge_count, int32_t* region,
+                                                     double* values) {
+  if (result == nullptr || edge_count == nullptr || region == nullptr || values == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const auto& measurements = result->output.closed_measurements;
+  if (!measurements) {
+    *edge_count = 0;
+    *region = 0;
+    std::fill_n(values, 4, 0.0);
+  } else {
+    *edge_count = measurements->edge_count;
+    *region = measurements->region;
+    values[0] = measurements->minimum_length;
+    values[1] = measurements->maximum_length;
+    values[2] = measurements->minimum_metric_quality;
+    values[3] = measurements->total_region_volume;
+  }
+  return PHX_MC_OK;
+}
+
 void phx_mc_metric_adaptation_free(phx_mc_metric_adaptation* result) { delete result; }
 
 }  // extern "C"

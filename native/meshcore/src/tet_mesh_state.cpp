@@ -1058,6 +1058,7 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.cell_ids_ = cell_ids_;
   destination.vertex_ancestry_ = vertex_ancestry_;
   destination.cell_ancestry_ = cell_ancestry_;
+  destination.cell_ancestry_block_ = cell_ancestry_block_;
   destination.facets_ = facets_;
   destination.segments_ = segments_;
   destination.source_points_ = source_points_;
@@ -1121,6 +1122,7 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(cell_ids_, other.cell_ids_);
   swap(vertex_ancestry_, other.vertex_ancestry_);
   swap(cell_ancestry_, other.cell_ancestry_);
+  swap(cell_ancestry_block_, other.cell_ancestry_block_);
   swap(facets_, other.facets_);
   swap(segments_, other.segments_);
   swap(source_points_, other.source_points_);
@@ -1202,6 +1204,22 @@ bool TetMesh::audit_state() const {
         });
       })) {
     return false;
+  }
+  if (const auto& block = cell_ancestry_block_) {
+    if (block->offsets.size() < 2 || block->offsets.front() != 0 ||
+        block->offsets.back() != block->ancestor_ids.size() ||
+        !std::is_sorted(block->offsets.begin(), block->offsets.end()) ||
+        block->edit_kind < 0 ||
+        block->edit_kind > static_cast<std::int32_t>(TetEditKind::kRetriangulate) ||
+        block->size() > std::numeric_limits<std::uint64_t>::max() - block->first_id) {
+      return false;
+    }
+    for (std::size_t i = 0; i < block->size(); ++i) {
+      if (!cell_index_.used(block->first_id + i)) return false;
+    }
+    for (std::uint64_t id : block->ancestor_ids) {
+      if (!cell_index_.used(id)) return false;
+    }
   }
   std::size_t live_vertices = 0;
   for (std::size_t slot = 0; slot < vertex_ids_.size(); ++slot) {

@@ -412,6 +412,9 @@ class TetIdIndex {
   bool used(std::uint64_t id) const noexcept { return state(id) != kUnused; }
   // Records `id` as used and live at `slot` (a slot or kPending).
   void bind(std::uint64_t id, std::int32_t slot);
+  // Binds an already validated contiguous range of new live IDs. An interval
+  // touching the dense table extends it once; distant IDs keep sparse storage.
+  void bind_new_contiguous(std::uint64_t first, std::span<const std::int32_t> slots);
   // Records `id` as used and not live.
   void mark_used(std::uint64_t id);
   // Moves a live ID to `slot`.
@@ -1051,6 +1054,24 @@ class TetMesh {
   std::vector<std::uint64_t> cell_ids_;
   std::unordered_map<std::uint64_t, std::vector<TetVertexAncestry>> vertex_ancestry_;
   std::unordered_map<std::uint64_t, TetCellAncestryRecord> cell_ancestry_;
+  // A whole-source edit can publish one contiguous ID range. Its ordered
+  // ancestor rows stay immutable and shared by staged copies, including the
+  // rows of cells subsequently retired; local edits use the sparse map.
+  struct CellAncestryBlock {
+    std::uint64_t first_id = 0;
+    std::int32_t edit_kind = -1;
+    std::vector<std::size_t> offsets;
+    std::vector<std::uint64_t> ancestor_ids;
+
+    std::size_t size() const noexcept { return offsets.size() - 1; }
+    bool contains(std::uint64_t id) const noexcept {
+      return id >= first_id && id - first_id < size();
+    }
+    std::span<const std::uint64_t> row(std::size_t i) const noexcept {
+      return std::span(ancestor_ids).subspan(offsets[i], offsets[i + 1] - offsets[i]);
+    }
+  };
+  std::shared_ptr<const CellAncestryBlock> cell_ancestry_block_;
   std::vector<TetSnapshotFacet> facets_;
   std::vector<TetSnapshotSegment> segments_;
   std::vector<double> source_points_;

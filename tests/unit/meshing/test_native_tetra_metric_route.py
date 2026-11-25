@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import fields, replace
 from itertools import permutations
 from typing import Any
 
@@ -10,6 +11,7 @@ import phydrax as phx
 from phydrax._geometry_predicates import orient3d, PredicateMode
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing import (
+    _tetra_metric as tetra_metric,
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
@@ -223,11 +225,7 @@ def test_only_committed_retriangulations_change_local_evidence_identity() -> Non
     assert len(identifiers) == 3
 
 
-@pytest.mark.parametrize("scalar", [False, True], ids=["axis-graded", "scalar-graded"])
-def test_graded_box_transfers_across_retired_source_cells(scalar: bool) -> None:
-    from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
-
-    source = _source()
+def _graded_box_values(source: Any, *, scalar: bool) -> np.ndarray:
     points = np.asarray(source.mesh.coordinates)
     values = np.zeros((points.shape[0], 3, 3), dtype=np.float64)
     if scalar:
@@ -237,13 +235,51 @@ def test_graded_box_transfers_across_retired_source_cells(scalar: bool) -> None:
     else:
         values[:, 0, 0] = values[:, 1, 1] = 6.76
         values[:, 2, 2] = (3.2 + points[:, 2]) ** 2
+    return values
+
+
+def _assert_same_evidence(
+    actual: tetra_metric.TetraMetricEvidence,
+    expected: tetra_metric.TetraMetricEvidence,
+) -> None:
+    for field in fields(tetra_metric.TetraMetricEvidence):
+        assert getattr(actual, field.name) == getattr(expected, field.name), field.name
+
+
+@pytest.mark.parametrize("scalar", [False, True], ids=["axis-graded", "scalar-graded"])
+def test_graded_box_transfers_across_retired_source_cells(
+    scalar: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source()
+    measure = tetra_metric._adapted_evidence
+    reference_ids: list[str] = []
+
+    def compare(
+        state: tetra_metric._NativeState,
+        adaptation: tetra_metric.TetMeshMetricAdaptation,
+        snapshot: tetra_metric.TetMeshArrays,
+        lower: float,
+    ) -> tetra_metric.TetraMetricEvidence:
+        assert adaptation.closed_measurements is not None
+        measured = measure(state, adaptation, snapshot, lower)
+        reference = measure(
+            state, replace(adaptation, closed_measurements=None), snapshot, lower
+        )
+        _assert_same_evidence(measured, reference)
+        reference_ids.append(reference.evidence_id)
+        return measured
+
+    monkeypatch.setattr(tetra_metric, "_adapted_evidence", compare)
+    values = _graded_box_values(source, scalar=scalar)
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D, relocation=True)
     result = execute_mesh_adaptation(
         prepare_mesh_adaptation(source, _request(source, values=values), policy=policy)
     )
     evidence = result.evidence
-    assert isinstance(evidence, TetraMetricEvidence)
-    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert isinstance(evidence, tetra_metric.TetraMetricEvidence)
+    assert evidence.status is tetra_metric.TetraMetricStatus.COMPLETE
+    assert evidence.evidence_id == reference_ids[-1]
     assert evidence.retriangulations == 1
     assert evidence.out_of_range_edges == 0
     if scalar:
@@ -270,6 +306,133 @@ def test_graded_box_transfers_across_retired_source_cells(scalar: bool) -> None:
         rtol=0.0,
         atol=4 * np.finfo(np.float64).eps,
     )
+
+
+def test_closed_measurements_reject_contradictions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source()
+    measure = tetra_metric._adapted_evidence
+
+    def check(
+        state: tetra_metric._NativeState,
+        adaptation: tetra_metric.TetMeshMetricAdaptation,
+        snapshot: tetra_metric.TetMeshArrays,
+        lower: float,
+    ) -> tetra_metric.TetraMetricEvidence:
+        closed = adaptation.closed_measurements
+        assert closed is not None
+        for contradictory in (
+            replace(closed, edge_count=0),
+            replace(closed, minimum_length=float(np.nextafter(lower, 0.0))),
+            replace(closed, maximum_length=float("nan")),
+            replace(closed, total_region_volume=float("inf")),
+            replace(closed, region=closed.region + 1),
+        ):
+            with pytest.raises(ValueError, match="closed metric measurements"):
+                measure(
+                    state,
+                    replace(adaptation, closed_measurements=contradictory),
+                    snapshot,
+                    lower,
+                )
+        with pytest.raises(ValueError, match="measurements must be finite"):
+            measure(
+                state,
+                replace(
+                    adaptation,
+                    closed_measurements=replace(
+                        closed, minimum_metric_quality=float("nan")
+                    ),
+                ),
+                snapshot,
+                lower,
+            )
+        with pytest.raises(ValueError, match="closed metric measurements"):
+            measure(state, replace(adaptation, status=2), snapshot, lower)
+        with pytest.raises(ValueError, match="closed metric measurements"):
+            measure(
+                state,
+                adaptation,
+                snapshot._replace(tetrahedra=snapshot.tetrahedra[:0]),
+                lower,
+            )
+        invalid = replace(state, source_region_volumes={closed.region: float("nan")})
+        stopped = measure(invalid, adaptation, snapshot, lower)
+        reference = measure(
+            invalid, replace(adaptation, closed_measurements=None), snapshot, lower
+        )
+        assert stopped.status is tetra_metric.TetraMetricStatus.NUMERICAL_STOP
+        _assert_same_evidence(stopped, reference)
+        return measure(state, adaptation, snapshot, lower)
+
+    monkeypatch.setattr(tetra_metric, "_adapted_evidence", check)
+    request = _request(source, values=_graded_box_values(source, scalar=False))
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D, relocation=True)
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, request, policy=policy)
+    )
+    assert result.status is MeshAdaptationStatus.COMPLETE
+
+
+def test_protected_edge_remeasurement_keeps_numerical_stop_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source()
+    mesh = source.mesh
+    edges = mesh.entity_set(1)
+    protected = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        1,
+        edges.entity_set_id,
+        np.asarray(edges.entity_ids[:1], dtype=np.int64),
+    )
+    measure = tetra_metric._adapted_evidence
+    baselines: list[tetra_metric.TetraMetricEvidence] = []
+
+    def check(
+        state: tetra_metric._NativeState,
+        adaptation: tetra_metric.TetMeshMetricAdaptation,
+        snapshot: tetra_metric.TetMeshArrays,
+        lower: float,
+    ) -> tetra_metric.TetraMetricEvidence:
+        assert state.protected_edge_ids
+        assert adaptation.closed_measurements is None
+        baselines.append(measure(state, adaptation, snapshot, lower))
+        # Model a nonfinite source measure after the exact geometry is committed.
+        invalid = replace(
+            state,
+            source_region_volumes={
+                region: float("nan") for region in state.source_region_volumes
+            },
+        )
+        return measure(invalid, adaptation, snapshot, lower)
+
+    monkeypatch.setattr(tetra_metric, "_adapted_evidence", check)
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_METRIC_3D,
+        protected_scopes=(protected,),
+        relocation=False,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, _request(source), policy=policy)
+    )
+    evidence = result.evidence
+    assert result.status is MeshAdaptationStatus.NUMERICAL_STOP
+    assert isinstance(evidence, tetra_metric.TetraMetricEvidence)
+    assert evidence.status is tetra_metric.TetraMetricStatus.NUMERICAL_STOP
+    assert evidence.maximum_region_volume_error == np.finfo(np.float64).max
+    assert 0 < evidence.measured_edges < result.target.mesh.entity_set(1).count
+    baseline = baselines[-1]
+    assert baseline.status is not tetra_metric.TetraMetricStatus.NUMERICAL_STOP
+    assert evidence.evidence_id != baseline.evidence_id
+    for field in fields(tetra_metric.TetraMetricEvidence):
+        if field.name not in ("evidence_id", "status", "maximum_region_volume_error"):
+            assert getattr(evidence, field.name) == getattr(baseline, field.name), (
+                field.name
+            )
 
 
 @pytest.mark.parametrize("dimension", [0, 3], ids=["vertex", "cell"])

@@ -15,6 +15,7 @@
 #include "deterministic_float.hpp"
 #include "exact_scalar.hpp"
 #include "geometry3.hpp"
+#include "metric_box_edges.hpp"
 #include "metric_box_rate.hpp"
 #include "metric_scalar_box.hpp"
 #include "metric_float.hpp"
@@ -399,20 +400,6 @@ std::vector<Cell> checkerboard(std::size_t nx, std::size_t ny, std::size_t nz) {
   return cells;
 }
 
-std::vector<Edge> unique_edges(std::span<const Cell> cells) {
-  std::vector<Edge> edges;
-  edges.reserve(6 * cells.size());
-  for (const auto& cell : cells) {
-    for (int i = 0; i < 4; ++i) {
-      for (int j = i + 1; j < 4; ++j) {
-        edges.push_back({std::min(cell[i], cell[j]), std::max(cell[i], cell[j])});
-      }
-    }
-  }
-  std::sort(edges.begin(), edges.end());
-  edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
-  return edges;
-}
 
 struct Band {
   double lower;
@@ -687,7 +674,10 @@ std::optional<MetricBoxGrid> propose_metric_layer_grid(
 
   MetricBoxGrid grid;
   grid.cells = checkerboard(nx, ny, nz);
-  const auto edges = unique_edges(grid.cells);
+  std::vector<Edge> edges;
+  const auto vertices = (nx + 1) * (ny + 1) * (nz + 1);
+  edges.reserve(grid.cells.size() + 2 * vertices);
+  if (!visit_box_edges(vertices, grid.cells, [&](Edge e) { edges.push_back(e); })) return std::nullopt;
   std::vector<Node> nodes;
   columns.seed(nz + 1, nodes, interpolator);
   for (std::size_t i = 0; i < nodes.size(); ++i) {
@@ -718,13 +708,14 @@ std::optional<MetricBoxGrid> propose_scalar_box_grid(
   ScalarBoxField field;
   if (!(lower < kUpperLength) || !field.prepare(input, low, high)) return std::nullopt;
   ScalarBoxSites sites;
-  if (!seed_scalar_box(input, field, sites) || !relax_scalar_box(field, sites, 6)) {
+  constexpr int smoothing_steps = 5;
+  if (!seed_scalar_box(input, field, sites) || !relax_scalar_box(field, sites, smoothing_steps)) {
     return std::nullopt;
   }
   if (!correct_scalar_box(field, sites, lower)) {
     // Moving sites cannot create missing wall sites. Only rebuild when a
     // separated, chart-bound proposal can actually fill a boundary gap.
-    if (!fill_scalar_wall_gaps(field, sites) || !relax_scalar_box(field, sites, 6) ||
+    if (!fill_scalar_wall_gaps(field, sites) || !relax_scalar_box(field, sites, smoothing_steps) ||
         !correct_scalar_box(field, sites, lower)) return std::nullopt;
   }
   MetricBoxGrid grid;

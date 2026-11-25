@@ -140,6 +140,7 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
     staged.periodic_identity = periodic_identity_;
     staged.periodic_entity_maps = periodic_entity_maps_;
     const bool vertex_lineage = !vertex_ancestry_.empty();
+    const CellAncestryBlock* cell_block = include_cell_ancestry ? cell_ancestry_block_.get() : nullptr;
     const bool cell_lineage = include_cell_ancestry && !cell_ancestry_.empty();
     for (std::size_t slot = 0; slot < vertex_ids_.size(); ++slot) {
       if (!vertex_live_[slot]) continue;
@@ -164,7 +165,11 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
       TetSnapshotCell& cell = staged.cells.emplace_back();
       cell.id = cell_ids_[slot];
       cell.region = complex_.region(static_cast<std::int32_t>(slot));
-      if (cell_lineage) {
+      if (cell_block && cell_block->contains(cell.id)) {
+        const auto ancestors = cell_block->row(cell.id - cell_block->first_id);
+        if (!ancestors.empty()) cell.ancestor_cell_ids.assign(ancestors.begin(), ancestors.end());
+        cell.edit_kind = cell_block->edit_kind;
+      } else if (cell_lineage) {
         const auto ancestry = cell_ancestry_.find(cell.id);
         if (ancestry != cell_ancestry_.end()) {
           cell.ancestor_cell_ids = *ancestry->second.ancestor_cell_ids;
@@ -216,6 +221,13 @@ bool TetMesh::snapshot_sizes(std::int64_t* sizes) const {
       cell_ancestors += record.ancestor_cell_ids->size();
     }
   }
+  if (const auto& block = cell_ancestry_block_) {
+    for (std::size_t i = 0; i < block->size(); ++i) {
+      if (cell_slot(block->first_id + i) >= 0) {
+        cell_ancestors += block->offsets[i + 1] - block->offsets[i];
+      }
+    }
+  }
   const std::size_t values[PHX_MC_TET_MESH_SNAPSHOT_SIZES] = {
       vertex_index_.live_count(), static_cast<std::size_t>(complex_.finite_count),
       facets_.size(), segments_.size(), source_points_.size() / 3, source_faces_.size() / 3,
@@ -249,6 +261,8 @@ TetEditStatus TetMesh::export_snapshot(const phx_mc_tet_mesh_snapshot_request& r
     }
     std::sort(vertex_lineage.begin(), vertex_lineage.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
+    // The contiguous block needs neither a temporary row index nor sorting.
+    const CellAncestryBlock* cell_block = cell_ancestry_block_.get();
     std::vector<std::pair<std::uint64_t, const TetCellAncestryRecord*>> cell_lineage;
     cell_lineage.reserve(cell_ancestry_.size());
     for (const auto& [id, record] : cell_ancestry_) {
@@ -360,17 +374,24 @@ TetEditStatus TetMesh::export_snapshot(const phx_mc_tet_mesh_snapshot_request& r
         const double target = cell_size_target(corner_sizes);
         request.cell_size_targets[cell_row] = std::isfinite(target) ? target : 0.0;
         std::int32_t edit_kind = -1;
-        while (cell_record != cell_lineage.end() && cell_record->first < id) ++cell_record;
-        if (cell_record != cell_lineage.end() && cell_record->first == id) {
-          edit_kind = cell_record->second->edit_kind;
-          if (const auto& ancestors = cell_record->second->ancestor_cell_ids) {
-            if (ancestors->size() > cell_ancestor_count - ancestor_row) {
-              consistent = false;
-              return;
-            }
-            copy_into(*ancestors, request.cell_ancestor_ids + ancestor_row);
-            ancestor_row += ancestors->size();
+        std::span<const std::uint64_t> ancestors;
+        if (cell_block && cell_block->contains(id)) {
+          edit_kind = cell_block->edit_kind;
+          ancestors = cell_block->row(id - cell_block->first_id);
+        } else {
+          while (cell_record != cell_lineage.end() && cell_record->first < id) ++cell_record;
+          if (cell_record != cell_lineage.end() && cell_record->first == id) {
+            edit_kind = cell_record->second->edit_kind;
+            if (const auto& ids = cell_record->second->ancestor_cell_ids) ancestors = *ids;
           }
+        }
+        if (ancestors.size() > cell_ancestor_count - ancestor_row) {
+          consistent = false;
+          return;
+        }
+        if (!ancestors.empty()) {
+          std::copy(ancestors.begin(), ancestors.end(), request.cell_ancestor_ids + ancestor_row);
+          ancestor_row += ancestors.size();
         }
         request.cell_ancestry_edit_kinds[cell_row] = edit_kind;
         request.cell_ancestry_offsets[cell_row + 1] = static_cast<std::int64_t>(ancestor_row);

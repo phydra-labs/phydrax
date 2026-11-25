@@ -1859,6 +1859,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, ctypes.POINTER(_MetricAdaptationOutput), _I64),
     ),
+    "phx_mc_metric_adaptation_closed_measurements": (
+        _I32,
+        (_P, ctypes.POINTER(_I64), ctypes.POINTER(_I32), ctypes.POINTER(_F64)),
+    ),
     "phx_mc_metric_adaptation_free": (None, (_P,)),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
         _I32,
@@ -11137,12 +11141,24 @@ def relocated_tet_mesh_arrays(
 
 @final
 @dataclass(frozen=True, slots=True)
+class _MetricClosedMeasurements:
+    edge_count: int
+    region: int
+    minimum_length: float
+    maximum_length: float
+    minimum_metric_quality: float
+    total_region_volume: float
+
+
+@final
+@dataclass(frozen=True, slots=True)
 class TetMeshMetricAdaptation:
     """Result of :meth:`TetMesh3D.metric_adapt` (ascending native IDs).
 
     ``status`` is 0 complete, 1 stalled, 2 numerical stop; ``counters`` the
-    splits, collapses, flips 2-3, flips 3-2, ring reconnections, relocations
-    and the refusals for topology, protection, uncertainty and invalidity.
+    splits, collapses, flips 2-3, flips 3-2, ring reconnections, relocations,
+    topology/protection/uncertainty/invalidity refusals, and whole-volume
+    retriangulations, in that order.
     Per live vertex: native and target ID, stencil (CSR over source rows,
     binary64 weights) and tensor. Per live cell: native and target ID, block,
     source-cell ancestry (CSR) with its ``EntityLineageKind`` value and whether
@@ -11150,6 +11166,8 @@ class TetMeshMetricAdaptation:
     target ID) rows with their kinds for collapsed and relocated source
     vertices and ``unrepresentable_edges`` the long edges without an exact
     split point (target vertex ID pairs).
+    ``closed_measurements`` is present only for a completed whole-box
+    retessellation and holds measurements of exactly that committed mesh.
     """
 
     status: int
@@ -11171,6 +11189,7 @@ class TetMeshMetricAdaptation:
     vertex_relations: np.ndarray
     vertex_relation_kinds: np.ndarray
     unrepresentable_edges: np.ndarray
+    closed_measurements: _MetricClosedMeasurements | None = None
 
 
 @final
@@ -12677,9 +12696,10 @@ class TetMesh3D:
         status = TetMeshEditStatus(edit_status.value)
         if status is not TetMeshEditStatus.APPLIED or not handle.value:
             raise RuntimeError(f"Native metric adaptation failed with {status.name}.")
-        result = self._metric_adaptation(handle)
-        self._library["phx_mc_metric_adaptation_free"](handle)
-        return result
+        try:
+            return self._metric_adaptation(handle)
+        finally:
+            self._library["phx_mc_metric_adaptation_free"](handle)
 
     def _metric_adaptation(self, handle: ctypes.c_void_p, /) -> TetMeshMetricAdaptation:
         sizes = np.zeros(6, dtype=np.int64)
@@ -12722,6 +12742,25 @@ class TetMesh3D:
             ),
             "metric_adaptation_export",
         )
+        edge_count = _I64()
+        region = _I32()
+        values = (_F64 * 4)()
+        _raise_for_call(
+            self._library["phx_mc_metric_adaptation_closed_measurements"](
+                handle, ctypes.byref(edge_count), ctypes.byref(region), values
+            ),
+            "metric_adaptation_closed_measurements",
+        )
+        if edge_count.value < 0:
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR,
+                "metric_adaptation_closed_measurements: negative edge count",
+            )
+        closed_measurements = (
+            _MetricClosedMeasurements(edge_count.value, region.value, *values)
+            if edge_count.value
+            else None
+        )
         return TetMeshMetricAdaptation(
             int(status[0]),
             int(passes[0]),
@@ -12744,6 +12783,7 @@ class TetMesh3D:
             ),
             out["vertex_relation_kinds"],
             out["unrepresentable_edges"],
+            closed_measurements,
         )
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:

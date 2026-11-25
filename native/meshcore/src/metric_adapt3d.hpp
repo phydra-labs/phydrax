@@ -25,6 +25,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -110,11 +111,22 @@ struct AdaptInput {
   bool relocation = true;
 };
 
+// Complete evidence measurements of one committed whole-box transaction.
+struct ClosedMeasurements {
+  std::int64_t edge_count = 0;
+  std::int32_t region = 0;
+  double minimum_length = 0.0;
+  double maximum_length = 0.0;
+  double minimum_metric_quality = 0.0;
+  double total_region_volume = 0.0;
+};
+
 // The adapted state: per live vertex and cell, ascending native ID.
 struct AdaptOutput {
   AdaptStatus status = AdaptStatus::kComplete;
   std::int64_t passes = 0;
   AdaptCounters counters;
+  std::optional<ClosedMeasurements> closed_measurements;
   std::vector<std::uint64_t> vertex_ids;
   std::vector<std::uint64_t> vertex_target_ids;
   std::vector<std::int64_t> stencil_offsets;

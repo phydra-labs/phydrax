@@ -173,6 +173,7 @@ set(PHX_MC_HEADERS
   src/metric_carrier.hpp
   src/metric_layer_grid.hpp
   src/metric_layer_overlap.hpp
+  src/metric_box_edges.hpp
   src/metric_box_rate.hpp
   src/metric_scalar_box.hpp
   src/metric_collapse.hpp

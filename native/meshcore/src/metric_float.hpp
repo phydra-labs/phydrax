@@ -48,6 +48,10 @@ bool interpolate(std::int64_t count, const double* weights, const double* metric
 double length(const double* p, const double* q, const double* metric_p,
               const double* metric_q) noexcept;
 
+// Determinant of the three edge rows at the first corner.
+double corner_determinant(const double* a, const double* b, const double* c,
+                         const double* d) noexcept;
+
 // Violation quanta of a length: `above` is max(ceil(log(length / sqrt 2) *
 // 2^10), 1) for a length above the band and 0 otherwise, `below` the same for
 // log((1/sqrt 2) / length) below it. An infinite or zero length gives an

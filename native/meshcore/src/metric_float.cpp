@@ -50,18 +50,20 @@ double distance(const double* p, const double* q) noexcept {
   return std::sqrt((x * x + y * y) + z * z);
 }
 
+}  // namespace
+
 // det(p1 - p0, p2 - p0, p3 - p0) by cofactors of the first row.
-double corner_determinant(const double* corners) noexcept {
+double corner_determinant(const double* a, const double* b, const double* c,
+                         const double* d) noexcept {
+  const double* corners[3] = {b, c, d};
   double rows[9];
   for (std::size_t row = 0; row < 3; ++row) {
     for (std::size_t axis = 0; axis < 3; ++axis) {
-      rows[3 * row + axis] = corners[3 * (row + 1) + axis] - corners[axis];
+      rows[3 * row + axis] = corners[row][axis] - a[axis];
     }
   }
   return deterministic::determinant3(rows);
 }
-
-}  // namespace
 
 bool logarithm(const double* metric, double* logarithm) noexcept {
   deterministic::SymmetricEigen3 eigen;
@@ -178,7 +180,7 @@ void band_quanta(double length, double& above, double& below) noexcept {
 // stated 50 u covers the rounding of that product and the higher orders.
 void relative_determinant(const double* corners, double& determinant,
                           double& relative) noexcept {
-  determinant = canonical(corner_determinant(corners));
+  determinant = canonical(corner_determinant(corners, corners + 3, corners + 6, corners + 9));
   double largest = 0.0;
   bool products_finite = true;
   for (std::size_t corner = 0; corner < 4; ++corner) {
@@ -256,7 +258,8 @@ double tetra_quality(const double* corners, const double* metrics,
       first_edge = false;
     }
   }
-  return finish_tetra_quality(corner_determinant(corners), squares, average_log);
+  return finish_tetra_quality(
+      corner_determinant(corners, corners + 3, corners + 6, corners + 9), squares, average_log);
 }
 
 void tensor_properties(const double* tensor, bool& symmetric,

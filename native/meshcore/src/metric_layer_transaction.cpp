@@ -359,6 +359,7 @@ bool bind_original_boundary(const TetMesh& mesh, const TetMeshSnapshot& snapshot
 struct VertexBinding {
   Id native;
   Id target;
+  const Point* committed_point;
 };
 
 struct VertexOutput {
@@ -390,7 +391,8 @@ std::optional<TetEditStatus> bind_grid_vertices(
           !std::equal(grid.tensors[row].begin(), grid.tensors[row].end(),
                       input.source_metrics.data() + 9 * prior)) return std::nullopt;
       const Id id = input.source_vertex_ids[prior];
-      vertices.ids[row] = {id, id};
+      // Retained carriers keep their native coordinates, including zero sign.
+      vertices.ids[row] = {id, id, &original->first};
       retained[prior] = 1;
     }
     vertices.order.push_back(row);
@@ -412,7 +414,7 @@ std::optional<TetEditStatus> bind_grid_vertices(
   Id next_target = input.next_target_vertex;
   for (std::size_t row : fresh_rows) {
     const Carrier& carrier = grid.vertices[row];
-    vertices.ids[row] = {next_native++, next_target++};
+    vertices.ids[row] = {next_native++, next_target++, &carrier.point};
     TetEditVertex& vertex = edit.changed_vertices.emplace_back();
     vertex.id = vertices.ids[row].native;
     vertex.carrier = carrier.point;
@@ -443,7 +445,8 @@ bool write_vertices(const MetricBoxGrid& grid, const AdaptInput& input,
   std::vector<std::pair<Id, Id>> relations;
   auto changed = edit.changed_vertices.begin();
   for (std::size_t row : vertices.order) {
-    const auto [native, target] = vertices.ids[row];
+    const Id native = vertices.ids[row].native;
+    const Id target = vertices.ids[row].target;
     const Carrier& carrier = grid.vertices[row];
     if (carrier.bits < 0 || carrier.bits > 53) return false;
     const auto quantum = std::int64_t{1} << carrier.bits;
@@ -518,9 +521,15 @@ Face grid_face(const MetricBoxGrid& grid, const FaceUse& use) {
   return rows;
 }
 
+struct EdgeSquares {
+  double by_id;
+  double reversed = -1.0;
+};
+
 std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const AdaptInput& input,
                                             const SourceBox& source, const VertexOutput& vertices,
-                                            TetEdit& edit) {
+                                            TetEdit& edit,
+                                            std::optional<ClosedMeasurements>& measurements) {
   const std::size_t count = grid.cells.size();
   if (count == 0) return std::nullopt;
   if (!fits_ids(input.next_cell_id, count) || !fits_ids(input.next_target_cell, count) ||
@@ -528,16 +537,29 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const Ad
   edit.replacement_cells.resize(count);
   std::vector<FaceUse> uses;
   std::vector<unsigned> walls(grid.vertices.size());
+  std::vector<double> log_determinants;
+  log_determinants.reserve(grid.vertices.size());
+  bool finite_measurements = true;
   for (std::size_t vertex = 0; vertex < grid.vertices.size(); ++vertex) {
     for (int k = 0; k < 3; ++k) {
       const auto x = grid.vertices[vertex].point[k];
       if (x == source.box.bounds.low[k]) walls[vertex] |= 1U << (2 * k);
       else if (x == source.box.bounds.high[k]) walls[vertex] |= 2U << (2 * k);
     }
+    const double log_det = log_determinant(grid.tensors[vertex].data());
+    log_determinants.push_back(log_det);
+    finite_measurements &= std::isfinite(log_det);
   }
   std::vector<std::uint8_t> referenced(grid.vertices.size(), 0);
   const double lower = std::max(input.lower, kLowerLength);
-  KeyMap edges(std::min(6 * count, count + 2 * grid.vertices.size()));
+  const std::size_t expected_edges = std::min(6 * count, count + 2 * grid.vertices.size());
+  KeyMap edges(expected_edges);
+  std::vector<EdgeSquares> edge_squares;
+  if (finite_measurements) edge_squares.reserve(expected_edges);
+  constexpr double infinity = std::numeric_limits<double>::infinity();
+  ClosedMeasurements measured{0, source.region, infinity, 0.0, infinity, 0.0};
+  // The commit keeps each corner in this order and assigns ascending stable
+  // cell IDs. The ordered volume sum must match the published mesh export.
   for (std::size_t cell = 0; cell < count; ++cell) {
     TetEditCell& record = edit.replacement_cells[cell];
     record.id = input.next_cell_id + cell;
@@ -548,9 +570,10 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const Ad
       if (rows[k] < 0 || static_cast<std::size_t>(rows[k]) >= grid.vertices.size()) return std::nullopt;
       referenced[rows[k]] = 1;
       record.vertices[k] = vertices.ids[rows[k]].native;
-      p[k] = grid.vertices[rows[k]].point.data();
+      p[k] = vertices.ids[rows[k]].committed_point->data();
     }
     if (orient3d(p[0], p[1], p[2], p[3]) <= 0) return std::nullopt;
+    double squares = 0.0;
     for (int k = 0; k < 4; ++k) {
       Face tri;
       oriented_facet(rows.data(), k, tri.data());
@@ -560,15 +583,44 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const Ad
         uses.push_back({face_key(tri), cell, k});
       }
       for (int j = k + 1; j < 4; ++j) {
-        auto a = rows[k], b = rows[j];
-        auto& seen = edges.slot(topology::undirected_edge(a, b));
-        if (seen != -1) continue;
-        seen = 1;
-        if (vertices.ids[b].native < vertices.ids[a].native) std::swap(a, b);
-        const double measured = length(grid.vertices[a].point.data(), grid.vertices[b].point.data(),
-                                       grid.tensors[a].data(), grid.tensors[b].data());
-        if (!(measured >= lower && measured <= kUpperLength)) return std::nullopt;
+        const auto a = rows[k], b = rows[j];
+        const double* first_tensor = grid.tensors[a].data();
+        const double* second_tensor = grid.tensors[b].data();
+        const bool reverse = record.vertices[k] > record.vertices[j];
+        auto& edge = edges.slot(topology::undirected_edge(a, b));
+        if (edge == -1) {
+          const double value = reverse ? length(p[j], p[k], second_tensor, first_tensor)
+                                       : length(p[k], p[j], first_tensor, second_tensor);
+          if (!(value >= lower && value <= kUpperLength)) return std::nullopt;
+          edge = measured.edge_count++;
+          measured.minimum_length = std::min(measured.minimum_length, value);
+          measured.maximum_length = std::max(measured.maximum_length, value);
+          if (finite_measurements) edge_squares.push_back({value * value});
+        }
+        if (!finite_measurements) continue;
+        EdgeSquares& cached = edge_squares[edge];
+        double square = cached.by_id;
+        if (reverse) {
+          // The rounded logarithmic mean is not bit-symmetric. Measure the
+          // other direction only when a cell uses it in its local order.
+          if (cached.reversed < 0.0) {
+            const double value = length(p[k], p[j], first_tensor, second_tensor);
+            cached.reversed = value * value;
+          }
+          square = cached.reversed;
+        }
+        squares = k == 0 && j == 1 ? square : squares + square;
       }
+    }
+    if (finite_measurements) {
+      const double det = corner_determinant(p[0], p[1], p[2], p[3]);
+      const double logs[4] = {log_determinants[rows[0]], log_determinants[rows[1]],
+                              log_determinants[rows[2]], log_determinants[rows[3]]};
+      const double quality = tetra_quality_from_measurements(det, squares, logs);
+      measured.total_region_volume += std::abs(det) / 6.0;
+      measured.minimum_metric_quality = std::min(measured.minimum_metric_quality, quality);
+      finite_measurements = std::isfinite(squares) && std::isfinite(quality) &&
+                            std::isfinite(measured.total_region_volume);
     }
   }
   if (std::find(referenced.begin(), referenced.end(), 0) != referenced.end()) return std::nullopt;
@@ -596,6 +648,7 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const Ad
     it = next;
   }
   if (!shell.covered()) return std::nullopt;
+  if (finite_measurements) measurements = measured;
   return TetEditStatus::kApplied;
 }
 
@@ -1069,7 +1122,8 @@ std::optional<TetEditStatus> adapt_metric_box(TetMesh& mesh, const AdaptInput& i
   VertexOutput vertices;
   auto status = bind_grid_vertices(*grid, input, original, snapshot, vertices, edit);
   if (status != TetEditStatus::kApplied) return status;
-  status = bind_grid_cells(*grid, input, original, vertices, edit);
+  std::optional<ClosedMeasurements> measurements;
+  status = bind_grid_cells(*grid, input, original, vertices, edit, measurements);
   if (status != TetEditStatus::kApplied) return status;
   edit.removed_cell_ids = input.cell_ids;
   edit.removed_facet_ids.reserve(snapshot.constrained_facets.size());
@@ -1088,6 +1142,7 @@ std::optional<TetEditStatus> adapt_metric_box(TetMesh& mesh, const AdaptInput& i
   if (applied != TetEditStatus::kApplied) {
     return fatal(applied) ? std::optional{applied} : std::nullopt;
   }
+  staged.closed_measurements = measurements;
   output = std::move(staged);
   return TetEditStatus::kApplied;
 }

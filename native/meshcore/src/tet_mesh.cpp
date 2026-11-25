@@ -253,6 +253,21 @@ void TetIdIndex::write(std::uint64_t id, std::int32_t value) {
 
 void TetIdIndex::bind(std::uint64_t id, std::int32_t slot) { write(id, slot); }
 
+void TetIdIndex::bind_new_contiguous(std::uint64_t first, std::span<const std::int32_t> slots) {
+  if (slots.empty()) return;
+  if (sparse_.empty() && first <= dense_.size() &&
+      slots.size() <= dense_.max_size() - static_cast<std::size_t>(first)) {
+    const auto row = static_cast<std::size_t>(first);
+    const auto existing = std::min(dense_.size() - row, slots.size());
+    dense_.insert(dense_.end(), slots.begin() + existing, slots.end());
+    std::copy_n(slots.begin(), existing, dense_.begin() + row);
+    used_ += slots.size();
+    live_ += slots.size();
+    return;
+  }
+  for (std::size_t i = 0; i < slots.size(); ++i) bind(first + i, slots[i]);
+}
+
 void TetIdIndex::mark_used(std::uint64_t id) {
   if (state(id) == kUnused) write(id, kRetired);
 }

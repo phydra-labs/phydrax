@@ -457,7 +457,8 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
          batch.operations.front().removed_cell_ids.size() !=
              static_cast<std::size_t>(complex_.finite_count) ||
          !std::ranges::equal(original_vertex_ids, vertex_ids_) ||
-         points_ != source_points_ || !cell_ancestry_.empty() || !vertex_ancestry_.empty() ||
+         points_ != source_points_ || cell_ancestry_block_ ||
+         !cell_ancestry_.empty() || !vertex_ancestry_.empty() ||
          std::ranges::find(vertex_live_, 0) != vertex_live_.end())) {
       results.assign(batch.operations.size(), TetEditResult{});
       return TetEditStatus::kRejectedTopology;
@@ -2448,11 +2449,18 @@ bool TetMesh::validate_regions_and_constraints(
   // Each constrained replacement side must retain its authored region label,
   // including both sides of interfaces not listed as replacement facets.
   std::map<SortedFace, const TetSnapshotFacet*> facet_by_face;
+  // On a full replacement most sides are interior. A side with any corner
+  // absent from the facet bank cannot be an unmarked replacement facet.
+  std::vector<std::uint8_t> facet_vertices;
+  if (all_finite_removed && !operation.replacement_facets.empty()) {
+    facet_vertices.resize(vertex_ids_.size());
+  }
   for (const TetSnapshotFacet& facet : candidate_facets) {
     std::int32_t local[3];
     for (int corner = 0; corner < 3; ++corner) {
       local[corner] = vertex_slot(facet.vertices[corner]);
       if (!live_vertex(local[corner])) return false;
+      if (!facet_vertices.empty()) facet_vertices[local[corner]] = 1;
     }
     if (!facet_by_face.emplace(sorted_face(local), &facet).second) return false;
   }
@@ -2460,13 +2468,18 @@ bool TetMesh::validate_regions_and_constraints(
   for (const TetEditFacet& facet : operation.replacement_facets) unbound_facets.insert(facet.id);
   for (const TetEditCell& cell : operation.replacement_cells) {
     std::int32_t local[4];
+    unsigned off_facet = 0;
     for (int corner = 0; corner < 4; ++corner) {
       local[corner] = vertex_slot(cell.vertices[corner]);
       if (!live_vertex(local[corner])) return false;
+      if (!facet_vertices.empty() && facet_vertices[local[corner]] == 0) {
+        off_facet |= 1U << corner;
+      }
     }
     for (int face_slot = 0; face_slot < 4; ++face_slot) {
       const std::int32_t source = cell.facet_sources[face_slot];
-      if (source < 0 && operation.replacement_facets.empty()) continue;
+      if (source < 0 && (operation.replacement_facets.empty() ||
+                         (off_facet & ~(1U << face_slot)) != 0)) continue;
       std::int32_t face[3];
       oriented_facet(local, face_slot, face);
       const auto record = facet_by_face.find(sorted_face(face));
@@ -2646,7 +2659,10 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   std::vector<std::int32_t> moved_vertex_slots;
   std::size_t new_count = 0;
   std::vector<std::array<double, 3>> retained_points;
+  std::size_t vertex_ancestry_count = 0;
   if (original_retessellation) {
+    changed_vertex_ids.reserve(operation.changed_vertices.size());
+    retained_points.reserve(mesh.vertex_ids_.size() - removed_vertex_slots.size());
     for (std::size_t row = 0; row < mesh.vertex_ids_.size(); ++row) {
       if (!mesh.vertex_live_[row] || removed_vertex_ids.contains(mesh.vertex_ids_[row])) continue;
       const auto* p = mesh.points_.data() + 3 * row;
@@ -2717,6 +2733,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       return TetEditStatus::kRejectedProtected;
     }
     if (original_retessellation && current_slot < 0) {
+      vertex_ancestry_count += !vertex.ancestry.empty();
       if (std::binary_search(retained_points.begin(), retained_points.end(), vertex.carrier)) {
         return TetEditStatus::kInvalidGeometry;
       }
@@ -2815,6 +2832,20 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     }
   }
   if (!relocation) {
+    if (original_retessellation) {
+      const std::size_t slots = mesh.vertex_ids_.size() + new_count;
+      if (slots <= mesh.points_.max_size() / 3) mesh.points_.reserve(3 * slots);
+      mesh.vertex_ids_.reserve(slots);
+      mesh.vertex_live_.reserve(slots);
+      mesh.vertex_dimension_.reserve(slots);
+      mesh.protection_radii_.reserve(slots);
+      mesh.protected_vertices_.reserve(slots);
+      mesh.witnesses_.reserve(slots);
+      mesh.vertex_has_edge_parameter_.reserve(slots);
+      mesh.vertex_edge_endpoints_.reserve(slots);
+      mesh.vertex_edge_parameters_.reserve(slots);
+      if (vertex_ancestry_count != 0) mesh.vertex_ancestry_.reserve(vertex_ancestry_count);
+    }
     for (const TetEditVertex& vertex : operation.changed_vertices) {
       if (collapse && paired_survivors.contains(vertex.id)) continue;
       if (mesh.vertex_slot(vertex.id) >= 0) return TetEditStatus::kRejectedTopology;
@@ -3207,6 +3238,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   const std::size_t first_replacement = candidate_cells.size();
   const bool sorted_replacement_ids = original_retessellation &&
       std::ranges::is_sorted(operation.replacement_cells, {}, &TetEditCell::id);
+  bool contiguous_replacement_ids = sorted_replacement_ids;
+  std::size_t ancestor_count = 0;
   std::unordered_set<std::uint64_t> replacement_cell_ids;
   if (!sorted_replacement_ids) replacement_cell_ids.reserve(operation.replacement_cells.size());
   std::uint64_t previous_replacement_id = std::numeric_limits<std::uint64_t>::max();
@@ -3216,6 +3249,13 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         (sorted_replacement_ids ? previous_replacement_id == replacement.id
                                 : !replacement_cell_ids.insert(replacement.id).second)) {
       return TetEditStatus::kRejectedTopology;
+    }
+    if (contiguous_replacement_ids) {
+      contiguous_replacement_ids =
+          previous_replacement_id == std::numeric_limits<std::uint64_t>::max() ||
+          replacement.id == previous_replacement_id + 1;
+      // These sizes belong to distinct, addressable owning vectors.
+      ancestor_count += replacement.ancestor_cell_ids.size();
     }
     previous_replacement_id = replacement.id;
     if (mesh.periodic_identity_.bound && replacement.ancestor_cell_ids.empty()) {
@@ -3304,7 +3344,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
 
   std::map<SortedFace, std::int32_t> marked_faces;
   for (const auto& [key, face] : candidate_faces) {
-    if (face.source != kNoConstraint) marked_faces.emplace(key, face.source);
+    if (!original_retessellation && face.source != kNoConstraint) {
+      marked_faces.emplace(key, face.source);
+    }
     if (face.count == 1 && face.source == kNoConstraint) {
       return TetEditStatus::kRejectedProtected;
     }
@@ -3320,9 +3362,16 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       return TetEditStatus::kRejectedTopology;
     }
   }
-  if (marked_faces != expected_marked_faces) {
-    return TetEditStatus::kRejectedTopology;
-  }
+  // A whole-source candidate map was built from marked sides only. Compare
+  // its existing sorted keys and labels directly instead of building them again.
+  const bool marks_match = original_retessellation
+      ? std::ranges::equal(candidate_faces, expected_marked_faces,
+                          [](const auto& actual, const auto& expected) {
+                            return actual.first == expected.first &&
+                                   actual.second.source == expected.second;
+                          })
+      : marked_faces == expected_marked_faces;
+  if (!marks_match) return TetEditStatus::kRejectedTopology;
 
   // Other edits move no retained vertex except collapse survivors, whose stars,
   // facets and segments were rechecked above. Retained source geometry was
@@ -3409,26 +3458,45 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   result.accepted_cell_ids.reserve(created_cell_count);
   result.accepted_vertex_ids.reserve(operation.changed_vertices.size());
   mesh.cell_ids_.resize(mesh.complex_.tets.size(), std::numeric_limits<std::uint64_t>::max());
-  if (original_retessellation) mesh.cell_ancestry_.reserve(created_cell_count);
+  if (original_retessellation && !contiguous_replacement_ids) {
+    mesh.cell_ancestry_.reserve(created_cell_count);
+  }
   for (std::uint64_t id : operation.removed_cell_ids) mesh.cell_index_.retire(id);
   // Clear retired slots first: commit can reuse them for finite cells or ghosts.
   for (std::int32_t slot : removed_slots) {
     mesh.cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
   }
   const auto created_slots = mesh.edit_.created();
+  const auto edit_kind = static_cast<std::int32_t>(operation.kind);
+  if (contiguous_replacement_ids) {
+    auto block = std::make_shared<CellAncestryBlock>();
+    block->first_id = operation.replacement_cells.front().id;
+    block->edit_kind = edit_kind;
+    block->offsets.reserve(created_cell_count + 1);
+    block->ancestor_ids.reserve(ancestor_count);
+    block->offsets.push_back(0);
+    for (const TetEditCell& cell : operation.replacement_cells) {
+      block->ancestor_ids.insert(block->ancestor_ids.end(),
+                                 cell.ancestor_cell_ids.begin(), cell.ancestor_cell_ids.end());
+      block->offsets.push_back(block->ancestor_ids.size());
+    }
+    mesh.cell_index_.bind_new_contiguous(block->first_id, created_slots.first(created_cell_count));
+    mesh.next_cell_id_ = std::max(mesh.next_cell_id_,
+                                  operation.replacement_cells.back().id + 1);
+    mesh.cell_ancestry_block_ = std::move(block);
+  }
   for (std::size_t i = 0; i < created_cell_count; ++i) {
     const std::int32_t slot = created_slots[i];
     const std::uint64_t id = operation.replacement_cells[i].id;
     mesh.cell_ids_[static_cast<std::size_t>(slot)] = id;
-    mesh.cell_index_.bind(id, slot);
-    if (id >= mesh.next_cell_id_ && id != std::numeric_limits<std::uint64_t>::max()) {
-      mesh.next_cell_id_ = id + 1;
+    if (!contiguous_replacement_ids) {
+      mesh.cell_index_.bind(id, slot);
+      mesh.next_cell_id_ = std::max(mesh.next_cell_id_, id + 1);
+      mesh.cell_ancestry_.emplace(
+          id, TetCellAncestryRecord{edit_kind, std::make_shared<const std::vector<std::uint64_t>>(
+                                                   operation.replacement_cells[i].ancestor_cell_ids)});
     }
     result.accepted_cell_ids.push_back(id);
-    mesh.cell_ancestry_.emplace(
-        id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
-                                  std::make_shared<const std::vector<std::uint64_t>>(
-                                      operation.replacement_cells[i].ancestor_cell_ids)});
   }
   for (std::size_t i = created_cell_count; i < created_slots.size(); ++i) {
     const std::int32_t slot = created_slots[i];

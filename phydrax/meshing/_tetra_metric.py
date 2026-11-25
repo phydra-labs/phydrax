@@ -1638,6 +1638,16 @@ def _region_volumes(
     points: np.ndarray, cells: np.ndarray, regions: np.ndarray, /
 ) -> dict[int, float]:
     measures = _cell_volume(points, cells)
+    if (
+        regions.shape == measures.shape
+        and regions.size
+        and np.all(regions == regions[0])
+        and np.max(measures) <= np.finfo(np.float64).max / (2 * regions.size)
+    ):
+        # Accumulate in cell order, as in the per-region loop; a pairwise
+        # np.sum would change the evidence ID even for one region.
+        np.add.accumulate(measures, out=measures)
+        return {int(regions[0]): float(measures[-1])}
     totals: dict[int, float] = defaultdict(float)
     for region, measure in zip(regions.tolist(), measures.tolist(), strict=True):
         totals[int(region)] += float(measure)
@@ -7712,9 +7722,41 @@ def _metric_evidence(
     measured = ~protected
     if not np.any(measured):
         measured = np.ones(protected.shape, dtype=np.bool_)
-    values = lengths[measured]
+    values = lengths if np.all(measured) else lengths[measured]
     inside = (values >= lower) & (values <= _UPPER)
-    if status is TetraMetricStatus.COMPLETE and not np.all(inside):
+    outside_count = np.count_nonzero(~inside)
+    return _metric_evidence_from_stats(
+        status,
+        passes,
+        counters,
+        measured_edges=int(values.size),
+        out_of_range_edges=int(outside_count),
+        minimum_length=float(np.min(values)),
+        maximum_length=float(np.max(values)),
+        minimum_quality=float(np.min(qualities)),
+        volume_error=volume_error,
+        unmet_edges=unmet(np.flatnonzero(measured)[~inside]) if outside_count else (),
+        implicit_refusals=implicit_refusals,
+    )
+
+
+def _metric_evidence_from_stats(
+    status: TetraMetricStatus,
+    passes: int,
+    counters: Mapping[str, int],
+    /,
+    *,
+    measured_edges: int,
+    out_of_range_edges: int,
+    minimum_length: float,
+    maximum_length: float,
+    minimum_quality: float,
+    volume_error: float,
+    unmet_edges: tuple[TetraMetricUnmetEdge, ...],
+    implicit_refusals: tuple[int, int] | None,
+) -> TetraMetricEvidence:
+    """Apply terminal status semantics and publish canonical measurements."""
+    if status is TetraMetricStatus.COMPLETE and out_of_range_edges:
         status = TetraMetricStatus.STALLED
     if not np.isfinite(volume_error):
         status = TetraMetricStatus.NUMERICAL_STOP
@@ -7733,13 +7775,13 @@ def _metric_evidence(
         rejected_uncertain=int(counters["rejected_uncertain"]),
         rejected_invalid=int(counters["rejected_invalid"]),
         retriangulations=int(counters["retriangulations"]),
-        measured_edges=int(values.size),
-        out_of_range_edges=int(np.count_nonzero(~inside)),
-        minimum_metric_length=float(np.min(values)),
-        maximum_metric_length=float(np.max(values)),
-        minimum_metric_quality=float(np.min(qualities)),
+        measured_edges=measured_edges,
+        out_of_range_edges=out_of_range_edges,
+        minimum_metric_length=minimum_length,
+        maximum_metric_length=maximum_length,
+        minimum_metric_quality=minimum_quality,
         maximum_region_volume_error=float(volume_error),
-        unmet_edges=unmet(np.flatnonzero(measured)[~inside]),
+        unmet_edges=unmet_edges,
         implicit_refusals=implicit_refusals,
     )
 
@@ -7898,6 +7940,19 @@ def _id_relations(
     /,
 ) -> EntityRelations:
     """Distinct single-ID relations ordered by (source, target, kind)."""
+    if np.all(targets[:-1] <= targets[1:]):
+        # A stable one-column sort retains the original target order within
+        # each source. Distinct pairs need neither kind sorting nor deduplication.
+        order = np.argsort(sources, kind="stable")
+        source = sources[order]
+        target = targets[order]
+        if not np.any((source[:-1] == source[1:]) & (target[:-1] == target[1:])):
+            return EntityRelations(
+                dimension,
+                source.astype(np.int64, copy=False)[:, None],
+                target.astype(np.int64, copy=False)[:, None],
+                kinds[order].astype(np.int32, copy=False),
+            )
     records = sorted_unique_rows(
         np.stack((sources, targets, kinds), axis=1, dtype=np.int64)
     )
@@ -8003,6 +8058,25 @@ def _tetra_intermediate_relations(
     )
 
 
+def _related_tetra_entities(
+    cells: np.ndarray,
+    corners: np.ndarray,
+    retained: np.ndarray,
+    support_sizes: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Enumerate only target edges/facets that could have source lineage."""
+    width = corners.shape[1]
+    # Identity needs only retained IDs; refinement needs every corner's
+    # complete source support to fit within one entity of this dimension.
+    # A tetrahedron with too few eligible corners cannot supply either.
+    eligible = retained | (support_sizes <= width)
+    if not np.all(eligible):
+        cells = cells[np.count_nonzero(eligible[cells], axis=1) >= width]
+    rows = np.sort(cells[:, corners], axis=2).reshape((-1, width))
+    return sorted_unique_rows(rows)
+
+
 def _adapted_edit(
     state: _NativeState,
     adaptation: TetMeshMetricAdaptation,
@@ -8056,23 +8130,28 @@ def _adapted_edit(
         members = members[np.argsort(cell_target_ids[members], kind="stable")]
         block_cells.append(cells[members])
         block_ids.append(cell_target_ids[members])
-    # Vertex rows already follow ascending target IDs.
-    edge_rows = sorted_unique_rows(
-        np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2))
-    )
-    face_rows = sorted_unique_rows(
-        np.sort(cells[:, _TETRA_FACES], axis=2).reshape((-1, 3))
-    )
+    retained = np.isin(target_vertex_ids, state.source_vertex_ids, assume_unique=True)
+    edge_rows = _related_tetra_entities(cells, _TETRA_EDGES, retained, stencil_counts)
+    face_rows = _related_tetra_entities(cells, _TETRA_FACES, retained, stencil_counts)
 
     relation_sources = adaptation.vertex_relations[:, 0].astype(np.int64)
-    preserved = np.setdiff1d(
-        np.intersect1d(state.source_vertex_ids, target_vertex_ids), relation_sources
-    )
+    preserved = np.setdiff1d(target_vertex_ids[retained], relation_sources)
     owners = np.repeat(
         np.arange(cell_target_ids.size), np.diff(adaptation.ancestry_offsets)
     )
     ancestors = adaptation.ancestry_ids.astype(np.int64)
-    relocated = adaptation.cell_relocated[owners] != 0
+    cell_targets = cell_target_ids[owners]
+    cell_kinds = adaptation.ancestry_kinds[owners]
+    if np.any(adaptation.cell_relocated):
+        relocated = adaptation.cell_relocated[owners] != 0
+        ancestors = np.concatenate((ancestors, ancestors[relocated]))
+        cell_targets = np.concatenate((cell_targets, cell_targets[relocated]))
+        cell_kinds = np.concatenate(
+            (
+                cell_kinds,
+                np.full(np.count_nonzero(relocated), int(EntityLineageKind.RELOCATED)),
+            )
+        )
     relations = (
         _id_relations(
             0,
@@ -8103,20 +8182,7 @@ def _adapted_edit(
             stencil_sources,
             stencil_counts,
         ),
-        _id_relations(
-            3,
-            np.concatenate((ancestors, ancestors[relocated])),
-            np.concatenate((cell_target_ids[owners], cell_target_ids[owners[relocated]])),
-            np.concatenate(
-                (
-                    adaptation.ancestry_kinds[owners],
-                    np.full(
-                        int(np.count_nonzero(relocated)),
-                        int(EntityLineageKind.RELOCATED),
-                    ),
-                )
-            ),
-        ),
+        _id_relations(3, ancestors, cell_targets, cell_kinds),
     )
     edit = CellTopologyEdit(
         coordinates=points[order],
@@ -8154,7 +8220,56 @@ def _adapted_evidence(
     Out-of-band long edges are unrepresentable when the native reports no
     exact split point for them; out-of-band short edges are source-boundary
     edges when the source boundary forbids their collapse both ways.
+
+    A committed whole-box retessellation can carry its already measured
+    extrema and ordered volume; other results need the full edge census.
     """
+    match adaptation.status:
+        case 0:
+            status = TetraMetricStatus.COMPLETE
+        case 1:
+            status = TetraMetricStatus.STALLED
+        case 2:
+            status = TetraMetricStatus.NUMERICAL_STOP
+        case other:
+            raise ValueError(f"The native metric adaptation reported status {other}.")
+    counters = dict(zip(_EditCounters._fields, adaptation.counters.tolist(), strict=True))
+    implicit_refusals = state.native.implicit_refusals
+    closed = adaptation.closed_measurements
+    if closed is not None:
+        cell_count = snapshot.tetrahedra.shape[0]
+        if (
+            status is not TetraMetricStatus.COMPLETE
+            or counters["retriangulations"] != 1
+            or adaptation.unrepresentable_edges.size
+            or state.protected_edge_ids
+            or snapshot.segments.size
+            or not 6 <= closed.edge_count <= 6 * cell_count
+            or not lower <= closed.minimum_length <= closed.maximum_length <= _UPPER
+            or not 0.0 <= closed.total_region_volume < np.inf
+            or snapshot.tetrahedron_regions.shape != (cell_count,)
+            or not np.all(snapshot.tetrahedron_regions == closed.region)
+        ):
+            raise ValueError(
+                "Native closed metric measurements contradict the committed mesh "
+                "or requested band."
+            )
+        return _metric_evidence_from_stats(
+            status,
+            adaptation.passes,
+            counters,
+            measured_edges=closed.edge_count,
+            out_of_range_edges=0,
+            minimum_length=closed.minimum_length,
+            maximum_length=closed.maximum_length,
+            minimum_quality=closed.minimum_metric_quality,
+            volume_error=_relative_region_error(
+                state.source_region_volumes, {closed.region: closed.total_region_volume}
+            ),
+            unmet_edges=(),
+            implicit_refusals=implicit_refusals,
+        )
+
     native_ids = adaptation.vertex_ids.astype(np.int64)
     snapshot_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
     rows = np.searchsorted(native_ids, snapshot_ids)
@@ -8169,13 +8284,16 @@ def _adapted_evidence(
         measurement_edges = edges.copy()
         measurement_edges[reverse] = edges[reverse, ::-1]
     lengths = metric_lengths(points, metrics, measurement_edges)
-    segments = np.sort(np.asarray(snapshot.segments, dtype=np.int64), axis=1)
-    protected = _row_member(
-        np.sort(targets[edges], axis=1),
-        np.asarray(sorted(state.protected_edge_ids), dtype=np.int64),
-    ) | _row_member(
-        edges, segments[np.asarray(snapshot.protected_segments, dtype=np.bool_)]
-    )
+    protected = np.zeros(edges.shape[0], dtype=np.bool_)
+    if state.protected_edge_ids:
+        protected = _row_member(
+            np.sort(targets[edges], axis=1),
+            np.asarray(sorted(state.protected_edge_ids), dtype=np.int64),
+        )
+    segment_mask = np.asarray(snapshot.protected_segments, dtype=np.bool_)
+    if np.any(segment_mask):
+        segments = np.asarray(snapshot.segments, dtype=np.int64)
+        protected |= _row_member(edges, np.sort(segments[segment_mask], axis=1))
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
     volume_error = _relative_region_error(
         state.source_region_volumes, _region_volumes(points, cells, regions)
@@ -8232,25 +8350,16 @@ def _adapted_evidence(
             witnesses.append(TetraMetricUnmetEdge(kind, (pair[0], pair[1]), length))
         return tuple(sorted(witnesses, key=lambda row: (row.kind.value, row.vertex_ids)))
 
-    match adaptation.status:
-        case 0:
-            status = TetraMetricStatus.COMPLETE
-        case 1:
-            status = TetraMetricStatus.STALLED
-        case 2:
-            status = TetraMetricStatus.NUMERICAL_STOP
-        case other:
-            raise ValueError(f"The native metric adaptation reported status {other}.")
     return _metric_evidence(
         status,
         adaptation.passes,
-        dict(zip(_EditCounters._fields, adaptation.counters.tolist(), strict=True)),
+        counters,
         lengths,
         protected,
         metric_tetra_quality(points, metrics, cells),
         volume_error,
         unmet,
-        state.native.implicit_refusals,
+        implicit_refusals,
         lower=lower,
     )
 

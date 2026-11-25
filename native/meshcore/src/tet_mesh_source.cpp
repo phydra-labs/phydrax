@@ -19,6 +19,7 @@
 #include "facet_coverage.hpp"
 #include "geometry3.hpp"
 #include "exact_scalar.hpp"
+#include "floating_point_mode.hpp"
 #include "predicates.hpp"
 
 namespace phx::mc {
@@ -26,6 +27,25 @@ namespace {
 
 bool same_bits(double a, double b) {
   return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+
+// `image` is exact, with a normal least bit when nonzero. Check that the
+// image lies in the supplied carrier's round-to-nearest-even cell without
+// first estimating and rounding it.
+bool rounded_to(const Expansion& image, double carrier) {
+  if (carrier == 0.0) return image.is_zero() && same_bits(carrier, 0.0);
+  const Expansion delta = image - Expansion(carrier);
+  const int direction = delta.sign();
+  if (direction == 0) return true;
+  const double infinity = std::numeric_limits<double>::infinity();
+  const double neighbor = std::nextafter(carrier, direction > 0 ? infinity : -infinity);
+  // Both endpoints are normal and within a factor of two, so their difference
+  // and its half are exactly representable. This also handles powers of two,
+  // where the gaps above and below differ.
+  const double half_gap = (neighbor - carrier) * 0.5;
+  const int beyond_midpoint = direction * (delta - Expansion(half_gap)).sign();
+  return beyond_midpoint < 0 ||
+         (beyond_midpoint == 0 && (std::bit_cast<std::uint64_t>(carrier) & 1U) == 0);
 }
 
 int exact_orientation(const Expansion* const points[4][3]) {
@@ -476,10 +496,17 @@ bool TetMesh::source_carrier_valid(const TetEditVertex& vertex) const {
     }
   }
   if (!vertex.ancestry.empty()) {
-    Dyadic weight_sum(0.0);
-    const Dyadic one(1.0);
-    std::array<Dyadic, 3> coordinates{
-        Dyadic(0.0), Dyadic(0.0), Dyadic(0.0)};
+    // At most four products fit inline. With a nonzero weight >= 2^-500
+    // and an already admitted live source coordinate, every exact product
+    // is an integer multiple of 2^(min_exponent - 500 - 104). No product,
+    // FMA residual, or cancellation can lose a subnormal component. The
+    // input magnitudes sum to at most 4 * 2^max_exponent even before the
+    // weight-sum check.
+    static_assert(kCoordinateMinExponent - 500 - 104 >= -1022);
+    static_assert(kCoordinateMaxExponent + 4 < 1024);
+    std::array<const double*, 4> source_points;
+    bool inline_exact = vertex.ancestry.size() <= source_points.size() &&
+        (floating_point_mode() & kFloatingPointModeFields) == kGradualNearestMode;
     for (std::size_t row = 0; row < vertex.ancestry.size(); ++row) {
       const TetVertexAncestry& ancestor = vertex.ancestry[row];
       if (!std::isfinite(ancestor.weight) || ancestor.weight < 0.0 ||
@@ -489,19 +516,43 @@ bool TetMesh::source_carrier_valid(const TetEditVertex& vertex) const {
       }
       const std::int32_t source_slot = vertex_slot(ancestor.source_vertex_id);
       if (!live_vertex(source_slot)) return false;
-      const Dyadic weight(ancestor.weight);
-      weight_sum = weight_sum + weight;
-      for (int axis = 0; axis < 3; ++axis) {
-        coordinates[static_cast<std::size_t>(axis)] =
-            coordinates[static_cast<std::size_t>(axis)] +
-            Dyadic(point(source_slot)[axis]) * weight;
+      if (inline_exact) {
+        inline_exact = ancestor.weight == 0.0 || ancestor.weight >= 0x1p-500;
+        source_points[row] = point(source_slot);
       }
     }
-    if (!(weight_sum - one).is_zero()) return false;
-    for (int axis = 0; axis < 3; ++axis) {
-      const double rounded = exact::rounded_quotient(
-          coordinates[static_cast<std::size_t>(axis)], one);
-      if (!same_bits(rounded, vertex.carrier[static_cast<std::size_t>(axis)])) return false;
+    if (inline_exact) {
+      Expansion weight_sum;
+      std::array<Expansion, 3> coordinates;
+      for (std::size_t row = 0; row < vertex.ancestry.size(); ++row) {
+        const double weight = vertex.ancestry[row].weight;
+        if (weight == 0.0) continue;
+        weight_sum = weight_sum + Expansion(weight);
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          coordinates[axis] = coordinates[axis] + Expansion::product(source_points[row][axis], weight);
+        }
+      }
+      if (!(weight_sum - Expansion(1.0)).is_zero()) return false;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (!rounded_to(coordinates[axis], vertex.carrier[axis])) return false;
+      }
+    } else {
+      Dyadic weight_sum;
+      const Dyadic one(1.0);
+      std::array<Dyadic, 3> coordinates;
+      for (const TetVertexAncestry& ancestor : vertex.ancestry) {
+        const Dyadic weight(ancestor.weight);
+        weight_sum = weight_sum + weight;
+        const double* source = point(vertex_slot(ancestor.source_vertex_id));
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          coordinates[axis] = coordinates[axis] + Dyadic(source[axis]) * weight;
+        }
+      }
+      if (!(weight_sum - one).is_zero()) return false;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double rounded = exact::rounded_quotient(coordinates[axis], one);
+        if (!same_bits(rounded, vertex.carrier[axis])) return false;
+      }
     }
   }
   const SourceWitness& witness = vertex.witness;

@@ -239,7 +239,7 @@ bool relax_scalar_box(const ScalarBoxField& field, ScalarBoxSites& sites, int sw
       auto& point = sites.points[v];
       auto& sample = sites.samples[v];
       const auto& moment = moments[v];
-      const double limit = 0.2 * deterministic::exp(-sample.log_rate);
+      const double limit = 0.25 * deterministic::exp(-sample.log_rate);
       if (!positive_finite(limit) || !positive_finite(moment.weight)) return false;
       for (int axis = 0; axis < 3; ++axis) {
         if ((walls[v] & (3u << (2 * axis))) != 0) continue;
@@ -248,7 +248,7 @@ bool relax_scalar_box(const ScalarBoxField& field, ScalarBoxSites& sites, int sw
         const double old = point[axis];
         // An already free site that starts within the relative margin must
         // not be pushed farther than its clipped step just to reach it.
-        point[axis] = std::clamp(old + 0.6 * std::clamp(delta, -limit, limit),
+        point[axis] = std::clamp(old + std::clamp(delta, -limit, limit),
                                  std::min(old, lower[axis]), std::max(old, upper[axis]));
       }
       if (!field.sample(point, sample)) return false;
