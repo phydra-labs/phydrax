@@ -561,6 +561,16 @@ share 0.844899, and zero inversions or strict-band misses. Mean and share
 decreased relative to full polishing, but both still exceed MMG3D's. The
 2.020 s construction gate remains open; finalization took another 24.124 s.
 
+The variational box route at `7abd384155` constructs 261,235 tetrahedra in
+3.363, 3.462 and **3.346 s** on the same source and metric. It still misses
+MMG3D's 2.020 s. All edges meet the transported band, with no inverted
+cells; worst shape is 0.604014, mean 0.863423 and midpoint share 0.859990.
+The localized walk reproduced all 924,981 positive-overlap ancestry entries
+from the BVH search, including distinct rounded and exact parents on a
+separate one-ULP crossing fixture. Wider dyadic coordinates now use the
+native validity proof with the same directed determinant bounds and map
+digests. Separate certification and transfer took 10.864 s.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
@@ -740,6 +750,10 @@ including physical gradation and source ancestry, took 0.944706, 0.927406 and
 0.824845 s on the integrated candidate, versus the matched MMG3D minimum of
 1.204 s. Separate certification and transfer took 4.971566 s. This qualifies one
 refinement field and one source size, not the entire F6 ladder.
+The same three single-thread comparisons at `7abd384155` took 0.796170,
+0.710478 and **0.702215 s**, with unchanged quality and 1.698140 s separate
+certification and transfer. Graded coarsening retained all science gates at
+1.095989 s versus its approved 1.3195 s ceiling.
 
 ### Sequential adaptation worker invariance
 
@@ -755,6 +769,10 @@ The bounded-cage 388-cell anisotropic crop also completes with zero
 residuals and unchanged mesh, transition, lineage, stencil, metric,
 and evidence IDs at worker requests of 1, 2, 4, and 8. These requests
 check invariance; they do not attest to a parallel edit team.
+The edited scalar variational crop produced 7,596 tetrahedra and identical
+mesh, result, geometry, validity, transition, lineage, stencil, metric and
+evidence identities at worker requests of 1, 2, 4 and 8. These counters do
+not claim that the adaptation transaction itself ran on multiple workers.
 
 ### Matched-worker evidence and remaining limits
 
