@@ -751,6 +751,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- CPU physical gradation of coordinate-diagonal anisotropic metrics solves
+  the fixed point of each axis size instead of stopping sweeps at the edge
+  tolerance. Changed entries and gradation evidence can differ; unchanged
+  entries retain their bits. The bounded sweep still handles conflicts with
+  the declared size or anisotropy limits.
 - Graded tetrahedral adaptation benchmark ceilings bind MMG3D results to
   the regenerated source and target digests. The authenticated 10,452-cell
   coarsening row allows 3.5× its original construction time. Graded rows

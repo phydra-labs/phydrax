@@ -9,6 +9,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._jax_config import default_device
+from phydrax._meshcore import meshcore_available
 from phydrax.meshing._metric import _edge_length_enclosure, _PreparedMetricEnclosures
 
 
@@ -220,6 +221,60 @@ def test_diagonal_gradation_identity_across_cpu_placement() -> None:
         np.asarray(placed.values).view(np.uint64),
         np.asarray(implicit.values).view(np.uint64),
     )
+
+
+def test_diagonal_physical_gradation_reaches_fixed_point_and_preserves_bits() -> None:
+    if jax.default_backend() != "cpu" or not meshcore_available():
+        pytest.skip("Requires native CPU gradation.")
+    points = np.zeros((5, 3), dtype=np.float64)
+    points[:, 0] = (0.0, 0.25, 0.5, 2.999, 4.0)
+    edges = np.array([[1, 2], [0, 1], [0, 3]], dtype=np.int64)
+    values = np.full((5, 3, 3), -0.0, dtype=np.float64)
+    values[:, 0, 0] = (16.0, 1.0, 1.0, 1.0, 1.0)
+    values[:, 1, 1] = 7.25
+    values[:, 2, 2] = 11.0
+    field = meshing.MeshMetricField(
+        _scope(5), values, minimum_size=0.125, maximum_size=2.0
+    )
+    policy = meshing.MetricGradationPolicy(1.25, anisotropic=True, relative_tolerance=0.01)
+    graded, evidence = meshing.grade_mesh_metric(
+        field, policy=policy, adjacency=edges, coordinates=points
+    )
+    expected = values.copy()
+    # The edge to row 3 already satisfies the tolerance but not the fixed point.
+    sizes = np.array([0.3125, 0.375, 0.25 + 0.25 * points[3, 0]])
+    expected[1:4, 0, 0] = 1.0 / (sizes * sizes)
+    np.testing.assert_array_equal(
+        np.asarray(graded.values).view(np.uint64), expected.view(np.uint64)
+    )
+    assert evidence.converged and evidence.maximum_violation <= 4 * np.finfo(np.float64).eps
+    assert (evidence.iterations, evidence.updates, evidence.modified_count) == (15, 3, 3)
+
+
+def test_diagonal_physical_gradation_uses_bounded_sweep_if_fixed_point_is_refused() -> None:
+    if jax.default_backend() != "cpu" or not meshcore_available():
+        pytest.skip("Requires native CPU gradation.")
+    # This input is admitted with the field's spectral roundoff allowance but
+    # propagation beyond the tighter sweep allowance is prohibited.
+    over = 16.0 * (1.0 + 48.0 * np.finfo(np.float64).eps)
+    field = meshing.MeshMetricField(
+        _scope(2),
+        np.stack((np.diag([over, 1.0]), np.eye(2))),
+        minimum_size=0.25,
+        maximum_size=2.0,
+    )
+    with pytest.raises(meshing.MetricGradationError) as failure:
+        meshing.grade_mesh_metric(
+            field,
+            policy=meshing.MetricGradationPolicy(1.0, anisotropic=True),
+            adjacency=np.array([[0, 1]], dtype=np.int64),
+            coordinates=np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float64),
+        )
+    evidence = failure.value.evidence
+    assert evidence.status is meshing.MetricGradationStatus.BOUNDS_CONFLICT
+    assert evidence.iterations == 1
+    assert evidence.updates == evidence.modified_count == 0
+    assert evidence.maximum_violation >= 15.0
 
 
 def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:
