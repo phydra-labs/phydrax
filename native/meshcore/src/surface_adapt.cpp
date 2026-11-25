@@ -24,11 +24,9 @@ constexpr double kNormalCosine = 0.5;    // created normals within 60 degrees of
 // without subdividing them.
 constexpr double kSizeMargin = 0.7;
 constexpr double kRepairMargin = 0.8;
-// An input edge whose two triangles turn by more than 45 degrees is a crease
-// of the source (such as a CSG edge). Every input triangle touching a crease
-// vertex is kept exactly as the input has it: the first-order certificate
-// cannot decide transversality next to a crease (the gradient enclosure
-// spans both sides), so those triangles keep the carrier's own evidence.
+// A turn above 45 degrees is a candidate for a source crease. Keep triangles
+// touching a retained crease vertex exactly: the first-order certificate can
+// fail transversality there because its gradient enclosure spans both sides.
 constexpr double kCreaseCosine = 0.70710678118654752;
 constexpr int kSizeSweeps = 5;
 constexpr int kQualitySweeps = 8;
@@ -286,7 +284,7 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
   normals_.assign(n, Point{0, 0, 0});
   sizes_.assign(n, targets_.edge_length);
   roles_.assign(n, Role::kFree);
-  // Crease edges by the input's own turn.
+  // A sharp input turn can be a real crease or a poorly shaped carrier face.
   for (size_t c = 0; c < 3 * m && targets_.keep_creases; ++c) {
     const auto h = static_cast<int32_t>(c);
     const int32_t g = twin(h);
@@ -301,6 +299,13 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
               sub(points[static_cast<size_t>(corners_[base + 2])], points[static_cast<size_t>(corners_[base])]));
     const double lengths = std::sqrt(norm2(first) * norm2(second));
     if (!(dot(first, second) < kCreaseCosine * lengths)) continue;
+    const auto centroid = [&](size_t face) {
+      const Point& a = points[static_cast<size_t>(corners_[face])];
+      const Point& b = points[static_cast<size_t>(corners_[face + 1])];
+      const Point& c = points[static_cast<size_t>(corners_[face + 2])];
+      return scale(add(add(a, b), c), 1.0 / 3.0);
+    };
+    if (oracle_.smooth_across(centroid(3 * (c / 3)), centroid(base), kCreaseCosine)) continue;
     roles_[static_cast<size_t>(tail(h))] = roles_[static_cast<size_t>(head(h))] = Role::kCrease;
   }
   // Triangles touching a crease vertex are kept: their corners and edges.

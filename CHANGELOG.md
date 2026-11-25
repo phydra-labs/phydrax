@@ -2631,6 +2631,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Implicit carrier remeshing checks the projected source normals on both
+  sides of a sharp input edge before freezing it. Poorly shaped carrier
+  faces on smooth patches can be edited instead of surviving as false
+  creases. Candidate identities can change; certification is unchanged.
 - The zero-set certificate's cover-alone reverse proof runs once more, down
   to half the slack between the tolerance and the proved forward distance,
   when every refused leaf lies within one leaf diameter of the tolerance.

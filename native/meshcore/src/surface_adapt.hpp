@@ -58,6 +58,9 @@ class SurfaceOracle {
   // A point of the surface near `position`, its unit normal oriented like the
   // surface being remeshed, and its curvature; false when none is found.
   virtual bool project(const Point& position, SurfacePoint& out) const = 0;
+  // A source with an independent normal field can screen a sharp turn between
+  // adjacent input faces. Without reliable normals, keep the input crease.
+  virtual bool smooth_across(const Point&, const Point&, double) const { return false; }
   // project() for every position; found[i] says whether out[i] holds a point.
   // Implementations may evaluate in blocks, which is cheaper than one call per
   // position; the results are those of project().
@@ -71,8 +74,8 @@ struct AdaptTargets {
   double edge_length = 0;              // h
   double tolerance = 0;                // distance target, both directions
   double minimum_angle_degrees = 30;   // quality target
-  // Keep the input's triangles around creases (edges turning more than 45
-  // degrees) bitwise; off for sources without creases.
+  // Keep triangles around sharp turns not explained by the source normal
+  // field. Off for sources known to be smooth.
   bool keep_creases = true;
 };
 

@@ -663,6 +663,13 @@ class ImplicitOracle final : public SurfaceOracle {
     g = {jet_[1], jet_[2], jet_[3]};
     return true;
   }
+  bool smooth_across(const Point& first, const Point& second, double cosine) const override {
+    SurfacePoint a, b;
+    if (!project(first, a) || !project(second, b)) return false;
+    const double agreement =
+        a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2];
+    return agreement >= cosine;
+  }
   bool project(const Point& position, SurfacePoint& out) const override {
     Point x = position;
     for (int iteration = 0; iteration < kProjectionSteps; ++iteration) {

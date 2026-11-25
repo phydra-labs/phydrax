@@ -475,6 +475,19 @@ exceed both sampled quality thresholds with no inversions, but stall at 21
 and 26 residual edges respectively. Do not time larger edited inputs to
 diagnose those refusals.
 
+### Implicit carrier remesh and proof
+
+On the general implicit route, a sharp turn in the scaffold is only a
+crease candidate. The remesher keeps it when the projected source normals
+also turn sharply or cannot be resolved. This lets the remesher repair
+false sharp edges from poorly shaped scaffold triangles before the
+FIXED-fill radius-edge gate. The explicit mesh route has no independent
+normal field and keeps its original crease classification.
+The two disjoint sphere regression passes the existing radius-edge,
+embedding, coverage, and continuous distance requirements; the CSG lens
+retains its true crease and passes two-way certification. This is a
+construction change, not a proof relaxation.
+
 The F1 q30 size ladder uses h = 0.0431, 0.01362, 0.00431, and 0.001362, with the
 same points, segments, hole seeds, and equilateral area limit on both sides.
 Measure covered area, positive orientation, and maximum area as well as the
