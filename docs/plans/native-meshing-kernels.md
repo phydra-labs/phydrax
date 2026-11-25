@@ -552,6 +552,15 @@ construction sample took 33.821 s versus the 2.020 s MMG3D reference;
 the quality gates pass and the timing gate fails. This placement rule is
 for scalar metrics, not the tensor route.
 
+Pruning forbidden ring diagonals before searching their subpolygons reduced
+the same construction to 28.313 s without changing the measured output.
+Seeding post-band polishing from weaker cells, and using packed integer joins
+for native entity lineage, reduced it further to **18.997 s**. The integrated
+row has 251,198 target cells, minimum shape 0.596408, mean 0.863362, midpoint
+share 0.844899, and zero inversions or strict-band misses. Mean and share
+decreased relative to full polishing, but both still exceed MMG3D's. The
+2.020 s construction gate remains open; finalization took another 24.124 s.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a
@@ -727,9 +736,9 @@ On the registered 10,452-cell affine box, whole-source retessellation produces
 17,280 tetrahedra with no inversions or out-of-band edges. Independent worst
 shape is 0.438163 versus MMG3D's 0.336147; mean shape 0.858165 versus
 0.847227; midpoint share 0.980082 versus 0.934636. Single-thread construction,
-including physical gradation and source ancestry, took 1.250177, 0.940649 and
-0.811317 s versus the matched MMG3D minimum of 1.204 s. The separate final
-certification and transfer took 4.950588 s. This result qualifies one
+including physical gradation and source ancestry, took 0.944706, 0.927406 and
+0.824845 s on the integrated candidate, versus the matched MMG3D minimum of
+1.204 s. Separate certification and transfer took 4.971566 s. This qualifies one
 refinement field and one source size, not the entire F6 ladder.
 
 ### Sequential adaptation worker invariance
