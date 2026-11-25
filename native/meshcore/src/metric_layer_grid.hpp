@@ -10,7 +10,7 @@
 
 namespace phx::mc::metric {
 
-inline constexpr std::int64_t kMaxBoxSourceCells = 250'000;
+inline constexpr std::int64_t kMaxBoxSourceCells = 2'000'000;
 
 // A proposed conforming tetrahedral grid. Carrier rows refer to the immutable
 // source; tensors are the transported values at those exact dyadic carriers.

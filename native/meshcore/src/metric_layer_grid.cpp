@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "bounded_lbfgs.hpp"
@@ -32,6 +33,7 @@ using Cell = std::array<Row, 4>;
 constexpr double kLocationTolerance = 1e-10;
 constexpr double kTransverseWidth = 0.85;
 constexpr std::size_t kMaxGridCells = 125'000;
+constexpr int kMaxPointBinSide = 24;
 constexpr std::size_t kMaxBinMemberships = 4'000'000;
 constexpr std::size_t kMaxColumnCandidates = 1'000'000;
 constexpr std::size_t kMaxAxisIntervals = 1024;
@@ -119,74 +121,121 @@ std::optional<Field> read_field(const AdaptInput& input, const CarrierSource& so
 }
 
 struct SourceTet {
-  std::array<Point, 4> corners;
+  Point anchor;
   std::array<Point, 4> barycentric_grad;
   Point log_grad;
   double anchor_log_rate;
 
   double log_rate(const Point& q) const {
-    return anchor_log_rate + geometry::dot(log_grad.data(), geometry::difference(q, corners[0]).data());
+    return anchor_log_rate + geometry::dot(log_grad.data(), geometry::difference(q, anchor).data());
   }
 
   bool contains(const Point& q) const {
-    const auto d = geometry::difference(q, corners[0]);
+    const auto d = geometry::difference(q, anchor);
     for (int i = 0; i < 4; ++i) {
       if ((i == 0 ? 1.0 : 0.0) + geometry::dot(barycentric_grad[i].data(), d.data()) <
           -kLocationTolerance) return false;
     }
     return true;
   }
-
-  // Intersect the column with the *shared triangles*, not two independently
-  // inverted neighboring tetrahedra. A nearly vertical face amplifies even a
-  // tiny barycentric discrepancy into a gap in the column partition.
-  bool column_interval(const Point& base, double& start, double& end) const {
-    const auto area = [&](const Point& a, const Point& b) {
-      return (Dyadic(a[0]) - Dyadic(base[0])) * (Dyadic(b[1]) - Dyadic(base[1])) -
-             (Dyadic(a[1]) - Dyadic(base[1])) * (Dyadic(b[0]) - Dyadic(base[0]));
-    };
-    start = 1.0;
-    end = 0.0;
-    for (const auto& side : kOrientedFacet) {
-      const auto& a = corners[side[0]];
-      const auto& b = corners[side[1]];
-      const auto& c = corners[side[2]];
-      const int sign = orient2d(a.data(), b.data(), c.data());
-      if (sign == 0 || sign * orient2d(a.data(), b.data(), base.data()) < 0 ||
-          sign * orient2d(b.data(), c.data(), base.data()) < 0 ||
-          sign * orient2d(c.data(), a.data(), base.data()) < 0) continue;
-      const Dyadic u = area(b, c), v = area(c, a), w = area(a, b);
-      const double z = exact::rounded_quotient(
-          u * Dyadic(a[2]) + v * Dyadic(b[2]) + w * Dyadic(c[2]), u + v + w);
-      start = std::min(start, z);
-      end = std::max(end, z);
-    }
-    return end > start;
-  }
 };
+
+// Intersect the column with the shared triangles, not two independently
+// inverted neighboring tetrahedra. A nearly vertical face amplifies even a
+// tiny barycentric discrepancy into a gap in the column partition.
+bool column_interval(const std::array<Point, 4>& corners, const Point& base,
+                     double& start, double& end) {
+  const auto area = [&](const Point& a, const Point& b) {
+    return (Dyadic(a[0]) - Dyadic(base[0])) * (Dyadic(b[1]) - Dyadic(base[1])) -
+           (Dyadic(a[1]) - Dyadic(base[1])) * (Dyadic(b[0]) - Dyadic(base[0]));
+  };
+  start = 1.0;
+  end = 0.0;
+  for (const auto& side : kOrientedFacet) {
+    const auto& a = corners[side[0]];
+    const auto& b = corners[side[1]];
+    const auto& c = corners[side[2]];
+    const int sign = orient2d(a.data(), b.data(), c.data());
+    if (sign == 0 || sign * orient2d(a.data(), b.data(), base.data()) < 0 ||
+        sign * orient2d(b.data(), c.data(), base.data()) < 0 ||
+        sign * orient2d(c.data(), a.data(), base.data()) < 0) continue;
+    const Dyadic u = area(b, c), v = area(c, a), w = area(a, b);
+    const double z = exact::rounded_quotient(
+        u * Dyadic(a[2]) + v * Dyadic(b[2]) + w * Dyadic(c[2]), u + v + w);
+    start = std::min(start, z);
+    end = std::max(end, z);
+  }
+  return end > start;
+}
 
 bool prepare_tet(const std::array<Point, 4>& p, const std::array<double, 4>& log_rate,
                  SourceTet& tet) {
-  tet.corners = p;
+  tet.anchor = p[0];
   tet.anchor_log_rate = log_rate[0];
   return prepare_box_rate(p, log_rate, tet.barycentric_grad, tet.log_grad);
 }
 
+// Point queries only refine a placement, so a coarse screen suffices. A
+// source-sized cubic index would repeat each fine tetrahedron in many bins.
+class LocationBins {
+ public:
+  explicit LocationBins(std::size_t count)
+      : side_(std::min(kMaxPointBinSide,
+                       static_cast<int>(std::ceil(std::cbrt(static_cast<double>(count)))))),
+        bins_(side_ * side_ * side_) {}
+
+  bool append(const Point& low, const Point& high, Row row) {
+    const int i0 = coordinate(low[0]), i1 = coordinate(high[0]);
+    const int j0 = coordinate(low[1]), j1 = coordinate(high[1]);
+    const int k0 = coordinate(low[2]), k1 = coordinate(high[2]);
+    const auto count = static_cast<std::size_t>((i1 - i0 + 1) * (j1 - j0 + 1) * (k1 - k0 + 1));
+    if (count > kMaxBinMemberships - memberships_) return false;
+    memberships_ += count;
+    for (int k = k0; k <= k1; ++k) {
+      for (int j = j0; j <= j1; ++j) {
+        for (int i = i0; i <= i1; ++i) bins_[bucket(i, j, k)].push_back(row);
+      }
+    }
+    return true;
+  }
+
+  std::span<const Row> candidates(const Point& q) const {
+    return bins_[bucket(coordinate(q[0]), coordinate(q[1]), coordinate(q[2]))];
+  }
+
+ private:
+  int coordinate(double q) const { return std::min(static_cast<int>(q * side_), side_ - 1); }
+  int bucket(int i, int j, int k) const { return (k * side_ + j) * side_ + i; }
+
+  int side_;
+  std::size_t memberships_ = 0;
+  std::vector<std::vector<Row>> bins_;
+};
+
+std::pair<Point, Point> bounds(const std::array<Point, 4>& corners) {
+  Point low, high;
+  for (int k = 0; k < 3; ++k) {
+    const auto [lo, hi] = std::minmax({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
+    low[k] = lo;
+    high[k] = hi;
+  }
+  return {low, high};
+}
+
 struct Interpolator {
   std::vector<SourceTet> tetrahedra;
-  CarrierBoxGrid spatial;
-  CarrierBoxGrid projected;
 
-  bool prepare(const AdaptInput& input, const Field& field) {
-    const std::size_t count = input.source_cells.size() / 4;
-    std::vector<Point> points(input.source_points.size() / 3);
-    for (std::size_t row = 0; row < points.size(); ++row) {
-      points[row] = field.to_unit(input.source_points.data() + 3 * row);
-      for (double q : points[row]) {
+  template <typename Visit>
+  bool prepare(const AdaptInput& input, const Field& field, Visit&& visit) {
+    cells_ = input.source_cells;
+    points_.resize(input.source_points.size() / 3);
+    for (std::size_t row = 0; row < points_.size(); ++row) {
+      points_[row] = field.to_unit(input.source_points.data() + 3 * row);
+      for (double q : points_[row]) {
         if (!(q >= 0.0 && q <= 1.0)) return false;
       }
     }
-    std::vector<double> lower(3 * count), upper(3 * count);
+    const std::size_t count = cells_.size() / 4;
     tetrahedra.resize(count);
     const int component = 4 * field.axes[2];
     const double log_extent = deterministic::log(field.extent[2]);
@@ -194,30 +243,40 @@ struct Interpolator {
       std::array<Point, 4> corners;
       std::array<double, 4> rates;
       for (int i = 0; i < 4; ++i) {
-        const auto row = static_cast<std::size_t>(input.source_cells[4 * cell + i]);
-        if (row >= points.size()) return false;
-        corners[i] = points[row];
+        const auto row = static_cast<std::size_t>(cells_[4 * cell + i]);
+        if (row >= points_.size()) return false;
+        corners[i] = points_[row];
         rates[i] = log_extent + 0.5 * input.source_logarithms[9 * row + component];
       }
-      if (!prepare_tet(corners, rates, tetrahedra[cell])) return false;
-      for (int k = 0; k < 3; ++k) {
-        const auto [lo, hi] = std::minmax({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
-        lower[3 * cell + k] = lo;
-        upper[3 * cell + k] = hi;
-      }
+      if (!prepare_tet(corners, rates, tetrahedra[cell]) ||
+          !visit(static_cast<Row>(cell), corners)) return false;
     }
-    spatial.prepare(lower, upper, 0b111, kMaxBinMemberships);
-    projected.prepare(lower, upper, 0b011, kMaxBinMemberships);
-    return spatial.indexed() && projected.indexed();
+    return true;
+  }
+
+  bool prepare_location() {
+    spatial_.emplace(tetrahedra.size());
+    for (std::size_t cell = 0; cell < tetrahedra.size(); ++cell) {
+      const auto rows = cells_.subspan(4 * cell, 4);
+      const auto [low, high] = bounds({points_[rows[0]], points_[rows[1]],
+                                       points_[rows[2]], points_[rows[3]]});
+      if (!spatial_->append(low, high, static_cast<Row>(cell))) return false;
+    }
+    return true;
   }
 
   Row locate(const Point& q, Row hint) const {
     if (hint >= 0 && tetrahedra[hint].contains(q)) return hint;
-    for (const auto row : spatial.candidates(q.data())) {
-      if (tetrahedra[row].contains(q)) return static_cast<Row>(row);
+    for (const Row row : spatial_->candidates(q)) {
+      if (tetrahedra[row].contains(q)) return row;
     }
     return -1;
   }
+
+ private:
+  std::span<const std::int64_t> cells_;
+  std::vector<Point> points_;
+  std::optional<LocationBins> spatial_;
 };
 
 struct Node {
@@ -242,7 +301,8 @@ struct ColumnHit {
 
 class Columns {
  public:
-  bool prepare(const Interpolator& source, std::size_t nx, std::size_t ny);
+  bool prepare(const AdaptInput& input, const Field& field, std::size_t nx, std::size_t ny,
+               Interpolator& source);
   double mean_mass() const { return mean_mass_; }
   void seed(std::size_t levels, std::vector<Node>& nodes, const Interpolator& source) const;
   bool sample(std::size_t column, Point q, const Interpolator& source, Node& node) const;
@@ -257,11 +317,6 @@ class Columns {
 };
 
 bool Columns::append(const Point& base, const Interpolator& source, std::vector<ColumnHit>& hits) {
-  hits.clear();
-  for (const auto row : source.projected.candidates(base.data())) {
-    ColumnHit hit{0.0, 0.0, static_cast<Row>(row)};
-    if (source.tetrahedra[row].column_interval(base, hit.start, hit.end)) hits.push_back(hit);
-  }
   std::sort(hits.begin(), hits.end(), [](const ColumnHit& a, const ColumnHit& b) {
     if (a.start != b.start) return a.start < b.start;
     if (a.end != b.end) return a.end > b.end;
@@ -291,28 +346,50 @@ bool Columns::append(const Point& base, const Interpolator& source, std::vector<
   return true;
 }
 
-bool Columns::prepare(const Interpolator& source, std::size_t nx, std::size_t ny) {
+bool Columns::prepare(const AdaptInput& input, const Field& field, std::size_t nx, std::size_t ny,
+                      Interpolator& source) {
   const std::size_t count = (nx + 1) * (ny + 1);
   bases_.reserve(count);
+  std::vector<std::vector<ColumnHit>> hits(count);
+  std::vector<double> x(nx + 1), y(ny + 1);
+  for (std::size_t i = 0; i <= nx; ++i) x[i] = static_cast<double>(i) / static_cast<double>(nx);
+  for (std::size_t j = 0; j <= ny; ++j) y[j] = static_cast<double>(j) / static_cast<double>(ny);
   offsets_.reserve(count + 1);
   offsets_.push_back(0);
-  std::size_t candidates = 0;
-  std::size_t largest = 0;
-  for (std::size_t i = 0; i <= nx; ++i) {
-    for (std::size_t j = 0; j <= ny; ++j) {
-      auto& base = bases_.emplace_back(Point{static_cast<double>(i) / static_cast<double>(nx),
-                                             static_cast<double>(j) / static_cast<double>(ny), 0.0});
-      const auto size = source.projected.candidates(base.data()).size();
-      if (size > kMaxColumnCandidates - candidates) return false;
-      candidates += size;
-      largest = std::max(largest, size);
-    }
+  for (double u : x) {
+    for (double v : y) bases_.push_back({u, v, 0.0});
   }
+  // Visit the actual output columns in each closed projected footprint.
+  // Indexing the entire projection with source-sized buckets repeats fine
+  // tetrahedra even where no column will ever sample them.
+  std::size_t candidates = 0;
+  if (!source.prepare(input, field, [&](Row row, const std::array<Point, 4>& corners) {
+    const auto [lo_x, hi_x] = std::minmax({corners[0][0], corners[1][0],
+                                         corners[2][0], corners[3][0]});
+    const auto i0 = std::lower_bound(x.begin(), x.end(), lo_x) - x.begin();
+    const auto i1 = std::upper_bound(x.begin() + i0, x.end(), hi_x) - x.begin();
+    if (i0 == i1) return true;
+    const auto [lo_y, hi_y] = std::minmax({corners[0][1], corners[1][1],
+                                         corners[2][1], corners[3][1]});
+    const auto j0 = std::lower_bound(y.begin(), y.end(), lo_y) - y.begin();
+    const auto j1 = std::upper_bound(y.begin() + j0, y.end(), hi_y) - y.begin();
+    const auto size = static_cast<std::size_t>((i1 - i0) * (j1 - j0));
+    if (size > kMaxColumnCandidates - candidates) return false;
+    candidates += size;
+    for (auto i = i0; i < i1; ++i) {
+      for (auto j = j0; j < j1; ++j) {
+        const auto column = i * (ny + 1) + j;
+        ColumnHit hit{0.0, 0.0, row};
+        if (column_interval(corners, bases_[column], hit.start, hit.end)) {
+          hits[column].push_back(hit);
+        }
+      }
+    }
+    return true;
+  })) return false;
   pieces_.reserve(count);
-  std::vector<ColumnHit> hits;
-  hits.reserve(largest);
-  for (const auto& base : bases_) {
-    if (!append(base, source, hits)) return false;
+  for (std::size_t column = 0; column < count; ++column) {
+    if (!append(bases_[column], source, hits[column])) return false;
   }
   mean_mass_ /= static_cast<double>(count);
   return std::isfinite(mean_mass_);
@@ -554,7 +631,7 @@ bool correct(const Field& field, const Interpolator& source, std::span<const Edg
   return std::isfinite(result.value) && placement.update(x);
 }
 
-bool correct_star(const Field& field, const Interpolator& source, std::span<const Edge> edges,
+bool correct_star(const Field& field, Interpolator& source, std::span<const Edge> edges,
                   std::span<Node> nodes, const Band& band, double margin) {
   std::vector<std::uint8_t> active(nodes.size(), 0);
   bool found = false;
@@ -564,6 +641,7 @@ bool correct_star(const Field& field, const Interpolator& source, std::span<cons
     found = true;
   }
   if (!found) return true;
+  if (!source.prepare_location()) return false;
   // Two synchronous rings around the offending edges. Include every edge
   // incident to a mover in the merit, including those crossing the ring.
   for (std::uint8_t ring = 1; ring <= 2; ++ring) {
@@ -665,9 +743,8 @@ std::optional<MetricBoxGrid> propose_metric_layer_grid(
   const std::size_t ny = interval_count(ty, kTransverseWidth);
   if (nx == 0 || ny == 0 || 5 * nx * ny > kMaxGridCells) return std::nullopt;
   Interpolator interpolator;
-  if (!interpolator.prepare(input, *field)) return std::nullopt;
   Columns columns;
-  if (!columns.prepare(interpolator, nx, ny)) return std::nullopt;
+  if (!columns.prepare(input, *field, nx, ny, interpolator)) return std::nullopt;
   const double width = 0.5 * (tx / static_cast<double>(nx) + ty / static_cast<double>(ny));
   const std::size_t nz = interval_count(columns.mean_mass(), width);
   if (nz == 0 || 5 * nx * ny * nz > kMaxGridCells) return std::nullopt;
