@@ -846,7 +846,17 @@ def _route_decision(
         TetraMetricStatus.NUMERICAL_STOP: MeshAdaptationStatus.NUMERICAL_STOP,
     }
     match evidence:
-        case LocalMetricEvidence() | DeviceMetricEvidence():
+        case LocalMetricEvidence():
+            applied = (
+                evidence.splits
+                + evidence.collapses
+                + evidence.flips
+                + evidence.relocations
+                + evidence.retriangulations
+            )
+            status = _metric_status(evidence, evidence.topology_operations)
+            return applied > 0, status, MeshTransitionKind.REMESH, False
+        case DeviceMetricEvidence():
             applied = (
                 evidence.splits
                 + evidence.collapses

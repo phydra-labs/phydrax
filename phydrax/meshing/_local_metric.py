@@ -28,6 +28,7 @@ from .._bvh import _host_boxes_overlap, bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._interpolation._bspline_extraction import _binary64_down, _binary64_up
+from .._meshcore import meshcore_available, metric_adapt_2d_box
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
@@ -50,6 +51,7 @@ from ._lineage import EntityLineageKind
 from ._metric import (
     _constant_preserving_metric_mean,
     _edge_length_enclosure,
+    _exact_cpu_isotropic_scalars,
     _PreparedMetricEnclosures,
     _tensor_properties,
     metric_edge_lengths,
@@ -134,6 +136,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
     predicate_mode: PredicateMode = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
     stalled_edges: tuple[tuple[float, str], ...] = eqx.field(static=True)
+    retriangulations: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -157,6 +160,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         relocation: bool,
         predicate_mode: PredicateMode,
         stalled_edges: tuple[tuple[float, str], ...] = (),
+        retriangulations: int = 0,
     ) -> None:
         counts = {
             "passes": passes,
@@ -181,7 +185,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
             "unit_fraction": unit_fraction,
             "minimum_metric_quality": minimum_metric_quality,
         }
-        for name, value in counts.items():
+        for name, value in (*counts.items(), ("retriangulations", retriangulations)):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer.")
         for name, value in flags.items():
@@ -225,6 +229,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         self.relocation = relocation
         self.predicate_mode = predicate_mode
         self.stalled_edges = records
+        self.retriangulations = retriangulations
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "local-metric-evidence",
@@ -233,6 +238,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
                 **measures,
                 "predicate_mode": str(predicate_mode),
                 **({"stalled_edges": records} if records else {}),
+                **({"retriangulations": retriangulations} if retriangulations else {}),
             }
         )
 
@@ -244,8 +250,8 @@ class LocalMetricOutcome(NamedTuple):
     metric: np.ndarray
     evidence: LocalMetricEvidence
     protected_edge_keys: np.ndarray
-    state: _State
-    source: _Source
+    state: _State | None
+    source: _Source | None
 
 
 type ExactSourceRow = tuple[tuple[int, Fraction], ...]
@@ -1034,9 +1040,10 @@ def _validate_mesh(mesh: CellMesh, metric: Any, /) -> np.ndarray:
         np.isfinite(values)
     ):
         raise ValueError("metric must be finite with shape (vertex_count, 2, 2).")
-    properties = _tensor_properties(values)
-    if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
-        raise ValueError("Metric tensors must be symmetric positive definite.")
+    if _exact_cpu_isotropic_scalars(values) is None:
+        properties = _tensor_properties(values)
+        if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
+            raise ValueError("Metric tensors must be symmetric positive definite.")
     periodic = mesh.periodic_topology
     if periodic is not None:
         orbit_map = periodic_entity_orbit_map(mesh, 0)
@@ -6760,6 +6767,203 @@ def _evidence(
     )
 
 
+def _try_native_scalar_box_2d(
+    mesh: CellMesh,
+    values: np.ndarray,
+    cell_classes: np.ndarray,
+    edge_classes: np.ndarray,
+    protected_edges: np.ndarray,
+    fixed_vertices: np.ndarray,
+    predicate_mode: PredicateMode,
+    topology_operations: bool,
+    relocation: bool,
+    /,
+) -> LocalMetricOutcome | None:
+    """Whole-rectangle native 2D scalar metric adaptation when eligible."""
+    if (
+        not meshcore_available()
+        or not topology_operations
+        or not relocation
+        or mesh.periodic_topology is not None
+        or len(mesh.blocks) != 1
+        or np.any(protected_edges)
+        or cell_classes.size == 0
+        or not np.all(cell_classes == cell_classes[0])
+    ):
+        return None
+    scalars = values[:, 0, 0]
+    if not (
+        np.array_equal(values[:, 1, 1], scalars)
+        and not np.any(values[:, 0, 1])
+        and not np.any(values[:, 1, 0])
+        and np.all(scalars > 0.0)
+    ):
+        return None
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    block = mesh.blocks[0]
+    cells = np.asarray(block.vertices, dtype=np.int64)
+    cell_ids = np.asarray(block.global_ids, dtype=np.int64)
+    edges = np.sort(
+        np.asarray(mesh.connectivity.edges, dtype=np.int64),  # ty: ignore[unresolved-attribute]
+        axis=1,
+    )
+    next_vertex_id = int(np.max(vertex_ids)) + 1
+    next_cell_id = int(np.max(cell_ids)) + 1
+    result = metric_adapt_2d_box(
+        points,
+        scalars,
+        vertex_ids,
+        fixed_vertices,
+        cells,
+        cell_ids,
+        edges,
+        edge_classes,
+        protected_edges,
+        next_vertex_id=next_vertex_id,
+        next_cell_id=next_cell_id,
+        lower=_LOWER,
+    )
+    if result is None:
+        return None
+    empty_vrel = EntityRelations(
+        0,
+        np.zeros((0, 1), dtype=np.int64),
+        np.zeros((0, 1), dtype=np.int64),
+        np.zeros((0,), dtype=np.int32),
+    )
+    if result.outcome == 2:
+        n_v = points.shape[0]
+        empty_erel = EntityRelations(
+            1,
+            np.zeros((0, 2), dtype=np.int64),
+            np.zeros((0, 2), dtype=np.int64),
+            np.zeros((0,), dtype=np.int32),
+        )
+        empty_crel = EntityRelations(
+            2,
+            np.zeros((0, 1), dtype=np.int64),
+            np.zeros((0, 1), dtype=np.int64),
+            np.zeros((0,), dtype=np.int32),
+        )
+        edit = CellTopologyEdit(
+            coordinates=points,
+            vertex_global_ids=vertex_ids,
+            blocks=source_family_blocks(
+                ((block.name, block.cell_kind),), (cells.astype(np.int32),), (cell_ids,)
+            ),
+            stencil_sources=vertex_ids[:, None],
+            stencil_weights=np.ones((n_v, 1), dtype=np.float64),
+            stencil_valid=np.ones((n_v, 1), dtype=np.bool_),
+            stencil_exact_weights=None,
+            relations=(empty_vrel, empty_erel, empty_crel),
+        )
+        evidence = LocalMetricEvidence(
+            passes=0,
+            splits=0,
+            collapses=0,
+            flips=0,
+            relocations=0,
+            rejected_uncertain=0,
+            rejected_invalid=0,
+            converged=True,
+            stalled=False,
+            measured_edges=result.measured_edges,
+            out_of_range_edges=0,
+            minimum_metric_length=result.minimum_metric_length,
+            maximum_metric_length=result.maximum_metric_length,
+            unit_fraction=result.unit_fraction,
+            minimum_metric_quality=result.minimum_metric_quality,
+            topology_operations=True,
+            relocation=True,
+            predicate_mode=predicate_mode,
+        )
+        return LocalMetricOutcome(
+            edit, values.copy(), evidence, np.zeros((0, 2), dtype=np.int64), None, None
+        )
+
+    limit = np.iinfo(np.int64).max
+    if any(
+        int(np.max(bank, initial=0)) > limit
+        for bank in (
+            result.vertex_ids,
+            result.cell_ids,
+            result.ancestry_ids,
+            result.edge_relation_sources,
+            result.edge_relation_targets,
+        )
+    ):
+        raise OverflowError("Native 2D adaptation IDs exceed the stable int64 range.")
+
+    v_n = result.vertex_ids.shape[0]
+    counts = np.diff(result.stencil_offsets)
+    width = int(np.max(counts, initial=1))
+    slot_rows = np.repeat(np.arange(v_n, dtype=np.int64), counts)
+    slot_cols = np.arange(result.stencil_rows.size, dtype=np.int64) - np.repeat(
+        result.stencil_offsets[:-1], counts
+    )
+    stencil_sources = np.full((v_n, width), -1, dtype=np.int64)
+    stencil_sources[slot_rows, slot_cols] = vertex_ids[result.stencil_rows]
+    stencil_weights = np.zeros((v_n, width), dtype=np.float64)
+    stencil_weights[slot_rows, slot_cols] = result.stencil_weights
+    stencil_valid = np.zeros((v_n, width), dtype=np.bool_)
+    stencil_valid[slot_rows, slot_cols] = True
+
+    target_cell_ids = result.cell_ids.astype(np.int64)
+    anc_counts = np.diff(result.ancestry_offsets)
+    cell_sources = result.ancestry_ids.astype(np.int64)
+    cell_targets = np.repeat(target_cell_ids, anc_counts)
+    cell_kinds = np.full(
+        cell_sources.shape, int(EntityLineageKind.SWAPPED_FROM), dtype=np.int32
+    )
+    cell_rel = _relation(2, cell_sources[:, None], cell_targets[:, None], cell_kinds)
+    edge_rel = EntityRelations(
+        1,
+        result.edge_relation_sources.astype(np.int64),
+        result.edge_relation_targets.astype(np.int64),
+        result.edge_relation_kinds,
+    )
+    target_metric = np.zeros((v_n, 2, 2), dtype=np.float64)
+    target_metric[:, 0, 0] = result.scalar_metrics
+    target_metric[:, 1, 1] = result.scalar_metrics
+    edit = CellTopologyEdit(
+        coordinates=result.points,
+        vertex_global_ids=result.vertex_ids.astype(np.int64),
+        blocks=source_family_blocks(
+            ((block.name, block.cell_kind),), (result.cells,), (target_cell_ids,)
+        ),
+        stencil_sources=stencil_sources,
+        stencil_weights=stencil_weights,
+        stencil_valid=stencil_valid,
+        stencil_exact_weights=None,
+        relations=(empty_vrel, edge_rel, cell_rel),
+    )
+    evidence = LocalMetricEvidence(
+        passes=1,
+        splits=0,
+        collapses=0,
+        flips=0,
+        relocations=0,
+        rejected_uncertain=0,
+        rejected_invalid=0,
+        converged=True,
+        stalled=False,
+        measured_edges=result.measured_edges,
+        out_of_range_edges=0,
+        minimum_metric_length=result.minimum_metric_length,
+        maximum_metric_length=result.maximum_metric_length,
+        unit_fraction=result.unit_fraction,
+        minimum_metric_quality=result.minimum_metric_quality,
+        topology_operations=True,
+        relocation=True,
+        predicate_mode=predicate_mode,
+        retriangulations=1,
+    )
+    return LocalMetricOutcome(
+        edit, target_metric, evidence, np.zeros((0, 2), dtype=np.int64), None, None
+    )
+
+
 def execute_local_metric_adaptation(
     mesh: CellMesh,
     metric: np.ndarray,
@@ -6875,12 +7079,34 @@ def execute_local_metric_adaptation(
                 "Collapsed chart point copies must be fixed, grouped by nonnegative "
                 "IDs, and never adjacent to one another."
             )
+    cell_class_rows = _integer_array(cell_classes, cell_count, "cell_classes")
+    edge_class_rows = _integer_array(edge_classes, edge_count, "edge_classes")
+    protected_edge_rows = _boolean_array(protected_edges, edge_count, "protected_edges")
+    if (
+        groups is None
+        and metric_field is None
+        and exact_source_points is None
+        and chart_lift is None
+    ):
+        box_outcome = _try_native_scalar_box_2d(
+            mesh,
+            values,
+            cell_class_rows,
+            edge_class_rows,
+            protected_edge_rows,
+            fixed,
+            predicate_mode,
+            topology_operations,
+            relocation,
+        )
+        if box_outcome is not None:
+            return box_outcome
     state, source = _initial_state(
         mesh,
         values,
-        _integer_array(cell_classes, cell_count, "cell_classes"),
-        _integer_array(edge_classes, edge_count, "edge_classes"),
-        _boolean_array(protected_edges, edge_count, "protected_edges"),
+        cell_class_rows,
+        edge_class_rows,
+        protected_edge_rows,
         fixed,
         predicate_mode,
         groups,
@@ -7032,6 +7258,8 @@ def _published_state(
 ) -> _State:
     """Bind final chart carriers, tensors and source rows to the original state."""
     state = outcome.state
+    if state is None:
+        raise ValueError("Published state binding requires a local adaptation state.")
     order, _, _ = _target_order(state)
     width = max(state.source_stencil_weights.shape[1], *(len(row) for row in stencils))
     sources, weights, valid = _pad_stencil_columns(

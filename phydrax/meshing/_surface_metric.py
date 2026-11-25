@@ -2682,6 +2682,8 @@ def execute_surface_metric_adaptation(
             old.rejected_uncertain,
             old.rejected_invalid,
         )
+        if local.source is None:
+            raise RuntimeError("Surface metric continuation requires a local source.")
         local = _resume_local_metric_adaptation(
             source.work_mesh,
             local.source,

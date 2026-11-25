@@ -1193,6 +1193,45 @@ class _MetricAdaptationOutput(ctypes.Structure):
     )
 
 
+class _MetricAdapt2DBoxRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("points", _P),
+        ("scalar_metrics", _P),
+        ("vertex_ids", _P),
+        ("fixed_vertices", _P),
+        ("cell_count", _I64),
+        ("cells", _P),
+        ("cell_ids", _P),
+        ("edge_count", _I64),
+        ("edges", _P),
+        ("edge_classes", _P),
+        ("protected_edges", _P),
+        ("next_vertex_id", _U64),
+        ("next_cell_id", _U64),
+        ("lower", _F64),
+    )
+
+
+class _MetricAdapt2DOutput(ctypes.Structure):
+    _fields_ = (
+        ("points", _P),
+        ("vertex_ids", _P),
+        ("scalar_metrics", _P),
+        ("stencil_offsets", _P),
+        ("stencil_rows", _P),
+        ("stencil_weights", _P),
+        ("cells", _P),
+        ("cell_ids", _P),
+        ("ancestry_offsets", _P),
+        ("ancestry_ids", _P),
+        ("edge_relation_sources", _P),
+        ("edge_relation_targets", _P),
+        ("edge_relation_kinds", _P),
+        ("measurements", _P),
+    )
+
+
 _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_version": (ctypes.c_char_p, ()),
     "phx_mc_build_hash": (ctypes.c_char_p, ()),
@@ -1864,6 +1903,16 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, ctypes.POINTER(_I64), ctypes.POINTER(_I32), ctypes.POINTER(_F64)),
     ),
     "phx_mc_metric_adaptation_free": (None, (_P,)),
+    "phx_mc_metric_adapt_2d_box": (
+        _I32,
+        (ctypes.POINTER(_MetricAdapt2DBoxRequest), _P, _P),
+    ),
+    "phx_mc_metric_adapt_2d_sizes": (_I32, (_P, _P)),
+    "phx_mc_metric_adapt_2d_export": (
+        _I32,
+        (_P, ctypes.POINTER(_MetricAdapt2DOutput)),
+    ),
+    "phx_mc_metric_adapt_2d_free": (None, (_P,)),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshImplicitFacetRefusal)),
@@ -13688,6 +13737,155 @@ def metric_grade_physical(
     )
     _raise_for_call(status, "metric_grade_physical")
     return graded, stats[0], stats[1], stats[2], bool(stats[3]), violation.value
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class MetricAdapt2DBoxResult:
+    """Native whole-rectangle 2D scalar metric adaptation result.
+
+    ``outcome`` is 1 when adapted and 2 when every source edge already lies in
+    the strict unit band (declined requests return ``None`` from
+    :func:`metric_adapt_2d_box`).
+    """
+
+    outcome: int
+    points: np.ndarray
+    vertex_ids: np.ndarray
+    scalar_metrics: np.ndarray
+    stencil_offsets: np.ndarray
+    stencil_rows: np.ndarray
+    stencil_weights: np.ndarray
+    cells: np.ndarray
+    cell_ids: np.ndarray
+    ancestry_offsets: np.ndarray
+    ancestry_ids: np.ndarray
+    edge_relation_sources: np.ndarray
+    edge_relation_targets: np.ndarray
+    edge_relation_kinds: np.ndarray
+    measured_edges: int
+    minimum_metric_length: float
+    maximum_metric_length: float
+    unit_fraction: float
+    minimum_metric_quality: float
+
+
+def metric_adapt_2d_box(
+    points: np.ndarray,
+    scalar_metrics: np.ndarray,
+    vertex_ids: np.ndarray,
+    fixed_vertices: np.ndarray,
+    cells: np.ndarray,
+    cell_ids: np.ndarray,
+    edges: np.ndarray,
+    edge_classes: np.ndarray,
+    protected_edges: np.ndarray,
+    /,
+    *,
+    next_vertex_id: int,
+    next_cell_id: int,
+    lower: float,
+) -> MetricAdapt2DBoxResult | None:
+    """Run whole-rectangle 2D scalar metric adaptation in meshcore."""
+    pts = np.ascontiguousarray(points, dtype=np.float64)
+    scalars = np.ascontiguousarray(scalar_metrics, dtype=np.float64)
+    vids = np.ascontiguousarray(vertex_ids, dtype=np.uint64)
+    fixed = np.ascontiguousarray(fixed_vertices, dtype=np.int8)
+    tris = np.ascontiguousarray(cells, dtype=np.int64)
+    cids = np.ascontiguousarray(cell_ids, dtype=np.uint64)
+    edge_rows = np.ascontiguousarray(edges, dtype=np.int64)
+    eclasses = np.ascontiguousarray(edge_classes, dtype=np.int64)
+    eprot = np.ascontiguousarray(protected_edges, dtype=np.int8)
+    request = _MetricAdapt2DBoxRequest(
+        vertex_count=pts.shape[0],
+        points=_tet_mesh_pointer(pts),
+        scalar_metrics=_tet_mesh_pointer(scalars),
+        vertex_ids=_tet_mesh_pointer(vids),
+        fixed_vertices=_tet_mesh_pointer(fixed),
+        cell_count=tris.shape[0],
+        cells=_tet_mesh_pointer(tris),
+        cell_ids=_tet_mesh_pointer(cids),
+        edge_count=edge_rows.shape[0],
+        edges=_tet_mesh_pointer(edge_rows),
+        edge_classes=_tet_mesh_pointer(eclasses),
+        protected_edges=_tet_mesh_pointer(eprot),
+        next_vertex_id=int(next_vertex_id),
+        next_cell_id=int(next_cell_id),
+        lower=float(lower),
+    )
+    library = load_meshcore()
+    outcome = _I32()
+    handle = ctypes.c_void_p()
+    status = library["phx_mc_metric_adapt_2d_box"](
+        ctypes.byref(request), ctypes.addressof(outcome), ctypes.addressof(handle)
+    )
+    _raise_for_call(status, "metric_adapt_2d_box")
+    if outcome.value == 0 or not handle.value:
+        return None
+    try:
+        sizes = np.empty((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_metric_adapt_2d_sizes"](handle, sizes.ctypes.data),
+            "metric_adapt_2d_sizes",
+        )
+        v_n, st_n, c_n, anc_n, er_n, measured_edges = (int(x) for x in sizes)
+        out_points = np.empty((v_n, 2), dtype=np.float64)
+        out_vids = np.empty((v_n,), dtype=np.uint64)
+        out_scalars = np.empty((v_n,), dtype=np.float64)
+        out_st_off = np.empty((v_n + 1 if v_n else 0,), dtype=np.int64)
+        out_st_rows = np.empty((st_n,), dtype=np.int32)
+        out_st_weights = np.empty((st_n,), dtype=np.float64)
+        out_cells = np.empty((c_n, 3), dtype=np.int32)
+        out_cids = np.empty((c_n,), dtype=np.uint64)
+        out_anc_off = np.empty((c_n + 1 if c_n else 0,), dtype=np.int64)
+        out_anc_ids = np.empty((anc_n,), dtype=np.uint64)
+        out_er_src = np.empty((er_n, 2), dtype=np.uint64)
+        out_er_tgt = np.empty((er_n, 2), dtype=np.uint64)
+        out_er_kind = np.empty((er_n,), dtype=np.int32)
+        measurements = np.empty((4,), dtype=np.float64)
+        banks = _MetricAdapt2DOutput(
+            points=_tet_mesh_pointer(out_points),
+            vertex_ids=_tet_mesh_pointer(out_vids),
+            scalar_metrics=_tet_mesh_pointer(out_scalars),
+            stencil_offsets=_tet_mesh_pointer(out_st_off),
+            stencil_rows=_tet_mesh_pointer(out_st_rows),
+            stencil_weights=_tet_mesh_pointer(out_st_weights),
+            cells=_tet_mesh_pointer(out_cells),
+            cell_ids=_tet_mesh_pointer(out_cids),
+            ancestry_offsets=_tet_mesh_pointer(out_anc_off),
+            ancestry_ids=_tet_mesh_pointer(out_anc_ids),
+            edge_relation_sources=_tet_mesh_pointer(out_er_src),
+            edge_relation_targets=_tet_mesh_pointer(out_er_tgt),
+            edge_relation_kinds=_tet_mesh_pointer(out_er_kind),
+            measurements=measurements.ctypes.data,
+        )
+        _raise_for_call(
+            library["phx_mc_metric_adapt_2d_export"](handle, ctypes.byref(banks)),
+            "metric_adapt_2d_export",
+        )
+        return MetricAdapt2DBoxResult(
+            outcome=int(outcome.value),
+            points=out_points,
+            vertex_ids=out_vids,
+            scalar_metrics=out_scalars,
+            stencil_offsets=out_st_off,
+            stencil_rows=out_st_rows,
+            stencil_weights=out_st_weights,
+            cells=out_cells,
+            cell_ids=out_cids,
+            ancestry_offsets=out_anc_off,
+            ancestry_ids=out_anc_ids,
+            edge_relation_sources=out_er_src,
+            edge_relation_targets=out_er_tgt,
+            edge_relation_kinds=out_er_kind,
+            measured_edges=measured_edges,
+            minimum_metric_length=float(measurements[0]),
+            maximum_metric_length=float(measurements[1]),
+            unit_fraction=float(measurements[2]),
+            minimum_metric_quality=float(measurements[3]),
+        )
+    finally:
+        library["phx_mc_metric_adapt_2d_free"](handle)
 
 
 def metric_band_quanta(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:

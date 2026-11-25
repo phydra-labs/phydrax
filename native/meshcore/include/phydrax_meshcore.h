@@ -1004,6 +1004,54 @@ PHX_MC_API int32_t phx_mc_metric_adaptation_export(
 PHX_MC_API int32_t phx_mc_metric_adaptation_closed_measurements(
     const phx_mc_metric_adaptation* result, int64_t* edge_count, int32_t* region, double* values);
 PHX_MC_API void phx_mc_metric_adaptation_free(phx_mc_metric_adaptation* result);
+
+/* Whole-rectangle 2D scalar metric adaptation (metric_scalar2d.hpp).
+ * *outcome is 0 when the input is declined (non-box, fixed interior/wall
+ * vertex, protected edge, or proposal refusal), 1 when adapted, and 2 when
+ * every source edge already lies inside the strict unit band. */
+typedef struct phx_mc_metric_adapt2d_box_request {
+  int64_t vertex_count;
+  const double* points;
+  const double* scalar_metrics;
+  const uint64_t* vertex_ids;
+  const int8_t* fixed_vertices;
+  int64_t cell_count;
+  const int64_t* cells;
+  const uint64_t* cell_ids;
+  int64_t edge_count;
+  const int64_t* edges;
+  const int64_t* edge_classes;
+  const int8_t* protected_edges;
+  uint64_t next_vertex_id;
+  uint64_t next_cell_id;
+  double lower;
+} phx_mc_metric_adapt2d_box_request;
+typedef struct phx_mc_metric_adapt2d_box phx_mc_metric_adapt2d_box;
+#define PHX_MC_METRIC_ADAPT2D_SIZES 6
+typedef struct phx_mc_metric_adapt2d_output {
+  double* points;
+  uint64_t* vertex_ids;
+  double* scalar_metrics;
+  int64_t* stencil_offsets;
+  int32_t* stencil_rows;
+  double* stencil_weights;
+  int32_t* cells;
+  uint64_t* cell_ids;
+  int64_t* ancestry_offsets;
+  uint64_t* ancestry_ids;
+  uint64_t* edge_relation_sources;
+  uint64_t* edge_relation_targets;
+  int32_t* edge_relation_kinds;
+  double* measurements;
+} phx_mc_metric_adapt2d_output;
+PHX_MC_API int32_t phx_mc_metric_adapt_2d_box(
+    const phx_mc_metric_adapt2d_box_request* request, int32_t* outcome,
+    phx_mc_metric_adapt2d_box** result);
+PHX_MC_API int32_t phx_mc_metric_adapt_2d_sizes(
+    const phx_mc_metric_adapt2d_box* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_metric_adapt_2d_export(
+    const phx_mc_metric_adapt2d_box* result, const phx_mc_metric_adapt2d_output* banks);
+PHX_MC_API void phx_mc_metric_adapt_2d_free(phx_mc_metric_adapt2d_box* result);
 PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 
 #define PHX_MC_QUADRATIC_VALIDITY_VALID 0

@@ -159,10 +159,13 @@ def test_local_metric_scenario_1() -> None:
         assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
     source = _source(8)
     tensor = np.eye(2) / 0.45**2
-    result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
+    result = _adapt(
+        source, MetricMeshAdaptation(_metric(source, tensor)), relocation=False
+    )
 
     assert result.status is MeshAdaptationStatus.COMPLETE
     assert result.evidence.collapses > 0
+    assert result.evidence.retriangulations == 0
     assert result.target.mesh.coordinates.shape[0] < source.mesh.coordinates.shape[0]
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
     source = _source(organized=True)
@@ -371,3 +374,111 @@ def test_local_metric_rejects_an_exact_source_bank_with_another_carrier() -> Non
             relocation=False,
             exact_source_points=changed,
         )
+
+
+def test_only_committed_2d_retriangulations_change_local_evidence_identity() -> None:
+    def evidence(retriangulations: int) -> local_metric.LocalMetricEvidence:
+        return local_metric.LocalMetricEvidence(
+            passes=1,
+            splits=2,
+            collapses=0,
+            flips=0,
+            relocations=0,
+            rejected_uncertain=0,
+            rejected_invalid=0,
+            converged=True,
+            stalled=False,
+            measured_edges=9,
+            out_of_range_edges=0,
+            minimum_metric_length=0.75,
+            maximum_metric_length=1.25,
+            unit_fraction=1.0,
+            minimum_metric_quality=0.85,
+            topology_operations=True,
+            relocation=True,
+            predicate_mode=PredicateMode.EXACT,
+            retriangulations=retriangulations,
+        )
+
+    local_only = evidence(0)
+    assert local_only.retriangulations == 0
+    # Default argument produces the exact same local-only evidence identity.
+    default_local = local_metric.LocalMetricEvidence(
+        passes=1,
+        splits=2,
+        collapses=0,
+        flips=0,
+        relocations=0,
+        rejected_uncertain=0,
+        rejected_invalid=0,
+        converged=True,
+        stalled=False,
+        measured_edges=9,
+        out_of_range_edges=0,
+        minimum_metric_length=0.75,
+        maximum_metric_length=1.25,
+        unit_fraction=1.0,
+        minimum_metric_quality=0.85,
+        topology_operations=True,
+        relocation=True,
+        predicate_mode=PredicateMode.EXACT,
+    )
+    assert local_only.evidence_id == default_local.evidence_id
+    assert (
+        len({local_only.evidence_id, evidence(1).evidence_id, evidence(2).evidence_id})
+        == 3
+    )
+
+
+def test_graded_2d_scalar_box_route_certifies_and_transfers_exactly() -> None:
+    source = _source(6)
+    mesh = source.mesh
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    radius = np.hypot(points[:, 0] - 0.5, points[:, 1] - 0.5)
+    sizes = np.minimum(0.05 + 0.3 * np.abs(radius - 0.3), 0.18)
+    tensors = np.zeros((points.shape[0], 2, 2), dtype=np.float64)
+    tensors[:, 0, 0] = 1.0 / (sizes * sizes)
+    tensors[:, 1, 1] = tensors[:, 0, 0]
+    vertices = mesh.entity_set(0)
+    metric = MeshMetricField(
+        MeshingScope(
+            mesh.mesh_id,
+            mesh.numeric_version,
+            MeshingEntityKind.MESH,
+            0,
+            vertices.entity_set_id,
+            vertices.entity_ids,
+        ),
+        tensors,
+        minimum_size=1.0e-3,
+        maximum_size=10.0,
+    )
+    first = _adapt(source, MetricMeshAdaptation(metric))
+    second = _adapt(source, MetricMeshAdaptation(metric))
+
+    assert first.status is MeshAdaptationStatus.COMPLETE
+    assert first.result_id == second.result_id
+    assert isinstance(first.evidence, local_metric.LocalMetricEvidence)
+    assert first.evidence.converged and first.evidence.out_of_range_edges == 0
+    assert first.evidence.retriangulations == 1
+    assert first.evidence.minimum_metric_quality >= 0.70
+    first.target.audit.require_passed()
+    areas = _signed_areas(first.target.mesh)
+    assert np.all(areas > 0.0)
+    assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
+    assert first.stencil is not None and first.transfer is not None
+    # Exact linear-field transfer across retired source cells.
+    target_coords = np.asarray(first.target.mesh.coordinates, dtype=np.float64)
+    linear_source = 1.5 - 2.25 * points[:, 0] + 3.5 * points[:, 1]
+    transferred = first.stencil.apply(
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64), linear_source
+    )
+    order = np.argsort(np.asarray(first.target.mesh.vertex_global_ids, dtype=np.int64))
+    rows = order[
+        np.searchsorted(
+            np.asarray(first.target.mesh.vertex_global_ids, dtype=np.int64)[order],
+            np.asarray(first.stencil.target_global_ids, dtype=np.int64),
+        )
+    ]
+    expected = 1.5 - 2.25 * target_coords[rows, 0] + 3.5 * target_coords[rows, 1]
+    np.testing.assert_allclose(np.asarray(transferred), expected, rtol=0.0, atol=1.0e-13)

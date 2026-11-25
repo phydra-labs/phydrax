@@ -132,6 +132,8 @@ set(PHX_MC_SOURCES
   src/metric_scalar_relax.cpp
   src/metric_scalar_correct.cpp
   src/metric_scalar_patch.cpp
+  src/metric_scalar2d.cpp
+  src/metric_scalar2d_proposal.cpp
   src/metric_adapt3d_capi.cpp
   src/cad_geometry.cpp
   src/cad_refine2d.cpp
@@ -177,6 +179,7 @@ set(PHX_MC_HEADERS
   src/metric_box_edges.hpp
   src/metric_box_rate.hpp
   src/metric_scalar_box.hpp
+  src/metric_scalar2d.hpp
   src/metric_collapse.hpp
   src/floating_point_mode.hpp
   src/interval_arithmetic.hpp
@@ -355,6 +358,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_angle)
   phx_mc_add_test(test_metric_relocation)
   phx_mc_add_test(test_metric_adapt3d)
+  phx_mc_add_test(test_metric_scalar2d)
   phx_mc_add_test(test_metric_layer_overlap)
   phx_mc_add_test(test_implicit_face_proposals)
   phx_mc_add_test(test_interval_program)

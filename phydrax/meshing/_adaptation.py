@@ -19,7 +19,7 @@ from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from fractions import Fraction
-from functools import partial
+from functools import cached_property, partial
 from math import lcm
 from typing import Any, assert_never, final, NamedTuple, TypeAlias
 
@@ -174,7 +174,11 @@ from ._lineage import (
     MeshTransitionKind,
     VertexInterpolationStencil,
 )
-from ._local_metric import execute_local_metric_adaptation, LocalMetricEvidence
+from ._local_metric import (
+    execute_local_metric_adaptation,
+    LocalMetricEvidence,
+    LocalMetricOutcome,
+)
 from ._mapped_reference_association import MappedReferenceAssociationTransfer
 from ._marker_transfer import transfer_cell_markers, validate_cell_markers
 from ._metric import MeshMetricField
@@ -7537,15 +7541,59 @@ def _metric_status(
     return MeshAdaptationStatus.NUMERICAL_STOP
 
 
-def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+@final
+@dataclasses.dataclass(frozen=True)
+class _ExactSourceVertices2D:
+    carrier: np.ndarray
+    authored_rows: tuple[tuple[Fraction, ...], ...] | None
+
+    @cached_property
+    def rows(self) -> tuple[tuple[Fraction, ...], ...]:
+        if self.authored_rows is not None:
+            return self.authored_rows
+        return tuple((Fraction(float(x)), Fraction(float(y))) for x, y in self.carrier)
+
+
+def _prepare_exact_source_2d(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[tuple[tuple[Fraction, ...], ...] | None, _ExactSourceVertices2D | None]:
+    if mesh.periodic_topology is not None:
+        return None, None
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    if (
+        geometry.source_map is None
+        and geometry.exact_coordinate_bank is None
+        and geometry.restriction_source is None
+        and all(block.cell_kind == "triangle" for block in mesh.blocks)
+    ):
+        nodal = lagrange_element("triangle", 1)
+        elements, routes, coordinates = geometry.resolve(mesh)
+        if np.array_equal(np.asarray(coordinates, dtype=np.float64), points) and all(
+            element is nodal
+            and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+        ):
+            covered = np.zeros(points.shape[0], dtype=np.bool_)
+            for block in mesh.blocks:
+                covered[np.asarray(block.vertices)] = True
+            if not np.all(covered):
+                raise ValueError(
+                    "Exact source geometry does not cover every metric vertex."
+                )
+            return None, _ExactSourceVertices2D(points, None)
+    exact_rows = _metric_exact_source_vertices(mesh, geometry)
+    return exact_rows, _ExactSourceVertices2D(points, exact_rows)
+
+
+def _construct_metric_edit(
+    prepared: PreparedMeshAdaptation, /
+) -> tuple[LocalMetricOutcome, _ExactSourceVertices2D | None]:
     request = prepared.request
     policy = prepared.policy
     constraints = prepared.constraints
     topology = isinstance(request, MetricMeshAdaptation)
-    exact_source_vertices = (
-        _metric_exact_source_vertices(prepared.source.mesh, prepared.source.geometry)
-        if prepared.source.mesh.periodic_topology is None
-        else None
+    authored_exact, exact_source = _prepare_exact_source_2d(
+        prepared.source.mesh, prepared.source.geometry
     )
     outcome = execute_local_metric_adaptation(
         prepared.source.mesh,
@@ -7557,11 +7605,28 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         predicate_mode=resolve_host_predicate_mode(policy.predicate_mode),
         topology_operations=topology,
         relocation=policy.relocation,
-        exact_source_points=exact_source_vertices,
+        exact_source_points=authored_exact,
     )
+    return outcome, exact_source
+
+
+def _finish_metric_route(
+    prepared: PreparedMeshAdaptation,
+    outcome: LocalMetricOutcome,
+    exact_source: _ExactSourceVertices2D | None,
+    /,
+) -> _RouteOutcome:
+    request = prepared.request
+    topology = isinstance(request, MetricMeshAdaptation)
     evidence = outcome.evidence
     status = _metric_status(evidence, topology)
-    applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
+    applied = (
+        evidence.splits
+        + evidence.collapses
+        + evidence.flips
+        + evidence.relocations
+        + evidence.retriangulations
+    )
     if applied == 0:
         # Retain whether the unchanged source satisfied the request or a
         # numerical/geometry obstruction prevented progress.
@@ -7571,7 +7636,7 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
-        exact_source_vertices=exact_source_vertices,
+        exact_source_vertices=None if exact_source is None else exact_source.rows,
     )
     return _RouteOutcome(
         status,
@@ -7585,6 +7650,11 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         evidence,
         None,
     )
+
+
+def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+    outcome, exact_source = _construct_metric_edit(prepared)
+    return _finish_metric_route(prepared, outcome, exact_source)
 
 
 def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
