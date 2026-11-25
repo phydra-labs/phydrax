@@ -722,10 +722,12 @@ TetEditStatus TetMesh::relocate_impl(
 // collapsed vertex has dimension three and no source stratum, so no source
 // facet or segment contains it; it may not appear in a replacement cell, and
 // any cell of its star outside the cavity would leave an unmatched boundary
-// face containing it. Constrained interior faces must be reproduced, and an
-// edge removed by the edit must not be a constrained segment. All allocation
-// precedes the first topology write; staged ID records are rolled back if the
-// commit cannot start.
+// face containing it. A collapse may move one interior survivor: its whole
+// star is then in the cavity, so no boundary face holds it, and orientation
+// is checked at its new carrier. Constrained interior faces must be
+// reproduced, and an edge removed by the edit must not be a constrained
+// segment. All allocation precedes the first topology write; staged ID records
+// are rolled back if the commit cannot start.
 TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
                                              const TetSegmentIndex* segment_index) {
   clear_implicit_facet_refusal();
@@ -737,7 +739,8 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
     if ((!collapse && !reconnection) || periodic_identity_.bound ||
         !periodic_orbits_.empty() || !quotient_cells_.empty() ||
         operation.removed_cell_ids.empty() || operation.replacement_cells.empty() ||
-        !operation.changed_vertices.empty() || !operation.split_edges.empty() ||
+        operation.changed_vertices.size() > (collapse ? 1U : 0U) ||
+        !operation.split_edges.empty() ||
         !operation.removed_facet_ids.empty() || !operation.replacement_facets.empty() ||
         !operation.removed_segment_ids.empty() ||
         !operation.replacement_segments.empty() || !operation.periodic_members.empty() ||
@@ -763,14 +766,40 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
           removed_vertex == survivor) {
         return TetEditStatus::kRejectedTopology;
       }
-      // The survivor neither moves nor leaves, so it may be protected or on
-      // the boundary; only the removed vertex must be free.
       if (protected_vertex(removed_vertex) || protection_radius(removed_vertex) > 0.0) {
         return TetEditStatus::kRejectedProtected;
       }
       if (vertex_dimension(removed_vertex) != 3 ||
           witness(removed_vertex).stratum != SourceStratum::kNone) {
         return TetEditStatus::kRejectedTopology;
+      }
+      // An unmoved survivor neither moves nor leaves, so it may be protected
+      // or on the boundary. A moved survivor is a free interior vertex with
+      // the checks of the batch route's moved collapse survivor.
+      if (!operation.changed_vertices.empty()) {
+        const TetEditVertex& moved = operation.changed_vertices.front();
+        if (moved.id == std::numeric_limits<std::uint64_t>::max()) {
+          return TetEditStatus::kIndexOverflow;
+        }
+        if (moved.id != operation.collapse_pairs.front().survivor_vertex_id ||
+            vertex_dimension(survivor) != 3 ||
+            witness(survivor).stratum != SourceStratum::kNone || !moved.ancestry.empty()) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        if (protected_vertex(survivor) || protection_radius(survivor) > 0.0 ||
+            moved.protected_vertex || moved.protection_radius != 0.0 ||
+            moved.witness.stratum != SourceStratum::kNone) {
+          return TetEditStatus::kRejectedProtected;
+        }
+        TetEditVertex checked = moved;
+        const auto at = static_cast<std::size_t>(survivor);
+        if (!checked.edge_witness_supplied && !checked.has_edge_parameter &&
+            vertex_has_edge_parameter_[at] != 0) {
+          checked.has_edge_parameter = true;
+          checked.edge_endpoints = vertex_edge_endpoints_[at];
+          checked.edge_parameter = vertex_edge_parameters_[at];
+        }
+        if (!source_carrier_valid(checked)) return TetEditStatus::kInvalidGeometry;
       }
     } else if (!operation.removed_vertex_ids.empty() || !operation.collapse_pairs.empty()) {
       return TetEditStatus::kRejectedTopology;
@@ -842,9 +871,26 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
       return TetEditStatus::kIndexOverflow;
     }
 
-    const TetEditStatus committed =
-        commit_local_cells(operation, replacement_vertices, removed_slots, {}, {}, nullptr);
+    const RelocationOverlay overlay{operation.changed_vertices};
+    const TetEditStatus committed = commit_local_cells(
+        operation, replacement_vertices, removed_slots, {}, {},
+        operation.changed_vertices.empty() ? nullptr : &overlay);
     if (committed != TetEditStatus::kApplied) return committed;
+    for (const TetEditVertex& moved : operation.changed_vertices) {
+      const auto at = static_cast<std::size_t>(vertex_slot(moved.id));
+      std::copy(moved.carrier.begin(), moved.carrier.end(), points_.begin() + 3 * at);
+      witnesses_[at] = moved.witness;
+      vertex_ancestry_.erase(moved.id);
+      if (moved.has_edge_parameter) {
+        vertex_has_edge_parameter_[at] = 1;
+        vertex_edge_endpoints_[at] = moved.edge_endpoints;
+        vertex_edge_parameters_[at] = moved.edge_parameter;
+      } else if (moved.edge_witness_supplied) {
+        vertex_has_edge_parameter_[at] = 0;
+        vertex_edge_endpoints_[at] = {};
+        vertex_edge_parameters_[at] = 0.0;
+      }
+    }
     if (collapse) {
       const std::uint64_t id = vertex_id(removed_vertex);
       vertex_live_[static_cast<std::size_t>(removed_vertex)] = 0;

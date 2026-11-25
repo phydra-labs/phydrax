@@ -367,10 +367,11 @@ class Adapter {
   bool may_collapse_in_place(std::int32_t removed, std::int32_t kept,
                              const LocalIncidence::Star& removed_star) const;
   bool plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePlan& plan);
-  // Commits a collapse: in place of an interior vertex star-locally
-  // (LocalIncidence::replace_cavity), of a boundary vertex through
-  // LocalIncidence::collapse_boundary, and of an interior vertex into a
-  // moving survivor through a one-operation TetMesh::apply_edit_batch.
+  // Commits a collapse star-locally where the cavity route applies: an
+  // interior vertex into a fixed or moving free interior survivor
+  // (LocalIncidence::replace_cavity) and a boundary vertex through
+  // LocalIncidence::collapse_boundary. Other moving survivors and boundary
+  // refusals of the local proof use a one-operation TetMesh::apply_edit_batch.
   TetEditStatus collapse(const CollapsePlan& plan, bool& applied);
   // The facet groups (labels of the constrained faces) through a vertex.
   std::vector<std::int32_t> facet_groups(std::int32_t vertex,
@@ -1910,10 +1911,14 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
   }
   const std::optional<TetEditStatus> local =
       plan.boundary ? collapse_boundary(plan, edit, removed_star, kept_star) : std::nullopt;
+  const bool local_cavity =
+      !plan.boundary &&
+      (!plan.moved || (!mesh_.implicit_source() && mesh_.vertex_dimension(kept) == 3 &&
+                       mesh_.witness(kept).stratum == SourceStratum::kNone));
   TetEditStatus status;
   if (local) {
     status = *local;
-  } else if (plan.boundary || plan.moved) {
+  } else if (!local_cavity) {
     TetEditBatch batch;
     batch.expected_generation = mesh_.generation();
     batch.identity_bound = mesh_.identity_bound();
@@ -1929,7 +1934,8 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
       return TetEditStatus::kStaleGeneration;
     }
   } else {
-    status = incidence_.replace_cavity(mesh_, edit, &removed_star);
+    status = incidence_.replace_cavity(mesh_, edit, &removed_star,
+                                      plan.moved ? &kept_star : nullptr);
   }
   if (status != TetEditStatus::kApplied) {
     if (fatal(status)) return status;

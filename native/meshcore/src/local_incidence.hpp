@@ -106,9 +106,12 @@ class LocalIncidence {
                          const Star& star, const SourceStencil* moved_stencil = nullptr);
   // Commits an interior reconnection or collapse through the cavity-local
   // TetMesh route and updates this index. A collapse must pass this index's
-  // current star of the removed vertex as the removed cells.
+  // current star of the removed vertex. A collapse that moves its interior
+  // survivor (operation.changed_vertices) also passes the survivor's current
+  // star, and its removed cells are the union of both stars.
   TetEditStatus replace_cavity(TetMesh& mesh, const TetEdit& operation,
-                               const Star* collapsed_star);
+                               const Star* collapsed_star,
+                               const Star* survivor_star = nullptr);
   // Cones a star-shaped cavity to one new interior vertex, removing the
   // buried vertices `removed_vertices` (TetMesh::insert_local_cone), through
   // the cavity-local TetMesh route and updates this index.

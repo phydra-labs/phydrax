@@ -746,6 +746,11 @@
 - Native 3D boundary edits reuse exact source-facet coverage and rim
   indexes across edits of the same mesh. Witness, orientation, coverage,
   and rollback checks are unchanged.
+- Tetrahedral metric adaptation commits an interior collapse into a moving
+  free interior survivor through the cavity-local route instead of copying
+  and auditing the whole mesh. The cavity is both vertex stars, and
+  orientation is checked at the survivor's new carrier; verdicts and
+  committed states match the batch route.
 - Hex-dominant smoothing omits derivative terms from faces and cells
   without a movable interior vertex in their stencil. Reduction order
   for movable vertices and all validity checks are unchanged.

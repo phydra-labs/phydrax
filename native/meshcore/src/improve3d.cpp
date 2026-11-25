@@ -327,10 +327,13 @@ TetEditStatus LocalIncidence::relocate(
 }
 
 TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& operation,
-                                             const Star* collapsed_star) {
+                                             const Star* collapsed_star,
+                                             const Star* survivor_star) {
   try {
     const bool collapse = operation.kind == TetEditKind::kCollapse;
-    if (collapse != (collapsed_star != nullptr) || mesh_ != &mesh) {
+    const bool moved = !operation.changed_vertices.empty();
+    if (collapse != (collapsed_star != nullptr) || mesh_ != &mesh ||
+        (collapse && moved) != (survivor_star != nullptr)) {
       return TetEditStatus::kRejectedTopology;
     }
     std::vector<std::int32_t> removed_slots;
@@ -348,17 +351,31 @@ TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& opera
       removed_cells.push_back(vertices);
     }
     if (collapse) {
-      if (operation.removed_vertex_ids.size() != 1) return TetEditStatus::kRejectedTopology;
-      const std::int32_t removed_vertex = mesh.vertex_slot(operation.removed_vertex_ids.front());
-      const Star& star = *collapsed_star;
-      if (removed_vertex < 0 || star.owner_ != this || star.vertex_ != removed_vertex ||
-          star.revision_ != topology_revision_) {
+      if (operation.removed_vertex_ids.size() != 1 ||
+          (moved && operation.collapse_pairs.size() != 1)) {
         return TetEditStatus::kRejectedTopology;
       }
-      std::vector<std::int32_t> removed_sorted = removed_slots;
+      const auto current = [&](const Star& star, std::int32_t vertex) {
+        return vertex >= 0 && star.owner_ == this && star.vertex_ == vertex &&
+               star.revision_ == topology_revision_;
+      };
+      const Star& star = *collapsed_star;
+      if (!current(star, mesh.vertex_slot(operation.removed_vertex_ids.front()))) {
+        return TetEditStatus::kRejectedTopology;
+      }
       std::vector<std::int32_t> star_sorted = star.cells_;
+      if (moved) {
+        // The survivor's whole star changes geometry, so all of it is cavity.
+        const std::int32_t survivor =
+            mesh.vertex_slot(operation.collapse_pairs.front().survivor_vertex_id);
+        if (!current(*survivor_star, survivor)) return TetEditStatus::kRejectedTopology;
+        star_sorted.insert(star_sorted.end(), survivor_star->cells_.begin(),
+                           survivor_star->cells_.end());
+      }
+      std::vector<std::int32_t> removed_sorted = removed_slots;
       std::sort(removed_sorted.begin(), removed_sorted.end());
       std::sort(star_sorted.begin(), star_sorted.end());
+      star_sorted.erase(std::unique(star_sorted.begin(), star_sorted.end()), star_sorted.end());
       if (removed_sorted != star_sorted) return TetEditStatus::kRejectedTopology;
     }
     const TetEditStatus status = mesh.replace_local_cavity(operation, segment_index_);

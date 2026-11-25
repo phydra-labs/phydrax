@@ -2402,6 +2402,122 @@ void incidence_route_matches_public_scan_after_collapse() {
   PHX_CHECK(same_logical_snapshot(after_duplicate, scanned_after_duplicate));
 }
 
+// A collapse that moves its free interior survivor commits star-locally with
+// the public batch's verdict and state, on refusal and on success.
+void incidence_moved_collapse_matches_public_batch() {
+  const ImprovementFixture fixture = make_interior_collapse_fixture();
+  const std::vector<std::int32_t> regions(fixture.cells.size(), 1);
+  std::vector<std::int8_t> protected_vertices(fixture.points.size() / 3, 1);
+  protected_vertices[0] = 0;
+  protected_vertices[1] = 0;
+  const std::vector<std::uint64_t> vertex_ids = sequential_ids(fixture.points.size() / 3);
+  const std::vector<std::uint64_t> cell_ids = sequential_ids(fixture.cells.size());
+  const std::vector<std::uint64_t> facet_ids = sequential_ids(fixture.faces.size());
+  TetMesh local_mesh(BoundaryPolicy::kConforming);
+  TetMesh batch_mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(build_improvement_mesh(local_mesh, fixture, regions, vertex_ids, cell_ids,
+                                   facet_ids, protected_vertices) == PHX_MC_OK);
+  PHX_CHECK(build_improvement_mesh(batch_mesh, fixture, regions, vertex_ids, cell_ids,
+                                   facet_ids, protected_vertices) == PHX_MC_OK);
+  detail::LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local_mesh));
+  TetMeshSnapshot initial;
+  PHX_CHECK(local_mesh.snapshot(initial) == TetEditStatus::kApplied);
+
+  constexpr std::uint64_t removed_id = 0;
+  constexpr std::uint64_t survivor_id = 1;
+  const std::int32_t removed = local_mesh.vertex_slot(removed_id);
+  const std::int32_t survivor = local_mesh.vertex_slot(survivor_id);
+  PHX_CHECK(local_mesh.vertex_dimension(survivor) == 3);
+  const detail::LocalIncidence::Star removed_star = incidence.vertex_star(removed);
+  const detail::LocalIncidence::Star survivor_star = incidence.vertex_star(survivor);
+  const auto holds = [&](std::int32_t slot, std::int32_t vertex) {
+    const Tetrahedron& cell = local_mesh.tet(slot);
+    return std::find(cell.v, cell.v + 4, vertex) != cell.v + 4;
+  };
+  std::vector<std::int32_t> cavity(removed_star.begin(), removed_star.end());
+  for (std::int32_t slot : survivor_star) {
+    if (!holds(slot, removed)) cavity.push_back(slot);
+  }
+  std::uint64_t next_cell_id = 0;
+  for (const TetSnapshotCell& cell : initial.cells) next_cell_id = std::max(next_cell_id, cell.id + 1);
+  TetEdit collapse;
+  collapse.kind = TetEditKind::kCollapse;
+  collapse.collapse_pairs.push_back({removed_id, survivor_id});
+  collapse.removed_vertex_ids.push_back(removed_id);
+  for (std::int32_t slot : cavity) {
+    collapse.removed_cell_ids.push_back(local_mesh.cell_id(slot));
+    if (holds(slot, removed) && holds(slot, survivor)) continue;
+    TetEditCell replacement;
+    replacement.id = next_cell_id++;
+    replacement.region = local_mesh.complex().region(slot);
+    replacement.ancestor_cell_ids = {local_mesh.cell_id(slot)};
+    for (int corner = 0; corner < 4; ++corner) {
+      const std::int32_t vertex = local_mesh.tet(slot).v[corner];
+      replacement.vertices[static_cast<std::size_t>(corner)] =
+          vertex == removed ? survivor_id : local_mesh.vertex_id(vertex);
+      replacement.facet_sources[static_cast<std::size_t>(corner)] =
+          local_mesh.complex().constraint(slot, corner);
+    }
+    collapse.replacement_cells.push_back(std::move(replacement));
+  }
+  std::sort(collapse.removed_cell_ids.begin(), collapse.removed_cell_ids.end());
+  TetEditVertex moved;
+  moved.id = survivor_id;
+  moved.witness = local_mesh.witness(survivor);
+  moved.edge_witness_supplied = true;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    moved.carrier[axis] = local_mesh.point(survivor)[axis] +
+                          0.25 * (local_mesh.point(removed)[axis] - local_mesh.point(survivor)[axis]);
+  }
+  const auto batch_status = [&](const TetEdit& operation) {
+    TetEditBatch batch{batch_mesh.generation(), batch_mesh.source_revision(),
+                       batch_mesh.frame_id(), batch_mesh.identity_bound(), {operation},
+                       batch_mesh.source_id(), batch_mesh.source_map_id(),
+                       batch_mesh.periodic_identity()};
+    std::vector<TetEditResult> results;
+    return batch_mesh.apply_edit_batch(batch, results);
+  };
+  const auto same_states = [&]() {
+    TetMeshSnapshot local_state;
+    TetMeshSnapshot batch_state;
+    PHX_CHECK(local_mesh.snapshot(local_state) == TetEditStatus::kApplied);
+    PHX_CHECK(batch_mesh.snapshot(batch_state) == TetEditStatus::kApplied);
+    PHX_CHECK(same_logical_snapshot(local_state, batch_state));
+    PHX_CHECK(incidence_matches_mesh(local_mesh, incidence));
+  };
+
+  // The survivor's star proves that every cell around the moved point is
+  // in the cavity.
+  collapse.changed_vertices = {moved};
+  PHX_CHECK(incidence.replace_cavity(local_mesh, collapse, &removed_star) ==
+            TetEditStatus::kRejectedTopology);
+  TetEdit partial = collapse;
+  partial.removed_cell_ids.erase(std::remove(partial.removed_cell_ids.begin(),
+                                             partial.removed_cell_ids.end(),
+                                             local_mesh.cell_id(cavity.back())),
+                                 partial.removed_cell_ids.end());
+  PHX_CHECK(incidence.replace_cavity(local_mesh, partial, &removed_star, &survivor_star) ==
+            TetEditStatus::kRejectedTopology);
+
+  TetEdit outside = collapse;
+  for (double& coordinate : outside.changed_vertices.front().carrier) coordinate += 64.0;
+  const TetEditStatus local_outside =
+      incidence.replace_cavity(local_mesh, outside, &removed_star, &survivor_star);
+  PHX_CHECK(local_outside == batch_status(outside));
+  PHX_CHECK(local_outside == TetEditStatus::kInvalidGeometry);
+  same_states();
+
+  const TetEditStatus local_move =
+      incidence.replace_cavity(local_mesh, collapse, &removed_star, &survivor_star);
+  PHX_CHECK(local_move == batch_status(collapse));
+  PHX_CHECK(local_move == TetEditStatus::kApplied);
+  same_states();
+  PHX_CHECK(!local_mesh.live_vertex(local_mesh.vertex_slot(removed_id)));
+  const double* point = local_mesh.point(local_mesh.vertex_slot(survivor_id));
+  PHX_CHECK(std::equal(point, point + 3, moved.carrier.begin()));
+}
+
 void cavity_local_reconnection_matches_public_batch() {
   constexpr std::array<double, 6> radii{1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
   const ImprovementFixture fixture = make_bipyramid_fixture(radii, 1.5);
@@ -3418,6 +3534,7 @@ int main() {
   unmet_star_cells_are_cleared_by_target_meeting_relocation();
   flat_cocircular_cap_cell_scores_below_every_valid_cell();
   incidence_route_matches_public_scan_after_collapse();
+  incidence_moved_collapse_matches_public_batch();
   cavity_local_reconnection_matches_public_batch();
   boundary_point_insertion_splits_segment_and_fans();
   refused_boundary_insertion_restores_disk_constraints();
