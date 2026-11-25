@@ -507,6 +507,17 @@ identical on all three 388-cell cases. In one before/after construction
 comparison, iso took 3.366 s then 2.989 s and aniso took 1.517 s then
 1.494 s. These are local Phydrax samples, not new paired MMG3D clocks.
 
+For explicit tensor fields, the adapter tries the coarse step range with
+the deep search directions and carrier resolutions, and attempts coupled
+repair when shallow relocation stops changing the mesh. The ordinary
+exhaustive search is still required to report a stall, with the bounded
+attempt cache cleared before fine steps. This intentionally changes edit
+order, not the acceptance thresholds. On the same aniso input, a paired
+sample was **0.823 s vs 0.361 s** for MMG3D. The 330-cell result had zero
+out-of-band edges and inversions, minimum shape 0.39228 vs 0.29750, mean
+0.78462 vs 0.67732, and midpoint band share 0.91225 vs 0.42265. The crop
+still misses the construction clock and does not qualify larger rows.
+
 ### Implicit carrier remesh and proof
 
 On the general implicit route, a sharp turn in the scaffold is only a

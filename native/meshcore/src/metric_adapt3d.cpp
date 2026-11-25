@@ -541,6 +541,7 @@ class Adapter {
   // (both band improvements only), 3 every vertex, 4 also pairs of ends of
   // out-of-band edges, 5 terminal boundary tangents; back to 0 after topology.
   int relocation_stage_ = 0;
+  bool bounded_tensor_search_ = false;
   // Direct-mapped, bounded, and local to this adaptation call.
   std::vector<RelocationAttempt> relocation_attempts_;
   // Failed carrier searches depend on both endpoint states and the shell's
@@ -3087,6 +3088,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied, ShapeGoal go
   if (pull_count == 0) return TetEditStatus::kApplied;
   RelocationMode mode;
   mode.deep = deep;
+  mode.coarse_steps = bounded_tensor_search_;
   mode.refine = tangents || (deep && relocation_stage_ == 2);
   mode.band_only = tangents || deep;
   mode.shape_lower = closed_band_shape ? lower : 0.0;
@@ -3640,16 +3642,6 @@ TetEditStatus Adapter::relocate_shape_cage(std::int32_t seed, double seed_shape,
 }
 
 std::int64_t Adapter::repair_band_cages() {
-  // The late repair is for tensor fields; leave the ordinary scalar search alone.
-  bool anisotropic = false;
-  for (std::size_t i = 0; i < input_.source_metrics.size(); i += 9) {
-    if (!scalar_metric(input_.source_metrics.data() + i)) {
-      anisotropic = true;
-      break;
-    }
-  }
-  if (!anisotropic) return 0;
-
   const double lower = shape_lower();
   const auto short_length = [&](double value) { return value > 0.0 && value < lower; };
   // Keep just the worst distinct short edges, in persistent-ID tie order.
@@ -4072,6 +4064,16 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     output.passes = 1;
     return TetEditStatus::kApplied;
   }
+  bool tensor_field = false;
+  if (input_.relocation && carriers_) {
+    for (std::size_t i = 0; i < input_.source_metrics.size(); i += 9) {
+      if (!scalar_metric(input_.source_metrics.data() + i)) {
+        tensor_field = true;
+        break;
+      }
+    }
+  }
+  bounded_tensor_search_ = tensor_field && !mesh_.implicit_source();
   if (mesh_.vertex_slot_count() >= 512) {
     edge_measurements_.resize(16'384);
   }
@@ -4085,6 +4087,7 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
   // A stall certifies exhaustion only for a generation that was fully
   // queued at stage zero with all requested search gates enabled.
   std::optional<std::uint64_t> exhaustion_generation;
+  std::optional<std::uint64_t> cage_generation;
   for (;;) {
     ++passes;
     std::int64_t applied = 0;
@@ -4132,6 +4135,15 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // progress alone continues at its depth until it stalls there.
     if (topology != 0) relocation_stage_ = 0;
     if (applied != 0) continue;
+    // A short-edge cage can finish where another single-vertex sweep
+    // cannot. Try it once per plateau before descending to finer steps.
+    if (bounded_tensor_search_ && boundary_moves_ && relocation_stage_ == 0 &&
+        cage_generation != mesh_.generation()) {
+      cage_generation = mesh_.generation();
+      const auto repaired = repair_band_cages();
+      if (fatal_ != TetEditStatus::kApplied) return fatal_;
+      if (repaired != 0) continue;
+    }
     // Exhaust the cheap single-vertex interior search before enabling
     // boundary moves, moving survivors and deeper searches.
     bool stalled = false;
@@ -4155,18 +4167,22 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
       stalled = true;
     }
     if (stalled) {
-      if (band_searched || !input_.relocation || !carriers_) {
-        status = AdaptStatus::kStalled;
-        break;
-      }
-      band_searched = true;
-      const auto repaired = repair_band_cages();
+      const auto repaired = !band_searched && tensor_field ? repair_band_cages() : 0;
       if (fatal_ != TetEditStatus::kApplied) return fatal_;
-      if (repaired == 0) {
+      if (repaired != 0) {
+        band_searched = true;
+        ++passes;
+      } else if (bounded_tensor_search_) {
+        // Exhaustive search must get its own generation and refusal cache:
+        // the coarse prefix has not certified a stall.
+        bounded_tensor_search_ = false;
+        relocation_attempts_.clear();
+        band_searched = false;
+        shape_searched = false;
+      } else {
         status = AdaptStatus::kStalled;
         break;
       }
-      ++passes;
       // Requeue the ordinary search and let it certify global completion.
       relocation_stage_ = 0;
     }

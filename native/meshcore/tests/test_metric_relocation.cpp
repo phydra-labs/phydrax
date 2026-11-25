@@ -334,6 +334,57 @@ void shape_relocation_keeps_the_requested_lower_bound() {
   }
 }
 
+void exhaustive_steps_reach_a_goal_beyond_the_coarse_prefix() {
+  namespace metric = phx::mc::metric;
+  using phx::mc::Dyadic;
+  const std::vector<double> source_points{0, 0, 1, 0, 0, 0, 0, 2, 0, 2, 0, 0};
+  std::vector<Dyadic> numerators;
+  for (double coordinate : source_points) numerators.emplace_back(coordinate);
+  const metric::CarrierSource source(source_points, std::move(numerators), Dyadic(1.0),
+                                     {0, 1, 2, 3});
+  auto points = source_points;
+  points[2] = 1.0 / 8.0;
+  std::array<double, 36> tensors{}, logs{};
+  for (std::size_t row = 0; row < 4; ++row) {
+    for (std::size_t axis = 0; axis < 3; ++axis) tensors[9 * row + 4 * axis] = 1.0;
+  }
+  const std::int8_t measured[]{0, 1, 1};
+  const double length = metric::length(points.data(), points.data() + 6, tensors.data(),
+                                        tensors.data() + 18);
+  const double lengths[]{points[2], length, length};
+  const std::int64_t cells[]{0, 1, 2, 3};
+  const double pull[]{0, 0, -8};
+  metric::RelocationStar star;
+  star.point_count = 4;
+  star.points = points.data();
+  star.metrics = tensors.data();
+  star.measured = measured;
+  star.before_lengths = lengths;
+  star.cell_count = 1;
+  star.cells = cells;
+  star.determinant_floor = kFloor;
+
+  // Every coarse goal crosses the wall. An exhaustive step can improve the
+  // two long spokes without crossing it; exhaustion of the prefix is local.
+  metric::RelocationMode mode;
+  mode.deep = true;
+  mode.band_only = true;
+  mode.coarse_steps = true;
+  std::vector<metric::RelocationCandidate> group;
+  std::vector<double> candidate_lengths;
+  metric::RelocationSearch coarse(source, tensors.data(), logs.data(), star, 1, pull, nullptr,
+                                  nullptr, {}, mode);
+  PHX_CHECK(coarse.next(group, candidate_lengths) == metric::RelocationEnd::kExhausted);
+  mode.coarse_steps = false;
+  metric::RelocationSearch full(source, tensors.data(), logs.data(), star, 1, pull, nullptr,
+                                nullptr, {}, mode);
+  PHX_CHECK(full.next(group, candidate_lengths) == metric::RelocationEnd::kGroup);
+  PHX_CHECK(!group.empty() && group.front().carrier.point[2] > 0.0 &&
+            group.front().carrier.point[2] < points[2]);
+  PHX_CHECK(candidate_lengths.size() >= 3 && candidate_lengths[1] < length &&
+            candidate_lengths[2] < length);
+}
+
 void refuses() {
   Source source;
   create(source, 4.0);
@@ -386,6 +437,7 @@ int main() {
   sequences();
   reversed_spoke_is_not_a_band_improvement();
   shape_relocation_keeps_the_requested_lower_bound();
+  exhaustive_steps_reach_a_goal_beyond_the_coarse_prefix();
   refuses();
   return phx::mc::test::finish("test_metric_relocation");
 }

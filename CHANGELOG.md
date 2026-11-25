@@ -750,6 +750,10 @@
   stationary squared edge lengths within each search. Shape scoring reuses
   the orientation determinant and band spoke measurements when their
   direction agrees. Quality reduction order and accepted edits are unchanged.
+- Explicit tetrahedral adaptation tries coarse-step tensor relocation
+  and coupled short-edge repair before exhausting finer single-vertex
+  steps. Coarse exhaustion cannot certify a stall. Edit order and
+  adapted mesh identities can change; the band and embedding checks do not.
 - Native metric adaptation skips an unused shape measurement when a
   relocation strictly improves the edge band. Shape still decides
   equal-band moves and is still reported by the relocation proposal API.

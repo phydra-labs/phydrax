@@ -92,7 +92,7 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
 // current pull while it differs from x.
 bool RelocationSearch::raw_goal(double* goal) {
   const std::int64_t pull_count = static_cast<std::int64_t>(pulls_.size() / 3);
-  const std::int64_t last = mode_.deep ? kLastStep : kSeedSteps;
+  const std::int64_t last = mode_.deep && !mode_.coarse_steps ? kLastStep : kSeedSteps;
   const double* vertex = point(0);
   while (pull_ < pull_count) {
     if (step_ <= last) {

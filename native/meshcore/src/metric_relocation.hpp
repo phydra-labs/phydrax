@@ -64,6 +64,8 @@ struct RelocationStar {
 struct RelocationMode {
   // Goals at every step and the coarsest and the finest carrier of a goal.
   bool deep = false;
+  // Keep the coarse step range while using the deep directions and carriers.
+  bool coarse_steps = false;
   // The finest carrier of every goal first; then, for the same goals in
   // order, every remaining resolution. Takes precedence over `deep` for the
   // carriers of a goal.
