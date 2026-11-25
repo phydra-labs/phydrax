@@ -469,10 +469,10 @@ Both tools use the same ordered source mesh and sampled target. The driver
 reports construction separately from certification and transfer, and keeps
 native completion and edge refusal evidence even when quality improves.
 The probe is for iteration, not a substitute for ladder qualification.
-On the earlier cover-fix image, the crop coarsens to completion with no
-inversions but misses MMG3D's mean shape (0.78597 vs 0.79798). Iso and aniso
-exceeded both sampled quality thresholds but stalled at 21 and 26 residual
-edges respectively.
+On the earlier cover-fix image, the coarsening crop completed with no
+inversions but missed both mean shape (0.78597 vs 0.79798) and worst-cell
+shape (0.50297 vs 0.58136). Iso and aniso exceeded the earlier mean and
+band thresholds but stalled at 21 and 26 residual edges respectively.
 
 The rounded Cartesian hull split removes all 21 iso residuals; the crop
 completes with zero inversions, mean shape 0.86120 (MMG3D 0.83983), and
@@ -481,6 +481,12 @@ midpoint band share 0.90261 (MMG3D 0.83795). Worst-cell shape still loses:
 representability refusals. Its worst shape of 0.35736 beats MMG3D's
 0.29750, but it still stalls. These are diagnostic comparisons,
 not MMG3D timing wins or acceptance of the archived rows.
+
+Both minimum and mean shape must also pass on the coarsening crop.
+An independently retransported diagnostic on its unchanged connectivity
+reaches 0.58362 minimum and 0.80534 mean with zero native out-of-band edges
+and certified global embedding. It establishes feasibility, not that the
+adapter constructs the result.
 
 ### Implicit carrier remesh and proof
 
