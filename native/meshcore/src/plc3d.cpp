@@ -1838,10 +1838,11 @@ class PlcRecoveryBuilder {
  public:
   // `edges`: the preparer's edge index of `source` (SourcePreparer::edge_uses).
   PlcRecoveryBuilder(const PlcInput& input, const PlcRecovery& source,
-                     const SourceEdgeUses& edges)
+                     const SourceEdgeUses& edges, bool allow_preseeded = true)
       : input_(input), candidate_(source), source_edges_(edges),
         visible_edges_(source.plc_edges.size() / 2 -
-                       static_cast<std::size_t>(source.hidden_plc_edges)) {
+                       static_cast<std::size_t>(source.hidden_plc_edges)),
+        allow_preseeded_(allow_preseeded) {
     candidate_.suppression_search.node_budget = input_.search_node_budget;
     candidate_.suppression_search.byte_budget = input_.search_byte_budget;
     if (input_.facet_planes == nullptr) return;
@@ -1867,7 +1868,7 @@ class PlcRecoveryBuilder {
     const int32_t seeded = try_preseeded_triangulation(conforming);
     if (seeded != PHX_MC_OK) return seeded;
     if (preseeded_count_ != 0) {
-      conformity = Conformity::kConforms;
+      conformity = preseed_conforms_ ? Conformity::kConforms : Conformity::kNever;
     } else if (!prepare_corner_scaffold()) {
       return status_;
     } else if (source_triangulation_ready_ && corner_count_ != 0) {
@@ -1952,6 +1953,9 @@ class PlcRecoveryBuilder {
   // Whether run failed on the deferred contact check (the failure is the
   // preparation's).
   bool contact_failure() const { return contact_failure_; }
+  // Whether recovery proceeded with preseeded volume sites on a non-conforming
+  // boundary (a proposal path that falls back cleanly if recovery refuses).
+  bool used_nonconforming_preseed() const { return preseeded_count_ != 0 && !preseed_conforms_; }
 
   const PlcSourceRefusal& source_refusal() const { return candidate_.source_refusal; }
   // The failure, with a hidden internal edge (never published) named by its
@@ -2238,80 +2242,193 @@ class PlcRecoveryBuilder {
     return source_triangulation_ready_;
   }
 
-  // Make the work slots and their oriented corner order independent of the
-  // DT3 region allocator. Physical point IDs still name source rows, followed
-  // by the canonical lattice order, not the insertion permutation.
-  void normalize_preseeded_cells(std::span<const int32_t> vertices) {
+  // Make the work slots, oriented corner order, and Triangulation3D walk state
+  // independent of the DT3 region allocator. Physical point IDs still name
+  // source rows, followed by any scaffold corners and canonical lattice order.
+  int32_t normalize_preseeded_cells(std::size_t vertex_count,
+                                    std::span<const int32_t> vertices) {
     TetrahedralComplex& complex = triangulation_->complex();
     auto& tets = complex.tets;
-    std::vector<int32_t> keys;
-    keys.reserve(5 * tets.size());
+    const std::size_t tet_slots = tets.size();
+    const auto workers = static_cast<uint32_t>(std::max<int32_t>(1, input_.parallelism));
     constexpr int kLead[4][4]{{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
-    for (std::size_t slot = 0; slot < tets.size(); ++slot) {
-      Tetrahedron& tet = tets[slot];
+    const auto canonicalize_range = [&](std::size_t begin, std::size_t end) {
+      for (std::size_t slot = begin; slot < end; ++slot) {
+        Tetrahedron& tet = tets[slot];
+        if (tet.v[0] == kDeadVertex) continue;
+        if (!vertices.empty()) {
+          for (int32_t& v : tet.v) {
+            if (v >= 0) v = vertices[static_cast<std::size_t>(v)];
+          }
+        }
+        const auto first = std::min_element(tet.v, tet.v + 4) - tet.v;
+        const int* lead = kLead[first];
+        const int32_t ordered[]{tet.v[lead[1]], tet.v[lead[2]], tet.v[lead[3]]};
+        const auto second = std::min_element(ordered, ordered + 3) - ordered;
+        const int permutation[]{lead[0], lead[1 + second], lead[1 + (second + 1) % 3],
+                                lead[1 + (second + 2) % 3]};
+        const Tetrahedron original = tet;
+        for (int j = 0; j < 4; ++j) {
+          tet.v[j] = original.v[permutation[j]];
+          tet.n[j] = original.n[permutation[j]];
+        }
+      }
+    };
+    if (workers > 1 && tet_slots >= 8192) {
+      const int32_t status = parallel_for(
+          tet_slots, ParallelRequest{8192, workers},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) {
+            canonicalize_range(begin, end);
+          });
+      if (status != PHX_MC_OK) return status;
+    } else {
+      canonicalize_range(0, tet_slots);
+    }
+    // Single-pass bucket sort by v[0] + 1 (bucket 0 holds all ghost cells;
+    // buckets 1..vertex_count hold finite cells with small average degree).
+    const std::size_t bucket_count = vertex_count + 1;
+    std::vector<std::size_t> offsets(bucket_count + 1, 0);
+    for (std::size_t slot = 0; slot < tet_slots; ++slot) {
+      const Tetrahedron& tet = tets[slot];
       if (tet.v[0] == kDeadVertex) continue;
-      for (int32_t& v : tet.v) {
-        if (v >= 0) v = vertices[static_cast<std::size_t>(v)];
+      ++offsets[static_cast<std::size_t>(tet.v[0] + 1) + 1];
+    }
+    for (std::size_t b = 0; b < bucket_count; ++b) offsets[b + 1] += offsets[b];
+    const std::size_t total = offsets[bucket_count];
+    struct CanonicalEntry {
+      int32_t v1, v2, v3, slot;
+    };
+    std::vector<CanonicalEntry> entries(total);
+    std::vector<std::size_t> cursor(offsets.begin(), offsets.end() - 1);
+    for (std::size_t slot = 0; slot < tet_slots; ++slot) {
+      const Tetrahedron& tet = tets[slot];
+      if (tet.v[0] == kDeadVertex) continue;
+      const auto bucket = static_cast<std::size_t>(tet.v[0] + 1);
+      entries[cursor[bucket]++] = {tet.v[1], tet.v[2], tet.v[3], static_cast<int32_t>(slot)};
+    }
+    const auto less_entry = [](const CanonicalEntry& a, const CanonicalEntry& b) {
+      if (a.v1 != b.v1) return a.v1 < b.v1;
+      if (a.v2 != b.v2) return a.v2 < b.v2;
+      return a.v3 < b.v3;
+    };
+    if (offsets[1] - offsets[0] > 1) {
+      std::sort(entries.begin() + static_cast<std::ptrdiff_t>(offsets[0]),
+                entries.begin() + static_cast<std::ptrdiff_t>(offsets[1]), less_entry);
+    }
+    const auto sort_buckets = [&](std::size_t begin, std::size_t end) {
+      for (std::size_t b = begin; b < end; ++b) {
+        const std::size_t first = offsets[b + 1];
+        const std::size_t last = offsets[b + 2];
+        if (last - first > 1) {
+          std::sort(entries.begin() + static_cast<std::ptrdiff_t>(first),
+                    entries.begin() + static_cast<std::ptrdiff_t>(last), less_entry);
+        }
       }
-      const auto first = std::min_element(tet.v, tet.v + 4) - tet.v;
-      const int* lead = kLead[first];
-      const int32_t ordered[]{tet.v[lead[1]], tet.v[lead[2]], tet.v[lead[3]]};
-      const auto second = std::min_element(ordered, ordered + 3) - ordered;
-      const int permutation[]{lead[0], lead[1 + second], lead[1 + (second + 1) % 3],
-                              lead[1 + (second + 2) % 3]};
-      const Tetrahedron original = tet;
-      for (int j = 0; j < 4; ++j) {
-        tet.v[j] = original.v[permutation[j]];
-        tet.n[j] = original.n[permutation[j]];
-        keys.push_back(tet.v[j] + 1);
+    };
+    if (workers > 1 && vertex_count >= 2048) {
+      const int32_t status = parallel_for(
+          vertex_count, ParallelRequest{2048, workers},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) { sort_buckets(begin, end); });
+      if (status != PHX_MC_OK) return status;
+    } else {
+      sort_buckets(0, vertex_count);
+    }
+    std::vector<int32_t> old_to_new(tet_slots, -1);
+    const auto map_range = [&](std::size_t begin, std::size_t end) {
+      for (std::size_t row = begin; row < end; ++row) {
+        old_to_new[static_cast<std::size_t>(entries[row].slot)] = static_cast<int32_t>(row);
       }
-      keys.push_back(static_cast<int32_t>(slot));
+    };
+    if (workers > 1 && total >= 8192) {
+      const int32_t status = parallel_for(
+          total, ParallelRequest{8192, workers},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) { map_range(begin, end); });
+      if (status != PHX_MC_OK) return status;
+    } else {
+      map_range(0, total);
     }
-    const auto count = keys.size() / 5;
-    std::vector<int32_t> scratch(keys.size());
-    std::vector<std::size_t> digits;
-    int bits = 1;
-    while ((std::uint64_t{1} << bits) <= vertices.size()) ++bits;
-    radix_sort_rows<5>(keys.data(), scratch.data(), count, 0, 4, bits, digits);
-    std::vector<int32_t> old_to_new(tets.size(), -1);
-    for (std::size_t row = 0; row < count; ++row) {
-      old_to_new[keys[5 * row + 4]] = static_cast<int32_t>(row);
+    std::vector<Tetrahedron> canonical(total);
+    const auto rebuild_range = [&](std::size_t begin, std::size_t end) {
+      for (std::size_t row = begin; row < end; ++row) {
+        Tetrahedron tet = tets[static_cast<std::size_t>(entries[row].slot)];
+        tet.stamp = 0;
+        for (int32_t& neighbor : tet.n) neighbor = old_to_new[static_cast<std::size_t>(neighbor)];
+        canonical[row] = tet;
+      }
+    };
+    if (workers > 1 && total >= 8192) {
+      const int32_t status = parallel_for(
+          total, ParallelRequest{8192, workers},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) { rebuild_range(begin, end); });
+      if (status != PHX_MC_OK) return status;
+    } else {
+      rebuild_range(0, total);
     }
-    std::vector<Tetrahedron> canonical;
-    canonical.reserve(count);
-    int32_t start = -1;
-    for (std::size_t row = 0; row < count; ++row) {
-      Tetrahedron tet = tets[keys[5 * row + 4]];
-      for (int32_t& neighbor : tet.n) neighbor = old_to_new[neighbor];
-      if (start < 0 && !is_ghost(tet)) start = static_cast<int32_t>(row);
-      canonical.push_back(tet);
-    }
-    tets.swap(canonical);
-    complex.free_slots.clear();
-    triangulation_->set_hint(start);
+    const int32_t start = offsets[1] < total ? static_cast<int32_t>(offsets[1]) : -1;
+    const int64_t finite_count = complex.finite_count;
+    // Replace the Triangulation3D instance so walk_step_ and visit stamps
+    // start from zero regardless of how many workers built the complex.
+    auto fresh = std::make_unique<Triangulation3D>(
+        work_points_.data(), nullptr, static_cast<int64_t>(vertex_count));
+    fresh->set_exact_points(&exact_points_);
+    fresh->set_affine_metric(input_.affine_metric);
+    fresh->complex().tets.swap(canonical);
+    fresh->complex().finite_count = finite_count;
+    if (start >= 0) fresh->set_hint(start);
+    triangulation_ = std::move(fresh);
+    return PHX_MC_OK;
   }
 
-  // The additional sites are proposals, not authored source points. Accept
-  // this triangulation only if every fixed wall face is already recovered.
+  // The additional sites are proposals, not authored source points. Keep the
+  // parallel preseeded triangulation directly when every fixed wall face
+  // conforms, or with a corner scaffold when almost all wall faces conform so
+  // local recovery only edits the remaining faces.
   int32_t try_preseeded_triangulation(std::vector<ConformingFace>& conforming) {
-    if (!(input_.uniform_radius > 0.0) || input_.policy != BoundaryPolicy::kFixed ||
-        input_.affine_metric != nullptr || input_.protected_facets != nullptr ||
-        input_.segment_count != 0 || input_.seed_count != 0 || !planar_polygons_.empty()) {
+    if (!allow_preseeded_ || !(input_.uniform_radius > 0.0) ||
+        input_.policy != BoundaryPolicy::kFixed || input_.affine_metric != nullptr ||
+        input_.protected_facets != nullptr || input_.seed_count != 0 ||
+        !planar_polygons_.empty()) {
       return PHX_MC_OK;
+    }
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      if (edge_chains_[row].size() > 1 &&
+          edge_triangle_offsets_[row] == edge_triangle_offsets_[row + 1]) {
+        return PHX_MC_OK;
+      }
     }
     const int32_t first = input_.facet_regions[0], second = input_.facet_regions[1];
     if (!((first == -1 && second >= 0) || (second == -1 && first >= 0))) return PHX_MC_OK;
+    bool mixed_orientation = false;
     for (int64_t facet = 1; facet < input_.facet_count; ++facet) {
-      if (input_.facet_regions[2 * facet] != first ||
-          input_.facet_regions[2 * facet + 1] != second) return PHX_MC_OK;
+      const int32_t pos = input_.facet_regions[2 * facet];
+      const int32_t neg = input_.facet_regions[2 * facet + 1];
+      if (pos == first && neg == second) continue;
+      if (pos == second && neg == first) {
+        mixed_orientation = true;
+        continue;
+      }
+      return PHX_MC_OK;
     }
     std::vector<char> wall_vertices(static_cast<std::size_t>(source_point_count_), 0);
     for (const int32_t vertex : candidate_.input_triangles) {
       wall_vertices[static_cast<std::size_t>(vertex)] = 1;
     }
     if (std::ranges::find(wall_vertices, 0) != wall_vertices.end()) return PHX_MC_OK;
+    std::vector<int32_t> oriented_triangles;
+    std::span<const int32_t> lattice_triangles = candidate_.input_triangles;
+    if (mixed_orientation) {
+      oriented_triangles = candidate_.input_triangles;
+      const std::size_t triangle_count = oriented_triangles.size() / 3;
+      for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+        const int32_t facet = input_.polygon_facets[candidate_.input_polygons[triangle]];
+        if (input_.facet_regions[2 * facet] != first) {
+          std::swap(oriented_triangles[3 * triangle + 1], oriented_triangles[3 * triangle + 2]);
+        }
+      }
+      lattice_triangles = oriented_triangles;
+    }
     std::vector<double> sites;
-    if (!prepare_owned_volume_lattice(candidate_.points, candidate_.input_triangles,
+    if (!prepare_owned_volume_lattice(candidate_.points, lattice_triangles,
                                       input_.uniform_radius, sites) || sites.empty()) {
       return PHX_MC_OK;
     }
@@ -2341,12 +2458,98 @@ class PlcRecoveryBuilder {
       triangulation_.reset();
       return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     }
-    normalize_preseeded_cells(order);
+    // Map vertices to physical IDs before checking conformity, so the canonical
+    // cell sort runs only once (either directly on conformity, or after
+    // extending by the corner scaffold when a few faces need local recovery).
+    {
+      auto& tets = triangulation_->complex().tets;
+      const auto workers = static_cast<uint32_t>(std::max<int32_t>(1, input_.parallelism));
+      const auto remap_range = [&](std::size_t begin, std::size_t end) {
+        for (std::size_t slot = begin; slot < end; ++slot) {
+          Tetrahedron& tet = tets[slot];
+          if (tet.v[0] == kDeadVertex) continue;
+          for (int32_t& v : tet.v) {
+            if (v >= 0) v = order[static_cast<std::size_t>(v)];
+          }
+        }
+      };
+      if (workers > 1 && tets.size() >= 8192) {
+        const int32_t mapped = parallel_for(
+            tets.size(), ParallelRequest{8192, workers},
+            [&](std::size_t begin, std::size_t end, ChunkContext&) { remap_range(begin, end); });
+        if (mapped != PHX_MC_OK) {
+          triangulation_.reset();
+          return mapped;
+        }
+      } else {
+        remap_range(0, tets.size());
+      }
+    }
     triangulation_->rebind(work_points_.data(), count);
-    if (conforming_faces(conforming) != Conformity::kConforms) {
+    const Conformity conf = conforming_faces(conforming);
+    if (conf == Conformity::kConforms) {
+      const int32_t normalized = normalize_preseeded_cells(count, {});
+      if (normalized != PHX_MC_OK) {
+        triangulation_.reset();
+        return normalized;
+      }
+      if (conforming_faces(conforming) != Conformity::kConforms) {
+        triangulation_.reset();
+        return PHX_MC_OK;
+      }
+      preseed_conforms_ = true;
+      preseeded_count_ = sites.size() / 3;
+      volume_count_ = preseeded_count_;
+      triangulation_->complex().enable_labels();
+      return PHX_MC_OK;
+    }
+    // Keep the preseeded triangulation when almost every wall face already
+    // conforms (e.g., curved surface meshes with a handful of non-Delaunay
+    // quads): extend by the corner scaffold, canonicalize once, and let local
+    // recovery repair only the missing faces.
+    if (conf != Conformity::kNever ||
+        conforming.size() * 20 < source_faces_.size() * 19 ||
+        count > static_cast<std::size_t>(kMaxMeshPoints - kPlcCornerCount)) {
       triangulation_.reset();
       return PHX_MC_OK;
     }
+    if (build_corner_points(corner_points_) != PHX_MC_OK) {
+      corner_points_.clear();
+      triangulation_.reset();
+      return PHX_MC_OK;
+    }
+    for (Tetrahedron& tet : triangulation_->complex().tets) {
+      if (tet.v[0] == kDeadVertex) continue;
+      for (int32_t& v : tet.v) {
+        if (v >= source_point_count_) v += kPlcCornerCount;
+      }
+    }
+    const std::size_t total = count + kPlcCornerCount;
+    work_points_.clear();
+    work_points_.reserve(3 * total);
+    work_points_.insert(work_points_.end(), candidate_.points.begin(), candidate_.points.end());
+    work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+    work_points_.insert(work_points_.end(), sites.begin(), sites.end());
+    triangulation_->rebind(work_points_.data(), static_cast<int64_t>(total));
+    triangulation_->reserve_vertices(static_cast<int64_t>(total));
+    alive_.assign(total, 1);
+    std::array<int32_t, kPlcCornerCount> corners{};
+    for (int32_t k = 0; k < kPlcCornerCount; ++k) {
+      corners[static_cast<std::size_t>(k)] = source_point_count_ + k;
+    }
+    if (triangulation_->extend(corners, alive_) != PHX_MC_OK) {
+      corner_points_.clear();
+      triangulation_.reset();
+      return PHX_MC_OK;
+    }
+    const int32_t normalized = normalize_preseeded_cells(total, {});
+    if (normalized != PHX_MC_OK) {
+      corner_points_.clear();
+      triangulation_.reset();
+      return normalized;
+    }
+    corner_count_ = kPlcCornerCount;
+    preseed_conforms_ = false;
     preseeded_count_ = sites.size() / 3;
     volume_count_ = preseeded_count_;
     triangulation_->complex().enable_labels();
@@ -3062,6 +3265,30 @@ class PlcRecoveryBuilder {
     return true;
   }
 
+  int32_t build_corner_points(std::vector<double>& corners) const {
+    corners.clear();
+    corners.reserve(3 * static_cast<std::size_t>(kPlcCornerCount));
+    double lower[3], upper[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      lower[axis] = upper[axis] = candidate_.points[static_cast<std::size_t>(axis)];
+      for (int32_t vertex = 1; vertex < source_point_count_; ++vertex) {
+        const double value = candidate_.points[3 * static_cast<std::size_t>(vertex) + axis];
+        lower[axis] = std::min(lower[axis], value);
+        upper[axis] = std::max(upper[axis], value);
+      }
+    }
+    double reach = 0.0;
+    for (int axis = 0; axis < 3; ++axis) reach = std::max(reach, upper[axis] - lower[axis]);
+    reach = 4.0 * power_of_two_ceil(std::max(reach, 0x1p-60));
+    for (int32_t corner = 0; corner < kPlcCornerCount; ++corner) {
+      for (int axis = 0; axis < 3; ++axis) {
+        const double center = lower[axis] + 0.5 * (upper[axis] - lower[axis]);
+        corners.push_back((corner >> axis) & 1 ? center + reach : center - reach);
+      }
+    }
+    return validate_points(corners.data(), kPlcCornerCount, 3, nullptr);
+  }
+
   bool prepare_corner_scaffold() {
     corner_count_ = convex_boundary() ? 0 : kPlcCornerCount;
     if (source_point_count_ > kMaxMeshPoints - corner_count_) {
@@ -3070,25 +3297,7 @@ class PlcRecoveryBuilder {
       return false;
     }
     if (corner_count_ == 0) return true;
-    double lower[3], upper[3];
-    for (int axis = 0; axis < 3; ++axis) {
-      lower[axis] = upper[axis] = work_points_[static_cast<std::size_t>(axis)];
-      for (int32_t vertex = 1; vertex < source_point_count_; ++vertex) {
-        const double value = work_points_[3 * static_cast<std::size_t>(vertex) + axis];
-        lower[axis] = std::min(lower[axis], value);
-        upper[axis] = std::max(upper[axis], value);
-      }
-    }
-    double reach = 0.0;
-    for (int axis = 0; axis < 3; ++axis) reach = std::max(reach, upper[axis] - lower[axis]);
-    reach = 4.0 * power_of_two_ceil(std::max(reach, 0x1p-60));
-    for (int32_t corner = 0; corner < corner_count_; ++corner) {
-      for (int axis = 0; axis < 3; ++axis) {
-        const double center = lower[axis] + 0.5 * (upper[axis] - lower[axis]);
-        corner_points_.push_back((corner >> axis) & 1 ? center + reach : center - reach);
-      }
-    }
-    const auto status = validate_points(corner_points_.data(), corner_count_, 3, nullptr);
+    const auto status = build_corner_points(corner_points_);
     if (status == PHX_MC_OK) return true;
     status_ = fail(status, kPlcNonrepresentable, kPlcPoint, -1);
     return false;
@@ -3157,6 +3366,8 @@ class PlcRecoveryBuilder {
   // so the insertion order does not matter).
   int32_t build_triangulation() {
     volume_count_ = 0;
+    preseeded_count_ = 0;
+    preseed_conforms_ = false;
     local_edits_ = false;
     if (source_triangulation_ready_) {
       source_triangulation_ready_ = false;
@@ -8269,6 +8480,7 @@ class PlcRecoveryBuilder {
     TetrahedralComplex& complex = triangulation_->complex();
     complex.clear_regions();
     std::vector<int32_t> queue;
+    queue.reserve(static_cast<std::size_t>(std::max<int64_t>(complex.finite_count, 0)));
     const auto label_of = [](int32_t region) { return region < 0 ? kPlcVoidRegion : region; };
     const auto assign = [&](int32_t tet, int32_t region, int32_t facet) -> int32_t {
       const int32_t current = complex.region(tet);
@@ -8280,33 +8492,37 @@ class PlcRecoveryBuilder {
     for (std::size_t t = 0; t < complex.tets.size(); ++t) {
       const Tetrahedron& tet = complex.tets[t];
       if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
-      for (int slot = 0; slot < 4; ++slot) {
-        const int32_t facet = complex.constraint(static_cast<int32_t>(t), slot);
-        if (facet == kNoConstraint) continue;
-        int32_t face[3];
-        oriented_facet(tet.v, slot, face);
-        const Triple key = sorted_triple(face);
-        const PlcSourceFace* source = nullptr;
-        const auto original_source = source_faces_.find(key);
-        if (original_source != source_faces_.end()) {
-          source = &original_source->second;
-        } else {
-          const auto planar_source = planar_source_faces_.find(key);
-          if (planar_source != planar_source_faces_.end()) source = &planar_source->second;
-        }
-        if (source == nullptr) {
-          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, facet);
-        }
-        const bool positive = FacetKey::of(face) == FacetKey::of(source->oriented.data());
-        const int32_t region = input_.facet_regions[2 * facet + (positive ? 0 : 1)];
-        const int32_t status = assign(static_cast<int32_t>(t), label_of(region), facet);
-        if (status != PHX_MC_OK) return status;
-      }
-      for (int32_t vertex : tet.v) {
-        if (artificial_corner_vertex(vertex)) {
-          const int32_t status = assign(static_cast<int32_t>(t), kPlcVoidRegion, -1);
+      if (tet.constrained != 0) {
+        for (int slot = 0; slot < 4; ++slot) {
+          const int32_t facet = complex.constraint(static_cast<int32_t>(t), slot);
+          if (facet == kNoConstraint) continue;
+          int32_t face[3];
+          oriented_facet(tet.v, slot, face);
+          const Triple key = sorted_triple(face);
+          const PlcSourceFace* source = nullptr;
+          const auto original_source = source_faces_.find(key);
+          if (original_source != source_faces_.end()) {
+            source = &original_source->second;
+          } else {
+            const auto planar_source = planar_source_faces_.find(key);
+            if (planar_source != planar_source_faces_.end()) source = &planar_source->second;
+          }
+          if (source == nullptr) {
+            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, facet);
+          }
+          const bool positive = FacetKey::of(face) == FacetKey::of(source->oriented.data());
+          const int32_t region = input_.facet_regions[2 * facet + (positive ? 0 : 1)];
+          const int32_t status = assign(static_cast<int32_t>(t), label_of(region), facet);
           if (status != PHX_MC_OK) return status;
-          break;
+        }
+      }
+      if (corner_count_ != 0) {
+        for (int32_t vertex : tet.v) {
+          if (artificial_corner_vertex(vertex)) {
+            const int32_t status = assign(static_cast<int32_t>(t), kPlcVoidRegion, -1);
+            if (status != PHX_MC_OK) return status;
+            break;
+          }
         }
       }
     }
@@ -8321,7 +8537,7 @@ class PlcRecoveryBuilder {
       const int32_t t = queue[head++];
       const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
       for (int slot = 0; slot < 4; ++slot) {
-        if (complex.constraint(t, slot) != kNoConstraint) continue;
+        if (tet.constrained != 0 && complex.constraint(t, slot) != kNoConstraint) continue;
         const int32_t next = tet.n[slot];
         const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(next)];
         if (neighbor.v[0] == kDeadVertex || is_ghost(neighbor)) continue;
@@ -8472,47 +8688,87 @@ class PlcRecoveryBuilder {
       return -1;
     };
     const TetrahedralComplex& complex = triangulation_->complex();
-    faces.reserve(triangles);
-    for (std::size_t row = 0; row < complex.tets.size(); ++row) {
-      const auto cell = static_cast<int32_t>(row);
-      if (!complex.live(cell)) continue;
-      const Tetrahedron& tet = complex.tets[row];
-      const bool ghost = is_ghost(tet);
-      if (!ghost && orient3d_filtered(point(tet.v[0]), point(tet.v[1]), point(tet.v[2]),
-                                      point(tet.v[3])) <= 0) {
+    const std::size_t tet_count = complex.tets.size();
+    const auto scan_range = [&](std::size_t begin, std::size_t end,
+                                std::vector<ConformingFace>& out) -> bool {
+      for (std::size_t row = begin; row < end; ++row) {
+        const auto cell = static_cast<int32_t>(row);
+        if (!complex.live(cell)) continue;
+        const Tetrahedron& tet = complex.tets[row];
+        const bool ghost = is_ghost(tet);
+        if (!ghost && orient3d_filtered(point(tet.v[0]), point(tet.v[1]), point(tet.v[2]),
+                                        point(tet.v[3])) <= 0) {
+          return false;
+        }
+        const int source_corners =
+            static_cast<int>(tet.v[0] >= 0 && tet.v[0] < source_point_count_) +
+            static_cast<int>(tet.v[1] >= 0 && tet.v[1] < source_point_count_) +
+            static_cast<int>(tet.v[2] >= 0 && tet.v[2] < source_point_count_) +
+            static_cast<int>(tet.v[3] >= 0 && tet.v[3] < source_point_count_);
+        if (source_corners < 3) continue;
+        for (int slot = 0; slot < 4; ++slot) {
+          // Each face once, from its lower cell.
+          const int32_t other = tet.n[slot];
+          if (other < cell) continue;
+          int32_t face[3];
+          oriented_facet(tet.v, slot, face);
+          const int32_t triangle = subface(face);
+          if (triangle < 0) continue;
+          const Tetrahedron& beyond = complex.tets[static_cast<std::size_t>(other)];
+          const int back = neighbor_slot(beyond, cell);
+          const int32_t* source =
+              candidate_.input_triangles.data() + 3 * static_cast<std::size_t>(triangle);
+          const FacetKey oriented = FacetKey::of(source);
+          ConformingFace conforming{
+              cell, slot,
+              input_.polygon_facets[candidate_.input_polygons[static_cast<std::size_t>(triangle)]],
+              triangle, {cell, other}};
+          if (!ghost && !is_ghost(beyond)) {
+            int32_t opposite[3];
+            oriented_facet(beyond.v, back, opposite);
+            if ((FacetKey::of(face) == oriented) == (FacetKey::of(opposite) == oriented)) {
+              return false;
+            }
+          } else if (corner_count_ != 0) {
+            return false;
+          } else if (ghost) {
+            conforming.cell = other;
+            conforming.slot = back;
+          }
+          out.push_back(conforming);
+        }
+      }
+      return true;
+    };
+    constexpr std::size_t kChunkSize = 8192;
+    const auto workers = static_cast<uint32_t>(std::max<int32_t>(1, input_.parallelism));
+    if (workers > 1 && tet_count >= kChunkSize) {
+      const std::size_t chunk_count = (tet_count + kChunkSize - 1) / kChunkSize;
+      std::vector<std::vector<ConformingFace>> chunks(chunk_count);
+      std::vector<uint8_t> refused(chunk_count, 0U);
+      const int32_t status = parallel_for(
+          tet_count, ParallelRequest{kChunkSize, workers},
+          [&](std::size_t begin, std::size_t end, ChunkContext& chunk) -> int32_t {
+            const GradualNearestScope mode;
+            if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+            if (!scan_range(begin, end, chunks[chunk.chunk_index])) {
+              refused[chunk.chunk_index] = 1U;
+            }
+            return PHX_MC_OK;
+          });
+      if (status != PHX_MC_OK ||
+          std::find(refused.begin(), refused.end(), uint8_t{1U}) != refused.end()) {
         return Conformity::kRefused;
       }
-      for (int slot = 0; slot < 4; ++slot) {
-        // Each face once, from its lower cell.
-        const int32_t other = tet.n[slot];
-        if (other < cell) continue;
-        int32_t face[3];
-        oriented_facet(tet.v, slot, face);
-        const int32_t triangle = subface(face);
-        if (triangle < 0) continue;
-        const Tetrahedron& beyond = complex.tets[static_cast<std::size_t>(other)];
-        const int back = neighbor_slot(beyond, cell);
-        const int32_t* source =
-            candidate_.input_triangles.data() + 3 * static_cast<std::size_t>(triangle);
-        const FacetKey oriented = FacetKey::of(source);
-        ConformingFace conforming{
-            cell, slot,
-            input_.polygon_facets[candidate_.input_polygons[static_cast<std::size_t>(triangle)]],
-            triangle, {cell, other}};
-        if (!ghost && !is_ghost(beyond)) {
-          int32_t opposite[3];
-          oriented_facet(beyond.v, back, opposite);
-          if ((FacetKey::of(face) == oriented) == (FacetKey::of(opposite) == oriented)) {
-            return Conformity::kRefused;
-          }
-        } else if (corner_count_ != 0) {
-          return Conformity::kRefused;
-        } else if (ghost) {
-          conforming.cell = other;
-          conforming.slot = back;
-        }
-        faces.push_back(conforming);
+      std::size_t total = 0;
+      for (const auto& bank : chunks) total += bank.size();
+      faces.reserve(total);
+      for (const auto& bank : chunks) {
+        faces.insert(faces.end(), bank.begin(), bank.end());
       }
+    } else {
+      faces.reserve(triangles);
+      if (!scan_range(0, tet_count, faces)) return Conformity::kRefused;
     }
     return faces.size() == source_faces_.size() ? Conformity::kConforms : Conformity::kNever;
   }
@@ -8795,6 +9051,8 @@ class PlcRecoveryBuilder {
   std::unordered_map<uint64_t, std::size_t> chain_intervals_;
   std::size_t volume_count_ = 0;
   std::size_t preseeded_count_ = 0;
+  bool allow_preseeded_ = true;
+  bool preseed_conforms_ = false;
   std::vector<int32_t> volume_output_;
   // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
@@ -8845,7 +9103,7 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
       return source_status;
     }
     PlcRecoveryBuilder builder(input, prepared, preparer.edge_uses());
-    const int32_t status = builder.run(result, [&] { return preparer.check_contacts(); });
+    int32_t status = builder.run(result, [&] { return preparer.check_contacts(); });
     if (status == PHX_MC_OK) return PHX_MC_OK;
     // An illegal source contact is reported before any later failure.
     const int32_t contacts = builder.contact_failure()    ? status
@@ -8855,6 +9113,15 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
       result.failure = prepared.failure;
       result.source_refusal = prepared.source_refusal;
       return contacts;
+    }
+    if (builder.used_nonconforming_preseed()) {
+      PlcRecoveryBuilder fallback(input, prepared, preparer.edge_uses(), false);
+      status = fallback.run(result, {});
+      if (status == PHX_MC_OK) return PHX_MC_OK;
+      result.failure = fallback.failure();
+      result.source_refusal = fallback.source_refusal();
+      result.suppression_search = fallback.suppression_search();
+      return status;
     }
     result.failure = builder.failure();
     result.source_refusal = builder.source_refusal();

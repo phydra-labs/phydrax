@@ -7,6 +7,8 @@ from typing import final
 
 import equinox as eqx
 import numpy as np
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax._strict import StrictModule
@@ -1067,35 +1069,34 @@ def _face_group_connected(
     faces: np.ndarray,
     /,
 ) -> bool:
-    if faces.size <= 1:
+    face_count = faces.size
+    if face_count <= 1:
         return True
-    parent = np.arange(faces.size, dtype=np.int64)
-    local = {int(face): row for row, face in enumerate(faces)}
     offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int64)
     values = np.asarray(connectivity.face_edge_values, dtype=np.int64)
-    first_by_edge: dict[int, int] = {}
-    for face in faces:
-        row = local[int(face)]
-        for edge in values[offsets[int(face)] : offsets[int(face) + 1]]:
-            edge_row = int(edge)
-            prior = first_by_edge.get(edge_row)
-            if prior is None:
-                first_by_edge[edge_row] = row
-            else:
-                a, b = prior, row
-                while parent[a] != a:
-                    a = int(parent[a])
-                while parent[b] != b:
-                    b = int(parent[b])
-                if a != b:
-                    parent[max(a, b)] = min(a, b)
-    roots = set()
-    for row in range(parent.size):
-        current = row
-        while parent[current] != current:
-            current = int(parent[current])
-        roots.add(current)
-    return len(roots) == 1
+    starts = offsets[faces]
+    lengths = offsets[faces + 1] - starts
+    total = int(np.sum(lengths))
+    if total == 0:
+        return False
+    local_faces = np.repeat(np.arange(face_count, dtype=np.int64), lengths)
+    position = np.arange(total, dtype=np.int64) - np.repeat(
+        np.cumsum(lengths) - lengths, lengths
+    )
+    edges = values[starts[local_faces] + position]
+    order = np.argsort(edges, kind="mergesort")
+    sorted_edges = edges[order]
+    sorted_faces = local_faces[order]
+    shared = sorted_edges[1:] == sorted_edges[:-1]
+    if not np.any(shared):
+        return False
+    left = sorted_faces[:-1][shared]
+    right = sorted_faces[1:][shared]
+    graph = csr_matrix(
+        (np.ones((left.size,), dtype=np.int8), (left, right)),
+        shape=(face_count, face_count),
+    )
+    return int(connected_components(graph, directed=False, return_labels=False)) == 1
 
 
 def _polyhedral_organization(

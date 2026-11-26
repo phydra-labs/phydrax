@@ -604,6 +604,38 @@ void map_digest(const std::string& kind, const std::array<Expression, 3>& axes,
   hash.finish(digest);
 }
 
+void map_digest_2d(const std::string& kind, const std::array<Expression, 3>& axes,
+                   std::int64_t shift, std::string& record, std::uint8_t* digest) {
+  std::size_t capacity = kind.size() + 8;
+  for (int axis = 0; axis < 2; ++axis) {
+    capacity += 40 + axes[axis].size() * (24 + 2 * kDecimalCapacity);
+  }
+  if (record.size() < capacity) record.resize(capacity);
+  char* const start = record.data();
+  char* out = start;
+  put("['", out);
+  put(kind.data(), kind.size(), out);
+  put("', 2", out);
+  for (int axis = 0; axis < 2; ++axis) {
+    const Expression& expression = axes[axis];
+    put(", 'polynomial', ", out);
+    append_unsigned(expression.size(), out);
+    for (const Term& term : expression) {
+      put(", ((", out);
+      *out++ = static_cast<char>('0' + term.exponent[0]);
+      put(", ", out);
+      *out++ = static_cast<char>('0' + term.exponent[1]);
+      put("), ", out);
+      append_fraction(term.total, shift, out);
+      *out++ = ')';
+    }
+  }
+  *out++ = ']';
+  Blake2b128 hash;
+  hash.update(start, static_cast<std::size_t>(out - start));
+  hash.finish(digest);
+}
+
 Big determinant3(const std::array<std::array<Big, 3>, 3>& m) {
   return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
          m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
@@ -742,6 +774,38 @@ bool prove_affine(const std::array<Expression, 3>& axes, std::int64_t scale, dou
   proof.status = valid ? 0 : 1;
   proof.lower = round_down(determinant, 3 * scale);
   proof.upper = round_up(determinant, 3 * scale);
+  return true;
+}
+
+bool prove_affine_2d(const std::array<Expression, 3>& axes, std::int64_t scale, double floor,
+                     Proof& proof) {
+  std::array<std::array<Big, 2>, 2> jacobian;
+  for (int row = 0; row < 2; ++row) {
+    for (const Term& term : axes[row]) {
+      const int degree = term.exponent[0] + term.exponent[1];
+      if (degree > 1 || term.exponent[2] != 0) return false;
+      if (degree == 1) {
+        const int column = term.exponent[0] == 1 ? 0 : 1;
+        jacobian[row][column] = term.total;
+      }
+    }
+  }
+  const Big determinant = jacobian[0][0] * jacobian[1][1] - jacobian[0][1] * jacobian[1][0];
+  Big product = from_int64(1);
+  for (int column = 0; column < 2; ++column) {
+    const Big norm = jacobian[0][column] * jacobian[0][column] +
+                     jacobian[1][column] * jacobian[1][column];
+    product = product * norm;
+  }
+  std::int64_t floor_exponent = 0;
+  const Big floor_integer = from_double(floor, floor_exponent);
+  const Big right = floor_integer * floor_integer * product;
+  const bool valid =
+      determinant.sign() > 0 &&
+      compare_scaled(determinant * determinant, 0, right, 2 * floor_exponent) > 0;
+  proof.status = valid ? 0 : 1;
+  proof.lower = round_down(determinant, 2 * scale);
+  proof.upper = round_up(determinant, 2 * scale);
   return true;
 }
 
@@ -987,13 +1051,13 @@ extern "C" int32_t phx_mc_certify_cell_maps(
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
-    if (domain < 0 || domain > 2 || dof_count < 1 || term_starts == nullptr ||
+    if (domain < 0 || domain > 3 || dof_count < 1 || term_starts == nullptr ||
         kind == nullptr || kind_length < 1 || kind_length > 64 || row_count < 0 ||
         cell_count < 0 || basis_denominator_log2 < 0 || basis_denominator_log2 > 64 ||
         !(floor >= 0.0) || !(floor < 1.0) ||
         dof_count == std::numeric_limits<int64_t>::max() ||
         !phx::mc::addressable(dof_count + 1, 1, sizeof(int64_t)) ||
-        !phx::mc::addressable(row_count, 3, sizeof(int64_t)) ||
+        !phx::mc::addressable(row_count, domain == 3 ? 2 : 3, sizeof(int64_t)) ||
         !phx::mc::addressable(cell_count, dof_count, sizeof(int64_t)) ||
         !phx::mc::addressable(cell_count, 16, 1) ||
         wide_count < 0 || wide_count == std::numeric_limits<int64_t>::max() ||
@@ -1008,6 +1072,7 @@ extern "C" int32_t phx_mc_certify_cell_maps(
         parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    const int ambient = domain == 3 ? 2 : 3;
     if (wide_count > 0) {
       if (wide_offsets[0] != 0 || wide_offsets[wide_count] != limb_count) {
         return PHX_MC_INVALID_INPUT;
@@ -1021,7 +1086,7 @@ extern "C" int32_t phx_mc_certify_cell_maps(
         }
       }
     }
-    for (int64_t flat = 0; flat < 3 * row_count; ++flat) {
+    for (int64_t flat = 0; flat < ambient * row_count; ++flat) {
       if (exponents[flat] != sparse_exponent) continue;
       const int64_t reference = significands[flat];
       // Check the signed range without taking abs(INT64_MIN).
@@ -1042,7 +1107,9 @@ extern "C" int32_t phx_mc_certify_cell_maps(
       std::array<int, 3> exponent{};
       for (int axis = 0; axis < 3; ++axis) {
         const int32_t value = term_exponents[3 * term + axis];
-        if (value < 0 || value > 7) return PHX_MC_INVALID_ARGUMENT;
+        if (value < 0 || value > 7 || (ambient == 2 && axis == 2 && value != 0)) {
+          return PHX_MC_INVALID_ARGUMENT;
+        }
         exponent[axis] = value;
       }
       basis.exponents.push_back(exponent);
@@ -1074,8 +1141,8 @@ extern "C" int32_t phx_mc_certify_cell_maps(
             bool known = true;
             std::int64_t minimum = std::numeric_limits<std::int64_t>::max();
             for (int64_t dof = 0; dof < dof_count && known; ++dof) {
-              for (int axis = 0; axis < 3; ++axis) {
-                const int64_t flat = 3 * route[dof] + axis;
+              for (int axis = 0; axis < ambient; ++axis) {
+                const int64_t flat = ambient * route[dof] + axis;
                 const int64_t significand = significands[flat];
                 const int16_t exponent = exponents[flat];
                 if (significand == 0) {
@@ -1092,9 +1159,9 @@ extern "C" int32_t phx_mc_certify_cell_maps(
             if (!known) continue;
             if (minimum == std::numeric_limits<std::int64_t>::max()) minimum = 0;
             try {
-              for (int axis = 0; axis < 3; ++axis) {
+              for (int axis = 0; axis < ambient; ++axis) {
                 for (int64_t dof = 0; dof < dof_count; ++dof) {
-                  const int64_t flat = 3 * route[dof] + axis;
+                  const int64_t flat = ambient * route[dof] + axis;
                   const int64_t significand = significands[flat];
                   const int16_t exponent = exponents[flat];
                   Big& value = values[static_cast<std::size_t>(dof)];
@@ -1111,16 +1178,25 @@ extern "C" int32_t phx_mc_certify_cell_maps(
                 combine(basis, values, axes[axis]);
               }
               const std::int64_t scale = minimum - basis_denominator_log2;
-              map_digest(kind_name, axes, scale, record, digests + 16 * cell);
+              if (ambient == 2) {
+                map_digest_2d(kind_name, axes, scale, record, digests + 16 * cell);
+              } else {
+                map_digest(kind_name, axes, scale, record, digests + 16 * cell);
+              }
               Proof proof;
-              const bool affine =
-                  std::all_of(axes.begin(), axes.end(), [](const Expression& value) {
-                    return std::all_of(value.begin(), value.end(), [](const Term& term) {
-                      return term.exponent[0] + term.exponent[1] + term.exponent[2] <= 1;
-                    });
-                  });
+              bool affine = true;
+              for (int axis = 0; axis < ambient && affine; ++axis) {
+                for (const Term& term : axes[axis]) {
+                  if (term.exponent[0] + term.exponent[1] + term.exponent[2] > 1) {
+                    affine = false;
+                    break;
+                  }
+                }
+              }
               bool done = false;
-              if (affine) {
+              if (ambient == 2) {
+                if (affine) done = prove_affine_2d(axes, scale, floor, proof);
+              } else if (affine) {
                 done = prove_affine(axes, scale, floor, proof);
               } else if (domain == 1) {
                 done = prove_multilinear(axes, scale, floor, proof);

@@ -650,19 +650,22 @@ class _CadCurveTarget(NamedTuple):
 # F5 ledger, same h and independent degree-six sampling on both providers.
 # Use the stricter recorded value from Netgen Curve(p) and Gmsh setOrder
 # without optimization; keep their original construction clock.
+# Values round outward against the live reference thresholds (up for shape
+# lower bounds, down for face-residual upper bounds) so requested targets
+# clear both the registered and exact unrounded reference values.
 _CAD_CURVE_TARGETS = {
-    ("quadric", 2, 22859): _CadCurveTarget(0.222, 0.722, 3.26e-4),
-    ("quadric", 2, 10610): _CadCurveTarget(0.277, 0.814, 4.14e-5),
-    ("quadric", 2, 4925): _CadCurveTarget(0.212, 0.891, 4.55e-6),
+    ("quadric", 2, 22859): _CadCurveTarget(0.2225, 0.7223, 3.26e-4),
+    ("quadric", 2, 10610): _CadCurveTarget(0.2773, 0.8144, 4.14e-5),
+    ("quadric", 2, 4925): _CadCurveTarget(0.212, 0.8912, 4.54e-6),
     ("quadric", 3, 22859): _CadCurveTarget(0.222, 0.694, 1.34e-4),
     ("quadric", 3, 10610): _CadCurveTarget(0.275, 0.813, 6.45e-6),
-    ("quadric", 3, 4925): _CadCurveTarget(0.211, 0.893, 8.02e-7),
-    ("sphere", 2, 27572): _CadCurveTarget(0.241, 0.782, 1.17e-4),
-    ("sphere", 2, 12798): _CadCurveTarget(0.210, 0.830, 5.55e-6),
-    ("sphere", 2, 5940): _CadCurveTarget(0.203, 0.919, 3.01e-7),
-    ("sphere", 3, 27572): _CadCurveTarget(0.243, 0.772, 6.59e-5),
-    ("sphere", 3, 12798): _CadCurveTarget(0.209, 0.829, 5.49e-6),
-    ("sphere", 3, 5940): _CadCurveTarget(0.203, 0.922, 3.05e-7),
+    ("quadric", 3, 4925): _CadCurveTarget(0.2115, 0.893, 8.02e-7),
+    ("sphere", 2, 27572): _CadCurveTarget(0.2414, 0.782, 1.17e-4),
+    ("sphere", 2, 12798): _CadCurveTarget(0.2104, 0.830, 5.54e-6),
+    ("sphere", 2, 5940): _CadCurveTarget(0.203, 0.9195, 3.00e-7),
+    ("sphere", 3, 27572): _CadCurveTarget(0.2431, 0.7722, 6.58e-5),
+    ("sphere", 3, 12798): _CadCurveTarget(0.2092, 0.829, 5.49e-6),
+    ("sphere", 3, 5940): _CadCurveTarget(0.203, 0.9222, 3.05e-7),
 }
 _NETGEN_SPHERE_TETS = {27572: 532, 12798: 6712, 5940: 90497}
 

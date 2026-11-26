@@ -40,6 +40,15 @@ Basis p1() {
   return basis;
 }
 
+// P1 triangle in 2-D: 1 - x - y, x, y (terms in stored order, z exponent 0).
+Basis p1_2d() {
+  Basis basis;
+  basis.add({{0, 0, 0, 1}, {0, 1, 0, -1}, {1, 0, 0, -1}});
+  basis.add({{1, 0, 0, 1}});
+  basis.add({{0, 1, 0, 1}});
+  return basis;
+}
+
 // Q1 hexahedron in phydrax's dof order.
 Basis q1() {
   Basis basis;
@@ -98,12 +107,13 @@ struct Result {
 Result run(int32_t domain, const Basis& basis, const char* kind, const std::vector<double>& points,
            const std::vector<int64_t>& routes, int16_t sparse_row = -1,
            int32_t parallelism = 1) {
+  const int ambient = domain == 3 ? 2 : 3;
   std::vector<int64_t> significands;
   std::vector<int16_t> exponents;
   dyadic(points, significands, exponents);
   if (sparse_row >= 0) {
-    significands[3 * static_cast<std::size_t>(sparse_row)] = 0;
-    exponents[3 * static_cast<std::size_t>(sparse_row)] = -32768;
+    significands[static_cast<std::size_t>(ambient) * static_cast<std::size_t>(sparse_row)] = 0;
+    exponents[static_cast<std::size_t>(ambient) * static_cast<std::size_t>(sparse_row)] = -32768;
   }
   const int64_t dofs = static_cast<int64_t>(basis.starts.size()) - 1;
   const int64_t cells = static_cast<int64_t>(routes.size()) / dofs;
@@ -116,7 +126,8 @@ Result run(int32_t domain, const Basis& basis, const char* kind, const std::vect
   result.code = phx_mc_certify_cell_maps(
       domain, dofs, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
       kind, static_cast<int64_t>(std::string(kind).size()),
-      static_cast<int64_t>(points.size() / 3), significands.data(), exponents.data(), -32768,
+      static_cast<int64_t>(points.size() / static_cast<std::size_t>(ambient)),
+      significands.data(), exponents.data(), -32768,
       0, nullptr, nullptr, 0, nullptr,
       cells, routes.data(), 0x1p-35, result.decided.data(), result.status.data(),
       result.lower.data(), result.upper.data(), result.digests.data(), parallelism);
@@ -249,8 +260,14 @@ void check_arguments() {
   double lower = 0.0, upper = 0.0;
   uint8_t digest[16] = {};
   PHX_CHECK(phx_mc_certify_cell_maps(
-                3, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                4, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
                 "tetrahedron", 11, 4, significands.data(), exponents.data(), -32768,
+                0, nullptr, nullptr, 0, nullptr, 1, outside.data(), 0.0, &decided, &status,
+                &lower, &upper, digest, 1) == PHX_MC_INVALID_ARGUMENT);
+  // 2-D domain refuses basis terms with non-zero z exponent.
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                3, 4, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "triangle", 8, 4, significands.data(), exponents.data(), -32768,
                 0, nullptr, nullptr, 0, nullptr, 1, outside.data(), 0.0, &decided, &status,
                 &lower, &upper, digest, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_certify_cell_maps(
@@ -335,6 +352,68 @@ void check_parallelism() {
   }
 }
 
+void check_triangles_2d() {
+  const std::vector<double> square{0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.5, 0.5};
+  // Positive, inverted, and degenerate 2-D affine triangles.
+  const Result result = run(3, p1_2d(), "triangle", square, {0, 1, 2, 0, 2, 1, 0, 3, 4});
+  PHX_CHECK(result.code == PHX_MC_OK);
+  PHX_CHECK(result.decided[0] == 1 && result.decided[1] == 1 && result.decided[2] == 1);
+  PHX_CHECK(result.status[0] == 0 && result.lower[0] == 1.0 && result.upper[0] == 1.0);
+  PHX_CHECK(result.status[1] == 1 && result.lower[1] == -1.0 && result.upper[1] == -1.0);
+  PHX_CHECK(result.status[2] == 1 && result.lower[2] == 0.0 && result.upper[2] == 0.0);
+  // Sparse (non-dyadic) entry defers the cell to the rational proof.
+  const Result sparse = run(3, p1_2d(), "triangle", square, {0, 1, 2}, 2);
+  PHX_CHECK(sparse.code == PHX_MC_OK && sparse.decided[0] == 0);
+
+  // Wide dyadic entry with cancellation leaving 2^-80.
+  constexpr int16_t kSparse = std::numeric_limits<int16_t>::min();
+  const Basis basis = p1_2d();
+  // p0=(0,0), p1=(1,1), p2=(1, 1 + 2^-80), p3=(1,0), p4=(0,1)
+  std::array<int64_t, 10> significands{0, 0,  1, 1,  1, 1,  1, 0,  0, 1};
+  std::array<int16_t, 10> exponents{};
+  exponents[5] = kSparse;
+  std::array<int16_t, 1> wide_exponents{-80};
+  std::array<int64_t, 2> wide_offsets{0, 2};
+  std::array<uint64_t, 2> wide_limbs{1, 1u << 16};
+  const std::array<int64_t, 6> routes{0, 1, 2,  0, 3, 4};
+  std::array<int8_t, 2> decided{};
+  std::array<int32_t, 2> status{};
+  std::array<double, 2> lower{}, upper{};
+  std::array<uint8_t, 32> digests{};
+  PHX_CHECK(phx_mc_certify_cell_maps(
+                3, 3, basis.starts.data(), basis.exponents.data(), basis.numerators.data(), 0,
+                "triangle", 8, 5, significands.data(), exponents.data(), kSparse,
+                1, wide_exponents.data(), wide_offsets.data(), 2, wide_limbs.data(),
+                2, routes.data(), 0.0, decided.data(), status.data(), lower.data(), upper.data(),
+                digests.data(), 1) == PHX_MC_OK);
+  PHX_CHECK(decided[0] == 1 && status[0] == 0 && lower[0] == 0x1p-80 && upper[0] == 0x1p-80);
+  PHX_CHECK(decided[1] == 1 && status[1] == 0 && lower[1] == 1.0 && upper[1] == 1.0);
+  // Parallelism invariance on a 2-D grid.
+  std::vector<double> grid;
+  std::vector<int64_t> tris;
+  constexpr int kGrid = 8;
+  for (int y = 0; y <= kGrid; ++y) {
+    for (int x = 0; x <= kGrid; ++x) {
+      grid.push_back(static_cast<double>(x) + (y % 2 ? 0.125 : 0.0));
+      grid.push_back(static_cast<double>(y) - (x % 2 ? 0.0625 : 0.0));
+    }
+  }
+  for (int y = 0; y < kGrid; ++y) {
+    for (int x = 0; x < kGrid; ++x) {
+      const int64_t a = y * (kGrid + 1) + x;
+      const int64_t b = a + 1;
+      const int64_t c = a + (kGrid + 1);
+      const int64_t d = c + 1;
+      tris.insert(tris.end(), {a, b, d, a, d, c});
+    }
+  }
+  const Result serial = run(3, p1_2d(), "triangle", grid, tris, -1, 1);
+  PHX_CHECK(serial.code == PHX_MC_OK);
+  for (const int32_t parallelism : {2, 4, 8}) {
+    PHX_CHECK(same(serial, run(3, p1_2d(), "triangle", grid, tris, -1, parallelism)));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -343,5 +422,6 @@ int main() {
   check_hexahedron();
   check_arguments();
   check_parallelism();
+  check_triangles_2d();
   return phx::mc::test::finish("test_cell_map_validity");
 }

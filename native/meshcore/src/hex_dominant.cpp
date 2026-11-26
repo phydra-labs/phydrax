@@ -611,13 +611,20 @@ Hit walk_triangle(const Surface& s, const Vec& p, int32_t t) {
   for (;;) {
     Hit candidate = best;
     const int32_t patch = s.patch[best.item];
+    const int64_t base = 3 * static_cast<int64_t>(best.item);
     for (int e = 0; e < 3; ++e) {
       // Outgoing half-edges of corner e: the next one is the opposite of the
-      // half-edge entering the corner in the current triangle.
-      const int64_t first = 3 * static_cast<int64_t>(best.item) + e;
-      for (int64_t h = s.opposite[(first / 3) * 3 + (first % 3 + 2) % 3]; h != first;
-           h = s.opposite[(h / 3) * 3 + (h % 3 + 2) % 3]) {
+      // half-edge entering the corner in the current triangle. The last triangle
+      // of fan e is the edge neighbor across (e, e + 1), which fan (e + 1) % 3
+      // visits first (already checked for e == 2); skipping it preserves the
+      // exact first-appearance order while avoiding three duplicate tests.
+      const int64_t first = base + e;
+      const int64_t prev_first = base + (e == 0 ? 2 : e - 1);
+      for (int64_t h = s.opposite[prev_first]; h != first;) {
         const int32_t u = static_cast<int32_t>(h / 3);
+        const int32_t rem = static_cast<int32_t>(h - 3 * static_cast<int64_t>(u));
+        h = s.opposite[3 * static_cast<int64_t>(u) + (rem == 0 ? 2 : rem - 1)];
+        if (h == first) break;
         if (s.patch[u] != patch) continue;
         const Vec q = closest_on_triangle(p, s.corner_point(u, 0), s.corner_point(u, 1), s.corner_point(u, 2));
         const double d2 = dot(sub(q, p), sub(q, p));
@@ -694,6 +701,8 @@ class InsideOracle {
       if (n == 0 || pairs[n].first != pairs[n - 1].first) {
         lines_.assign(pairs[n].first, static_cast<int32_t>(line_start_.size()));
         line_start_.push_back(static_cast<int32_t>(n));
+        const auto c = unpack(pairs[n].first);
+        line_jk_.push_back({c[1], c[2]});
       }
       candidates_[n] = pairs[n].second;
     }
@@ -706,10 +715,28 @@ class InsideOracle {
     return lo_[axis] + static_cast<double>(index) * b_;
   }
 
-  bool inside(int64_t i, int64_t j, int64_t k) {
+  int32_t resolve_all(uint32_t parallelism) {
+    const std::size_t count = line_jk_.size();
+    if (parallelism == 1 || count <= 128) {
+      for (std::size_t line = 0; line < count; ++line) {
+        if (!resolved_[line]) resolve(static_cast<int32_t>(line), line_jk_[line][0], line_jk_[line][1]);
+      }
+      return PHX_MC_OK;
+    }
+    return parallel_for(count, ParallelRequest{128, parallelism},
+                        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+      const GradualNearestScope mode;
+      if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+      for (std::size_t line = begin; line < end; ++line) {
+        if (!resolved_[line]) resolve(static_cast<int32_t>(line), line_jk_[line][0], line_jk_[line][1]);
+      }
+      return PHX_MC_OK;
+    });
+  }
+
+  bool inside_resolved(int64_t i, int64_t j, int64_t k) const {
     const int32_t line = lines_.find(pack(0, j, k));
     if (line < 0) return false;
-    if (!resolved_[line]) resolve(line, j, k);
     const double p[3] = {coordinate(0, i), coordinate(1, j), coordinate(2, k)};
     int count = 0;
     for (const Crossing& c : crossings_[line]) {
@@ -723,6 +750,13 @@ class InsideOracle {
       }
     }
     return (count & 1) != 0;
+  }
+
+  bool inside(int64_t i, int64_t j, int64_t k) {
+    const int32_t line = lines_.find(pack(0, j, k));
+    if (line < 0) return false;
+    if (!resolved_[line]) resolve(line, j, k);
+    return inside_resolved(i, j, k);
   }
 
  private:
@@ -770,6 +804,7 @@ class InsideOracle {
   double b_;
   KeyMap lines_;
   std::vector<int32_t> line_start_;
+  std::vector<std::array<int64_t, 2>> line_jk_;
   std::vector<int32_t> candidates_;
   std::vector<std::vector<Crossing>> crossings_;
   std::vector<uint8_t> resolved_;
@@ -841,6 +876,65 @@ std::vector<uint64_t> coarsen(const std::vector<uint64_t>& keys, int shift) {
     out.push_back(pack(c[0] >> shift, c[1] >> shift, c[2] >> shift));
   }
   return unique_sorted(std::move(out));
+}
+
+std::vector<uint8_t> dilate_grid(const std::vector<uint8_t>& src, int64_t sx, int64_t sy, int64_t sz,
+                                 int64_t radius) {
+  const std::size_t total = static_cast<std::size_t>(sx * sy * sz);
+  std::vector<uint8_t> tmp(total, 0), dst(total, 0);
+  for (int64_t i = 0; i < sx; ++i) {
+    for (int64_t j = 0; j < sy; ++j) {
+      const std::size_t base = static_cast<std::size_t>((i * sy + j) * sz);
+      int64_t active = 0;
+      for (int64_t k = 0; k < std::min(sz, radius); ++k) active += src[base + k];
+      for (int64_t k = 0; k < sz; ++k) {
+        if (k + radius < sz) active += src[base + k + radius];
+        if (k - radius - 1 >= 0) active -= src[base + k - radius - 1];
+        tmp[base + k] = active > 0 ? 1 : 0;
+      }
+    }
+  }
+  for (int64_t i = 0; i < sx; ++i) {
+    const std::size_t ibase = static_cast<std::size_t>(i * sy * sz);
+    for (int64_t k = 0; k < sz; ++k) {
+      int64_t active = 0;
+      for (int64_t j = 0; j < std::min(sy, radius); ++j) active += tmp[ibase + j * sz + k];
+      for (int64_t j = 0; j < sy; ++j) {
+        if (j + radius < sy) active += tmp[ibase + (j + radius) * sz + k];
+        if (j - radius - 1 >= 0) active -= tmp[ibase + (j - radius - 1) * sz + k];
+        dst[ibase + j * sz + k] = active > 0 ? 1 : 0;
+      }
+    }
+  }
+  std::fill(tmp.begin(), tmp.end(), 0);
+  const std::size_t yz = static_cast<std::size_t>(sy * sz);
+  for (std::size_t jk = 0; jk < yz; ++jk) {
+    int64_t active = 0;
+    for (int64_t i = 0; i < std::min(sx, radius); ++i) active += dst[i * yz + jk];
+    for (int64_t i = 0; i < sx; ++i) {
+      if (i + radius < sx) active += dst[(i + radius) * yz + jk];
+      if (i - radius - 1 >= 0) active -= dst[(i - radius - 1) * yz + jk];
+      tmp[i * yz + jk] = active > 0 ? 1 : 0;
+    }
+  }
+  return tmp;
+}
+
+std::vector<uint8_t> coarsen_grid(const std::vector<uint8_t>& src, int64_t sx, int64_t sy, int64_t sz,
+                                  int shift) {
+  const int64_t dx = sx >> shift, dy = sy >> shift, dz = sz >> shift;
+  std::vector<uint8_t> dst(static_cast<std::size_t>(dx * dy * dz), 0);
+  for (int64_t i = 0; i < sx; ++i) {
+    const int64_t ci = (i >> shift) * dy;
+    for (int64_t j = 0; j < sy; ++j) {
+      const std::size_t sbase = static_cast<std::size_t>((i * sy + j) * sz);
+      const std::size_t dbase = static_cast<std::size_t>((ci + (j >> shift)) * dz);
+      for (int64_t k = 0; k < sz; ++k) {
+        if (src[sbase + k]) dst[dbase + (k >> shift)] = 1;
+      }
+    }
+  }
+  return dst;
 }
 
 // Band width (in cells of each level) of the refinement around the surface.
@@ -958,11 +1052,11 @@ struct Builder {
   void split_core_faces();
   int32_t assemble_core();
   int32_t staircase();
-  void partition();
+  int32_t partition();
   int32_t project();
   void classify_splits();
   int32_t emit_layers();
-  void place_layers();
+  int32_t place_layers();
   void place_split(int64_t row, const std::vector<std::pair<int32_t, Vec>>& by_patch);
   void place_mids();
   // The points carried by a column's wall vertex (its layer stack, or a
@@ -1018,6 +1112,226 @@ int32_t Builder::octree_and_core() {
     if (tree.dims[a] + 1 >= kKeyLimit) return PHX_MC_INDEX_RANGE_ERROR;
   }
   const int64_t limit = std::max({tree.dims[0], tree.dims[1], tree.dims[2]}) + 1;
+  const int64_t gx = tree.dims[0], gy = tree.dims[1], gz = tree.dims[2];
+  const int64_t clearance_cells = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(delta / b)));
+  const bool use_dense =
+      gx <= 512 && gy <= 512 && gz <= 512 && (gx + 1) * (gy + 1) * (gz + 1) <= 16'000'000;
+  if (use_dense) {
+    // Finest cells touching a triangle box on a dense grid.
+    std::vector<uint8_t> touched_grid(static_cast<std::size_t>(gx * gy * gz), 0);
+    for (int64_t t = 0; t < s.m; ++t) {
+      Vec mn = s.corner_point(static_cast<int32_t>(t), 0), mx = mn;
+      for (int e = 1; e < 3; ++e) {
+        const Vec p = s.corner_point(static_cast<int32_t>(t), e);
+        for (int a = 0; a < 3; ++a) {
+          mn[a] = std::min(mn[a], p[a]);
+          mx[a] = std::max(mx[a], p[a]);
+        }
+      }
+      int64_t r0[3], r1[3];
+      for (int a = 0; a < 3; ++a) {
+        r0[a] = std::max<int64_t>(0, static_cast<int64_t>(std::floor((mn[a] - tree.lo[a]) / b)) - 1);
+        r1[a] = std::min<int64_t>(tree.dims[a] - 1, static_cast<int64_t>(std::floor((mx[a] - tree.lo[a]) / b)) + 1);
+      }
+      for (int64_t i = r0[0]; i <= r1[0]; ++i) {
+        const double px = tree.lo[0] + static_cast<double>(i) * b;
+        const double qx = tree.lo[0] + static_cast<double>(i + 1) * b;
+        if (px > mx[0] || qx < mn[0]) continue;
+        for (int64_t j = r0[1]; j <= r1[1]; ++j) {
+          const double py = tree.lo[1] + static_cast<double>(j) * b;
+          const double qy = tree.lo[1] + static_cast<double>(j + 1) * b;
+          if (py > mx[1] || qy < mn[1]) continue;
+          const std::size_t base = static_cast<std::size_t>((i * gy + j) * gz);
+          for (int64_t k = r0[2]; k <= r1[2]; ++k) {
+            const double pz = tree.lo[2] + static_cast<double>(k) * b;
+            const double qz = tree.lo[2] + static_cast<double>(k + 1) * b;
+            if (pz > mx[2] || qz < mn[2]) continue;
+            touched_grid[base + k] = 1;
+          }
+        }
+      }
+    }
+    std::vector<std::vector<uint8_t>> split_grid(static_cast<std::size_t>(std::max(K, 1)));
+    for (int l = K - 1; l >= 0; --l) {
+      const int64_t sx = coarse[0] << l, sy = coarse[1] << l, sz = coarse[2] << l;
+      split_grid[l] = dilate_grid(coarsen_grid(touched_grid, gx, gy, gz, K - l), sx, sy, sz, kBandCells);
+      if (l + 1 < K) {
+        const std::vector<uint8_t> bal =
+            dilate_grid(coarsen_grid(split_grid[l + 1], coarse[0] << (l + 1), coarse[1] << (l + 1),
+                                     coarse[2] << (l + 1), 1),
+                        sx, sy, sz, 1);
+        for (std::size_t idx = 0; idx < bal.size(); ++idx) split_grid[l][idx] |= bal[idx];
+      }
+    }
+    const std::vector<uint8_t> near_finest_grid = dilate_grid(touched_grid, gx, gy, gz, clearance_cells);
+    // Leaves.
+    std::vector<std::pair<int, std::array<int64_t, 3>>> stack;
+    for (int64_t i = 0; i < coarse[0]; ++i) {
+      for (int64_t j = 0; j < coarse[1]; ++j) {
+        for (int64_t k = 0; k < coarse[2]; ++k) {
+          stack.push_back({0, {i << K, j << K, k << K}});
+          while (!stack.empty()) {
+            const auto [level, o] = stack.back();
+            stack.pop_back();
+            const int64_t size = tree.size(level);
+            const int64_t sy_l = coarse[1] << level, sz_l = coarse[2] << level;
+            if (level < K &&
+                split_grid[level][static_cast<std::size_t>(((o[0] / size) * sy_l + (o[1] / size)) * sz_l + (o[2] / size))] != 0) {
+              const int64_t half = size / 2;
+              for (int c = 7; c >= 0; --c) {
+                stack.push_back({level + 1, {o[0] + (c & 1) * half, o[1] + ((c >> 1) & 1) * half,
+                                             o[2] + ((c >> 2) & 1) * half}});
+              }
+              continue;
+            }
+            Leaf leaf{{static_cast<int32_t>(o[0]), static_cast<int32_t>(o[1]), static_cast<int32_t>(o[2])},
+                      static_cast<uint8_t>(level), 0, -1};
+            tree.index.assign(pack(o[0], o[1], o[2]), static_cast<int32_t>(tree.leaves.size()));
+            tree.leaves.push_back(leaf);
+          }
+        }
+      }
+    }
+    // Core classification (deduped lattice corners evaluated in parallel).
+    InsideOracle oracle(s, tree.lo, b);
+    int32_t st = oracle.resolve_all(in.parallelism);
+    if (st != PHX_MC_OK) return st;
+    const int64_t nx = gx + 1, ny = gy + 1, nz = gz + 1;
+    const std::size_t npts = static_cast<std::size_t>(nx * ny * nz);
+    auto pt_idx = [ny, nz](int64_t i, int64_t j, int64_t k) -> std::size_t {
+      return static_cast<std::size_t>((i * ny + j) * nz + k);
+    };
+    std::vector<uint8_t> inside_need(npts, 0), inside_val(npts, 0);
+    std::vector<uint64_t> inside_pts;
+    inside_pts.reserve(tree.leaves.size() * 2);
+    std::vector<int32_t> near_leaves;
+    near_leaves.reserve(tree.leaves.size() / 2);
+    auto request_inside = [&](int64_t i, int64_t j, int64_t k) {
+      const std::size_t idx = pt_idx(i, j, k);
+      if (!inside_need[idx]) {
+        inside_need[idx] = 1;
+        inside_pts.push_back(pack(i, j, k));
+      }
+    };
+    for (std::size_t li = 0; li < tree.leaves.size(); ++li) {
+      const Leaf& leaf = tree.leaves[li];
+      const int64_t i = leaf.o[0], j = leaf.o[1], k = leaf.o[2];
+      if (leaf.level < K || !near_finest_grid[static_cast<std::size_t>((i * gy + j) * gz + k)]) {
+        request_inside(i, j, k);
+      } else {
+        near_leaves.push_back(static_cast<int32_t>(li));
+        for (int c = 0; c < 8; ++c) {
+          request_inside(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1));
+        }
+      }
+    }
+    auto eval_inside = [&](std::size_t idx) {
+      const auto p = unpack(inside_pts[idx]);
+      inside_val[pt_idx(p[0], p[1], p[2])] = oracle.inside_resolved(p[0], p[1], p[2]) ? 1 : 0;
+    };
+    if (in.parallelism == 1 || inside_pts.size() <= 512) {
+      for (std::size_t idx = 0; idx < inside_pts.size(); ++idx) eval_inside(idx);
+    } else {
+      st = parallel_for(inside_pts.size(), ParallelRequest{512, in.parallelism},
+                        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        for (std::size_t idx = begin; idx < end; ++idx) eval_inside(idx);
+        return PHX_MC_OK;
+      });
+      if (st != PHX_MC_OK) return st;
+    }
+    std::vector<uint8_t> clear_need(npts, 0), clear_val(npts, 0);
+    std::vector<uint64_t> clear_pts;
+    clear_pts.reserve(near_leaves.size() * 2);
+    std::vector<int32_t> near_inside_leaves;
+    near_inside_leaves.reserve(near_leaves.size());
+    for (const int32_t li : near_leaves) {
+      const Leaf& leaf = tree.leaves[li];
+      const int64_t i = leaf.o[0], j = leaf.o[1], k = leaf.o[2];
+      bool all_in = true;
+      for (int c = 0; c < 8 && all_in; ++c) {
+        all_in = inside_val[pt_idx(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1))] != 0;
+      }
+      if (!all_in) continue;
+      near_inside_leaves.push_back(li);
+      for (int c = 0; c < 8; ++c) {
+        const int64_t ci = i + (c & 1), cj = j + ((c >> 1) & 1), ck = k + ((c >> 2) & 1);
+        const std::size_t idx = pt_idx(ci, cj, ck);
+        if (!clear_need[idx]) {
+          clear_need[idx] = 1;
+          clear_pts.push_back(pack(ci, cj, ck));
+        }
+      }
+    }
+    auto eval_clear = [&](std::size_t idx) {
+      const auto p = unpack(clear_pts[idx]);
+      clear_val[pt_idx(p[0], p[1], p[2])] = !triangle_within(s, lattice_point(p[0], p[1], p[2]), delta) ? 1 : 0;
+    };
+    if (in.parallelism == 1 || clear_pts.size() <= 128) {
+      for (std::size_t idx = 0; idx < clear_pts.size(); ++idx) eval_clear(idx);
+    } else {
+      st = parallel_for(clear_pts.size(), ParallelRequest{128, in.parallelism},
+                        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        for (std::size_t idx = begin; idx < end; ++idx) eval_clear(idx);
+        return PHX_MC_OK;
+      });
+      if (st != PHX_MC_OK) return st;
+    }
+    std::vector<int32_t> overlap_leaves;
+    overlap_leaves.reserve(near_inside_leaves.size());
+    for (const int32_t li : near_inside_leaves) {
+      const Leaf& leaf = tree.leaves[li];
+      const int64_t i = leaf.o[0], j = leaf.o[1], k = leaf.o[2];
+      bool all_clear = true;
+      for (int c = 0; c < 8 && all_clear; ++c) {
+        all_clear = clear_val[pt_idx(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1))] != 0;
+      }
+      if (all_clear) overlap_leaves.push_back(li);
+    }
+    for (Leaf& leaf : tree.leaves) {
+      const int64_t i = leaf.o[0], j = leaf.o[1], k = leaf.o[2];
+      if (leaf.level < K || !near_finest_grid[static_cast<std::size_t>((i * gy + j) * gz + k)]) {
+        leaf.core = inside_val[pt_idx(i, j, k)];
+      }
+    }
+    auto eval_overlap = [&](std::size_t idx) {
+      Leaf& leaf = tree.leaves[overlap_leaves[idx]];
+      const int64_t i = leaf.o[0], j = leaf.o[1], k = leaf.o[2];
+      const Vec center = lattice_point(i, j, k);
+      const Vec mid = add(center, {0.5 * b, 0.5 * b, 0.5 * b});
+      const Bins& bins = s.triangle_bins;
+      const auto a0 = bins.cell(center), a1 = bins.cell(lattice_point(i + 1, j + 1, k + 1));
+      bool core = true;
+      for (int64_t bi = a0[0]; bi <= a1[0] && core; ++bi) {
+        for (int64_t bj = a0[1]; bj <= a1[1] && core; ++bj) {
+          for (int64_t bk = a0[2]; bk <= a1[2] && core; ++bk) {
+            const auto [first, last] = bins.range(bi, bj, bk);
+            for (int32_t slot = first; slot < last && core; ++slot) {
+              const int32_t t = bins.items[slot];
+              core = !triangle_box_overlap(mid, 0.5 * b * (1.0 + 1e-9), s.corner_point(t, 0),
+                                           s.corner_point(t, 1), s.corner_point(t, 2));
+            }
+          }
+        }
+      }
+      leaf.core = core ? 1 : 0;
+    };
+    if (in.parallelism == 1 || overlap_leaves.size() <= 256) {
+      for (std::size_t idx = 0; idx < overlap_leaves.size(); ++idx) eval_overlap(idx);
+    } else {
+      st = parallel_for(overlap_leaves.size(), ParallelRequest{256, in.parallelism},
+                        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        for (std::size_t idx = begin; idx < end; ++idx) eval_overlap(idx);
+        return PHX_MC_OK;
+      });
+      if (st != PHX_MC_OK) return st;
+    }
+  } else {
   // Finest cells touching a triangle box.
   std::vector<uint64_t> touched;
   touched.reserve(static_cast<std::size_t>(s.m) * 2);
@@ -1067,7 +1381,6 @@ int32_t Builder::octree_and_core() {
     }
   }
   // Finest cells needing the detailed core test.
-  const int64_t clearance_cells = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(delta / b)));
   KeyMap near_finest(1024);
   for (const uint64_t key : dilate(touched, clearance_cells, limit)) near_finest.assign(key, 1);
   // Leaves.
@@ -1146,6 +1459,7 @@ int32_t Builder::octree_and_core() {
       }
     }
     leaf.core = core;
+  }
   }
   // Manifold staircase: remove finest core cells at non-manifold edges and
   // vertices (the involved core cell whose center is nearest the surface).
@@ -1475,14 +1789,27 @@ int32_t Builder::staircase() {
 }
 
 // Patch partition of the staircase faces and its cleanup.
-void Builder::partition() {
+int32_t Builder::partition() {
   const int64_t count = static_cast<int64_t>(stair_faces.size());
   stair_patch.assign(count, 0);
-  if (s.patch_count <= 1) return;
-  for (int64_t f = 0; f < count; ++f) {
+  if (s.patch_count <= 1) return PHX_MC_OK;
+  auto assign_patch = [&](std::size_t f) {
     Vec c{0, 0, 0};
     for (const int32_t v : stair_loop[f]) c = add(c, point(v));
     stair_patch[f] = s.patch[nearest_triangle(s, mul(c, 0.25), -1).item];
+  };
+  if (in.parallelism == 1 || count <= 256) {
+    for (std::size_t f = 0; f < static_cast<std::size_t>(count); ++f) assign_patch(f);
+  } else {
+    const int32_t st = parallel_for(
+        static_cast<std::size_t>(count), ParallelRequest{256, in.parallelism},
+        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+          const GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          for (std::size_t f = begin; f < end; ++f) assign_patch(f);
+          return PHX_MC_OK;
+        });
+    if (st != PHX_MC_OK) return st;
   }
   // Chain edges at a staircase vertex (edges whose two faces differ).
   auto chain_degree = [&](int32_t row, int32_t& patches) {
@@ -1554,6 +1881,7 @@ void Builder::partition() {
     if ((total == 4 || diagonal || crossing) && best >= 0) flip(f, best);
   }
   stats[18] = static_cast<double>(flipped);
+  return PHX_MC_OK;
 }
 
 // Pieces of the staircase: a face whose patch changes across two consecutive
@@ -1728,58 +2056,93 @@ int32_t Builder::project() {
     chain[stair_vertex[edge_ends[e][0]]].push_back(stair_vertex[edge_ends[e][1]]);
     chain[stair_vertex[edge_ends[e][1]]].push_back(stair_vertex[edge_ends[e][0]]);
   }
+  struct ProjectRow {
+    Hit hit;
+    uint8_t kind = kPatch;
+    std::array<int32_t, 2> pair{-1, -1};
+    std::array<int32_t, 2> chain_nbr{-1, -1};
+    uint8_t is_curve = 0;
+    uint8_t is_corner = 0;
+  };
+  std::vector<ProjectRow> projected(static_cast<std::size_t>(vertices));
+  auto project_range = [&](std::size_t begin, std::size_t end) {
+    std::vector<int32_t> patches;
+    for (std::size_t r = begin; r < end; ++r) {
+      const int64_t row = static_cast<int64_t>(r);
+      const int32_t v = stair_vertices[row];
+      const Vec p = point(v);
+      patches.clear();
+      for (const int32_t q : around[row]) patches.push_back(pieces[q].patch);
+      std::sort(patches.begin(), patches.end());
+      patches.erase(std::unique(patches.begin(), patches.end()), patches.end());
+      ProjectRow out;
+      if (patches.size() == 1) {
+        out.hit = nearest_triangle(s, p, patches[0]);
+        out.kind = kPatch;
+      } else if (patches.size() == 2) {
+        out.hit = nearest_edge(s, p, patches[0], patches[1]);
+        if (out.hit.item < 0) out.hit = nearest_edge(s, p, -1, -1);
+        out.kind = kFeature;
+        out.pair = {patches[0], patches[1]};
+        if (chain[row].size() == 2) out.chain_nbr = {chain[row][0], chain[row][1]};
+        out.is_curve = 1;
+      } else {
+        // The nearest corner sharing the most patches.
+        int32_t chosen = -1;
+        double best = std::numeric_limits<double>::infinity();
+        std::size_t best_shared = 0;
+        for (std::size_t c = 0; c < s.corners.size(); ++c) {
+          std::size_t shared = 0;
+          for (const int32_t q : patches) {
+            shared += std::binary_search(s.corner_patches[c].begin(), s.corner_patches[c].end(), q);
+          }
+          const Vec d = sub(s.point(s.corners[c]), p);
+          const double d2 = dot(d, d);
+          if (shared > best_shared || (shared == best_shared && d2 < best)) {
+            best_shared = shared;
+            best = d2;
+            chosen = static_cast<int32_t>(c);
+          }
+        }
+        out.kind = kCorner;
+        if (chosen >= 0) {
+          out.hit.item = s.corners[chosen];
+          out.hit.point = s.point(s.corners[chosen]);
+        } else {
+          out.hit = nearest_edge(s, p, -1, -1);
+        }
+        out.is_corner = 1;
+      }
+      if (out.hit.item < 0) {
+        out.hit = nearest_triangle(s, p, -1);
+        out.kind = kPatch;
+      }
+      projected[r] = out;
+    }
+  };
+  if (in.parallelism == 1 || vertices <= 128) {
+    project_range(0, static_cast<std::size_t>(vertices));
+  } else {
+    const int32_t st = parallel_for(
+        static_cast<std::size_t>(vertices), ParallelRequest{128, in.parallelism},
+        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+          const GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          project_range(begin, end);
+          return PHX_MC_OK;
+        });
+    if (st != PHX_MC_OK) return st;
+  }
   int64_t curve = 0, corner = 0;
   for (int64_t row = 0; row < vertices; ++row) {
-    const int32_t v = stair_vertices[row];
-    const Vec p = point(v);
-    std::vector<int32_t> patches;
-    for (const int32_t q : around[row]) patches.push_back(pieces[q].patch);
-    std::sort(patches.begin(), patches.end());
-    patches.erase(std::unique(patches.begin(), patches.end()), patches.end());
-    Hit hit;
-    if (patches.size() == 1) {
-      hit = nearest_triangle(s, p, patches[0]);
-      surface_kind[row] = kPatch;
-    } else if (patches.size() == 2) {
-      hit = nearest_edge(s, p, patches[0], patches[1]);
-      if (hit.item < 0) hit = nearest_edge(s, p, -1, -1);
-      surface_kind[row] = kFeature;
-      surface_pair[row] = {patches[0], patches[1]};
-      if (chain[row].size() == 2) chain_neighbors[row] = {chain[row][0], chain[row][1]};
-      ++curve;
-    } else {
-      // The nearest corner sharing the most patches.
-      int32_t chosen = -1;
-      double best = std::numeric_limits<double>::infinity();
-      std::size_t best_shared = 0;
-      for (std::size_t c = 0; c < s.corners.size(); ++c) {
-        std::size_t shared = 0;
-        for (const int32_t q : patches) {
-          shared += std::binary_search(s.corner_patches[c].begin(), s.corner_patches[c].end(), q);
-        }
-        const Vec d = sub(s.point(s.corners[c]), p);
-        const double d2 = dot(d, d);
-        if (shared > best_shared || (shared == best_shared && d2 < best)) {
-          best_shared = shared;
-          best = d2;
-          chosen = static_cast<int32_t>(c);
-        }
-      }
-      surface_kind[row] = kCorner;
-      if (chosen >= 0) {
-        hit.item = s.corners[chosen];
-        hit.point = s.point(s.corners[chosen]);
-      } else {
-        hit = nearest_edge(s, p, -1, -1);
-      }
-      ++corner;
-    }
-    if (hit.item < 0) {
-      hit = nearest_triangle(s, p, -1);
-      surface_kind[row] = kPatch;
-    }
-    surface_item[row] = hit.item;
-    surface_vertex[row] = add_point(hit.point);
+    const ProjectRow& out = projected[static_cast<std::size_t>(row)];
+    surface_kind[row] = out.kind;
+    surface_pair[row] = out.pair;
+    chain_neighbors[row] = out.chain_nbr;
+    surface_item[row] = out.hit.item;
+    surface_vertex[row] = add_point(out.hit.point);
+    curve += out.is_curve;
+    corner += out.is_corner;
   }
   stats[19] = static_cast<double>(curve);
   stats[20] = static_cast<double>(corner);
@@ -2103,47 +2466,79 @@ Topology topology(const Mesh& mesh) {
     t.cell_faces[fill[mesh.face_owner[f]]++] = static_cast<int32_t>(f + 1);
     if (mesh.face_neighbor[f] >= 0) t.cell_faces[fill[mesh.face_neighbor[f]]++] = -static_cast<int32_t>(f + 1);
   }
-  // Vertex -> cells (unique per cell).
+  // Vertex -> cells (unique per cell, strictly ascending cell order).
   const int64_t points = static_cast<int64_t>(mesh.points.size() / 3);
-  std::vector<std::pair<int32_t, int32_t>> pairs;
-  pairs.reserve(t.cell_faces.size() * 4);
+  t.vertex_cell_offsets.assign(points + 1, 0);
+  std::vector<int32_t> seen(points, -1);
+  std::vector<int32_t> cell_verts;
+  cell_verts.reserve(static_cast<std::size_t>(cells) * 9);
+  std::vector<int64_t> cell_vert_offsets(cells + 1, 0);
   for (int64_t c = 0; c < cells; ++c) {
+    const int32_t cid = static_cast<int32_t>(c);
     for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
       const int64_t f = std::abs(t.cell_faces[slot]) - 1;
       for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
-        pairs.emplace_back(mesh.face_vertices[q], static_cast<int32_t>(c));
+        const int32_t v = mesh.face_vertices[q];
+        if (seen[v] != cid) {
+          seen[v] = cid;
+          ++t.vertex_cell_offsets[v + 1];
+          cell_verts.push_back(v);
+        }
       }
     }
+    cell_vert_offsets[c + 1] = static_cast<int64_t>(cell_verts.size());
   }
-  std::sort(pairs.begin(), pairs.end());
-  pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
-  t.vertex_cell_offsets.assign(points + 1, 0);
-  for (const auto& p : pairs) ++t.vertex_cell_offsets[p.first + 1];
   for (int64_t v = 0; v < points; ++v) t.vertex_cell_offsets[v + 1] += t.vertex_cell_offsets[v];
-  t.vertex_cells.resize(pairs.size());
-  for (std::size_t n = 0; n < pairs.size(); ++n) t.vertex_cells[n] = pairs[n].second;
+  t.vertex_cells.resize(t.vertex_cell_offsets[points]);
+  std::vector<int64_t> vfill(t.vertex_cell_offsets.begin(), t.vertex_cell_offsets.end() - 1);
+  for (int64_t c = 0; c < cells; ++c) {
+    const int32_t cid = static_cast<int32_t>(c);
+    for (int64_t q = cell_vert_offsets[c]; q < cell_vert_offsets[c + 1]; ++q) {
+      t.vertex_cells[vfill[cell_verts[q]]++] = cid;
+    }
+  }
   return t;
 }
 
 // OpenFOAM face center and area vector (triangles about the vertex average).
 void face_geometry(const Mesh& mesh, int64_t f, Vec& center, Vec& area, Vec& average) {
   const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-  const double count = static_cast<double>(last - first);
+  const int64_t nverts = last - first;
+  const double count = static_cast<double>(nverts);
+  const double* x = mesh.points.data();
+  const int32_t* fv = mesh.face_vertices.data() + first;
   average = {0, 0, 0};
-  for (int64_t q = first; q < last; ++q) average = add(average, load(mesh.points.data() + 3 * mesh.face_vertices[q]));
-  average = mul(average, 1.0 / count);
   area = {0, 0, 0};
   Vec weighted{0, 0, 0};
   double total = 0.0;
-  for (int64_t q = first; q < last; ++q) {
-    const int64_t r = q + 1 < last ? q + 1 : first;
-    const Vec p = load(mesh.points.data() + 3 * mesh.face_vertices[q]);
-    const Vec n = load(mesh.points.data() + 3 * mesh.face_vertices[r]);
-    const Vec a = mul(cross(sub(p, average), sub(n, average)), 0.5);
-    const double magnitude = norm(a);
-    area = add(area, a);
-    weighted = add(weighted, mul(add(add(p, n), average), magnitude / 3.0));
-    total += magnitude;
+  if (nverts <= 16) {
+    Vec pts[16];
+    for (int64_t i = 0; i < nverts; ++i) {
+      pts[i] = load(x + 3 * fv[i]);
+      average = add(average, pts[i]);
+    }
+    average = mul(average, 1.0 / count);
+    for (int64_t i = 0; i < nverts; ++i) {
+      const Vec& p = pts[i];
+      const Vec& n = pts[i + 1 < nverts ? i + 1 : 0];
+      const Vec a = mul(cross(sub(p, average), sub(n, average)), 0.5);
+      const double magnitude = norm(a);
+      area = add(area, a);
+      weighted = add(weighted, mul(add(add(p, n), average), magnitude / 3.0));
+      total += magnitude;
+    }
+  } else {
+    for (int64_t i = 0; i < nverts; ++i) average = add(average, load(x + 3 * fv[i]));
+    average = mul(average, 1.0 / count);
+    for (int64_t i = 0; i < nverts; ++i) {
+      const Vec p = load(x + 3 * fv[i]);
+      const Vec n = load(x + 3 * fv[i + 1 < nverts ? i + 1 : 0]);
+      const Vec a = mul(cross(sub(p, average), sub(n, average)), 0.5);
+      const double magnitude = norm(a);
+      area = add(area, a);
+      weighted = add(weighted, mul(add(add(p, n), average), magnitude / 3.0));
+      total += magnitude;
+    }
   }
   center = total > 0.0 ? mul(weighted, 1.0 / total) : average;
 }
@@ -2154,22 +2549,83 @@ void face_geometry(const Mesh& mesh, int64_t f, Vec& center, Vec& area, Vec& ave
 // that rounding cannot accept a folded fan.
 bool fan_unfolded(const Mesh& mesh, int64_t f) {
   const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+  const int64_t nverts = last - first;
   const double* x = mesh.points.data();
+  const int32_t* fv = mesh.face_vertices.data() + first;
+  const double count = static_cast<double>(nverts);
   Vec average{0, 0, 0}, normal{0, 0, 0};
-  for (int64_t q = first; q < last; ++q) {
-    const int64_t r = q + 1 < last ? q + 1 : first;
-    average = add(average, load(x + 3 * mesh.face_vertices[q]));
-    normal = add(normal, cross(load(x + 3 * mesh.face_vertices[q]), load(x + 3 * mesh.face_vertices[r])));
+  if (nverts <= 16) {
+    Vec pts[16];
+    for (int64_t i = 0; i < nverts; ++i) pts[i] = load(x + 3 * fv[i]);
+    for (int64_t i = 0; i < nverts; ++i) {
+      average = add(average, pts[i]);
+      normal = add(normal, cross(pts[i], pts[i + 1 < nverts ? i + 1 : 0]));
+    }
+    average = mul(average, 1.0 / count);
+    const double floor = 1e-6 * dot(normal, normal) / count;
+    for (int64_t i = 0; i < nverts; ++i) {
+      const Vec a = cross(sub(pts[i], average), sub(pts[i + 1 < nverts ? i + 1 : 0], average));
+      if (!(dot(a, normal) > floor)) return false;
+    }
+    return true;
   }
-  const double count = static_cast<double>(last - first);
+  for (int64_t i = 0; i < nverts; ++i) {
+    const Vec p = load(x + 3 * fv[i]);
+    const Vec n = load(x + 3 * fv[i + 1 < nverts ? i + 1 : 0]);
+    average = add(average, p);
+    normal = add(normal, cross(p, n));
+  }
   average = mul(average, 1.0 / count);
   const double floor = 1e-6 * dot(normal, normal) / count;
-  for (int64_t q = first; q < last; ++q) {
-    const int64_t r = q + 1 < last ? q + 1 : first;
-    const Vec a = cross(sub(load(x + 3 * mesh.face_vertices[q]), average), sub(load(x + 3 * mesh.face_vertices[r]), average));
+  for (int64_t i = 0; i < nverts; ++i) {
+    const Vec p = load(x + 3 * fv[i]);
+    const Vec n = load(x + 3 * fv[i + 1 < nverts ? i + 1 : 0]);
+    const Vec a = cross(sub(p, average), sub(n, average));
     if (!(dot(a, normal) > floor)) return false;
   }
   return true;
+}
+
+// Combined face_geometry + fan_unfolded sharing vertex loads and fan cross products.
+void face_geometry_and_unfolded(const Mesh& mesh, int64_t f, Vec& center, Vec& area, Vec& average,
+                                uint8_t& unfolded) {
+  const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+  const int64_t nverts = last - first;
+  const double count = static_cast<double>(nverts);
+  const double* x = mesh.points.data();
+  const int32_t* fv = mesh.face_vertices.data() + first;
+  if (nverts > 16) {
+    face_geometry(mesh, f, center, area, average);
+    unfolded = fan_unfolded(mesh, f);
+    return;
+  }
+  Vec pts[16];
+  for (int64_t i = 0; i < nverts; ++i) pts[i] = load(x + 3 * fv[i]);
+  average = {0, 0, 0};
+  Vec normal{0, 0, 0};
+  for (int64_t i = 0; i < nverts; ++i) {
+    average = add(average, pts[i]);
+    normal = add(normal, cross(pts[i], pts[i + 1 < nverts ? i + 1 : 0]));
+  }
+  average = mul(average, 1.0 / count);
+  const double floor = 1e-6 * dot(normal, normal) / count;
+  area = {0, 0, 0};
+  Vec weighted{0, 0, 0};
+  double total = 0.0;
+  bool ok = true;
+  for (int64_t i = 0; i < nverts; ++i) {
+    const Vec& p = pts[i];
+    const Vec& n = pts[i + 1 < nverts ? i + 1 : 0];
+    const Vec cr = cross(sub(p, average), sub(n, average));
+    if (!(dot(cr, normal) > floor)) ok = false;
+    const Vec a = mul(cr, 0.5);
+    const double magnitude = norm(a);
+    area = add(area, a);
+    weighted = add(weighted, mul(add(add(p, n), average), magnitude / 3.0));
+    total += magnitude;
+  }
+  center = total > 0.0 ? mul(weighted, 1.0 / total) : average;
+  unfolded = ok ? 1 : 0;
 }
 
 // OpenFOAM cell centroid (pyramids about the mean of the face centers).
@@ -2250,16 +2706,27 @@ bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& cent
     const Vec average = face(f, unfolded);
     if (!unfolded) return false;
     const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-    for (const Vec* center : {&centroid, &vertex_average}) {
-      const double reach = norm(sub(average, *center));
-      for (int64_t q = first; q < last; ++q) {
-        const int64_t r = q + 1 < last ? q + 1 : first;
-        const Vec p = load(x + 3 * mesh.face_vertices[q]);
-        const Vec n = load(x + 3 * mesh.face_vertices[r]);
-        double v = dot(cross(sub(p, average), sub(n, average)), sub(average, *center));
-        if (signed_face < 0) v = -v;
-        if (!(v > 1e-9 * reach * reach * reach)) return false;
+    const Vec dc = sub(average, centroid);
+    const double rc = norm(dc);
+    const double tc = 1e-9 * rc * rc * rc;
+    const Vec dv = sub(average, vertex_average);
+    const double rv = norm(dv);
+    const double tv = 1e-9 * rv * rv * rv;
+    const int32_t* fv = mesh.face_vertices.data() + first;
+    const int64_t nverts = last - first;
+    Vec p = load(x + 3 * fv[0]);
+    const Vec p0 = p;
+    for (int64_t i = 0; i < nverts; ++i) {
+      const Vec n = i + 1 < nverts ? load(x + 3 * fv[i + 1]) : p0;
+      const Vec cr = cross(sub(p, average), sub(n, average));
+      double vc = dot(cr, dc);
+      double vv = dot(cr, dv);
+      if (signed_face < 0) {
+        vc = -vc;
+        vv = -vv;
       }
+      if (!(vc > tc) || !(vv > tv)) return false;
+      p = n;
     }
   }
   return true;
@@ -2408,101 +2875,224 @@ void Builder::place_mids() {
 // patch's normal without its first-normal part (unit), g(0, j) likewise,
 // with h scaled to at most 0.9 of the least extent of the adjacent wall
 // pieces away from the curve (cfMesh's limit).
-void Builder::place_layers() {
-  if (levels == 1) return;
+int32_t Builder::place_layers() {
+  if (levels == 1) return PHX_MC_OK;
   const int64_t columns = static_cast<int64_t>(stair_vertices.size());
   layer_direction.resize(columns);
   curve_column.resize(columns);
   std::vector<Vec> area(pieces.size());
-  for (std::size_t p = 0; p < pieces.size(); ++p) {
+  auto compute_piece_area = [&](std::size_t p) {
     Vec center, average;
     face_geometry(mesh, piece_wall_face[p], center, area[p], average);
+  };
+  if (in.parallelism == 1 || pieces.size() <= 512) {
+    for (std::size_t p = 0; p < pieces.size(); ++p) compute_piece_area(p);
+  } else {
+    const int32_t st = parallel_for(
+        pieces.size(), ParallelRequest{512, in.parallelism},
+        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+          const GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          for (std::size_t p = begin; p < end; ++p) compute_piece_area(p);
+          return PHX_MC_OK;
+        });
+    if (st != PHX_MC_OK) return st;
   }
   const double feature_cos = std::cos(in.feature_angle_degrees * (3.14159265358979323846 / 180.0));
-  std::vector<std::pair<int32_t, Vec>> by_patch;
-  std::vector<Vec> normals, sums;
-  for (int64_t row = 0; row < columns; ++row) {
-    by_patch.clear();
-    for (const int32_t p : row_pieces[row]) {
-      const int32_t patch = pieces[p].patch;
-      auto it = std::find_if(by_patch.begin(), by_patch.end(), [&](const auto& e) { return e.first == patch; });
-      if (it == by_patch.end()) {
-        by_patch.emplace_back(patch, area[p]);
-      } else {
-        it->second = add(it->second, area[p]);
-      }
-    }
-    if (split_of[row] >= 0) {
-      place_split(row, by_patch);
-      layer_direction[row] = {0, 0, 0};
-      curve_column[row] = 0;
-      continue;
-    }
-    normals.clear();
-    sums.clear();
-    for (const auto& [patch, sum] : by_patch) {
-      const Vec n = mul(sum, 1.0 / norm(sum));
-      std::size_t g = 0;
-      while (g < normals.size() && dot(normals[g], n) <= feature_cos) ++g;
-      if (g == normals.size()) {
-        normals.push_back(n);
-        sums.push_back(sum);
-      } else {
-        sums[g] = add(sums[g], sum);
-        normals[g] = mul(sums[g], 1.0 / norm(sums[g]));
-      }
-    }
-    // The two most opposed normals: a feature curve, and the fallback of a
-    // rank-deficient corner.
-    auto pair = [&]() {
-      std::size_t i = 0, j = 1;
-      for (std::size_t a = 0; a < normals.size(); ++a) {
-        for (std::size_t c = a + 1; c < normals.size(); ++c) {
-          if (dot(normals[a], normals[c]) < dot(normals[i], normals[j])) i = a, j = c;
+  auto run_rows = [&](std::size_t begin, std::size_t end) {
+    std::vector<std::pair<int32_t, Vec>> by_patch;
+    std::vector<Vec> normals, sums;
+    for (std::size_t r = begin; r < end; ++r) {
+      const int64_t row = static_cast<int64_t>(r);
+      by_patch.clear();
+      for (const int32_t p : row_pieces[row]) {
+        const int32_t patch = pieces[p].patch;
+        auto it = std::find_if(by_patch.begin(), by_patch.end(), [&](const auto& e) { return e.first == patch; });
+        if (it == by_patch.end()) {
+          by_patch.emplace_back(patch, area[p]);
+        } else {
+          it->second = add(it->second, area[p]);
         }
       }
-      return mul(add(normals[i], normals[j]), 1.0 / (1.0 + dot(normals[i], normals[j])));
-    };
-    Vec m = normals[0];
-    if (normals.size() == 2) {
-      m = pair();
-    } else if (normals.size() > 2) {
-      double a[3][3] = {}, r[3] = {};
-      for (const Vec& n : normals) {
-        for (int i = 0; i < 3; ++i) {
-          r[i] += n[i];
-          for (int j = 0; j < 3; ++j) a[i][j] += n[i] * n[j];
+      if (split_of[row] >= 0) {
+        place_split(row, by_patch);
+        layer_direction[row] = {0, 0, 0};
+        curve_column[row] = 0;
+        continue;
+      }
+      normals.clear();
+      sums.clear();
+      for (const auto& [patch, sum] : by_patch) {
+        const Vec n = mul(sum, 1.0 / norm(sum));
+        std::size_t g = 0;
+        while (g < normals.size() && dot(normals[g], n) <= feature_cos) ++g;
+        if (g == normals.size()) {
+          normals.push_back(n);
+          sums.push_back(sum);
+        } else {
+          sums[g] = add(sums[g], sum);
+          normals[g] = mul(sums[g], 1.0 / norm(sums[g]));
         }
       }
-      auto det3 = [](const double (&q)[3][3]) {
-        return q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) +
-               q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
-      };
-      const double det = det3(a);
-      // Unit normals: det measures how far they are from one plane.
-      if (det > 1e-6) {
-        for (int i = 0; i < 3; ++i) {
-          double q[3][3];
-          for (int x = 0; x < 3; ++x) {
-            for (int y = 0; y < 3; ++y) q[x][y] = y == i ? r[x] : a[x][y];
+      // The two most opposed normals: a feature curve, and the fallback of a
+      // rank-deficient corner.
+      auto pair = [&]() {
+        std::size_t i = 0, j = 1;
+        for (std::size_t a = 0; a < normals.size(); ++a) {
+          for (std::size_t c = a + 1; c < normals.size(); ++c) {
+            if (dot(normals[a], normals[c]) < dot(normals[i], normals[j])) i = a, j = c;
           }
-          m[i] = det3(q) / det;
         }
-      } else {
+        return mul(add(normals[i], normals[j]), 1.0 / (1.0 + dot(normals[i], normals[j])));
+      };
+      Vec m = normals[0];
+      if (normals.size() == 2) {
         m = pair();
+      } else if (normals.size() > 2) {
+        double a[3][3] = {}, rhs[3] = {};
+        for (const Vec& n : normals) {
+          for (int i = 0; i < 3; ++i) {
+            rhs[i] += n[i];
+            for (int j = 0; j < 3; ++j) a[i][j] += n[i] * n[j];
+          }
+        }
+        auto det3 = [](const double (&q)[3][3]) {
+          return q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) +
+                 q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
+        };
+        const double det = det3(a);
+        // Unit normals: det measures how far they are from one plane.
+        if (det > 1e-6) {
+          for (int i = 0; i < 3; ++i) {
+            double q[3][3];
+            for (int x = 0; x < 3; ++x) {
+              for (int y = 0; y < 3; ++y) q[x][y] = y == i ? rhs[x] : a[x][y];
+            }
+            m[i] = det3(q) / det;
+          }
+        } else {
+          m = pair();
+        }
+      }
+      layer_direction[row] = m;
+      curve_column[row] = normals.size() == 2;
+      const Vec wall = point(surface_vertex[row]);
+      double height = 0.0;
+      for (int32_t k = 1; k < levels; ++k) {
+        height += in.layer_thicknesses[k - 1];
+        set_point(column[row * (levels + 1) + k], sub(wall, mul(m, height)));
       }
     }
-    layer_direction[row] = m;
-    curve_column[row] = normals.size() == 2;
-    const Vec wall = point(surface_vertex[row]);
-    double height = 0.0;
-    for (int32_t k = 1; k < levels; ++k) {
-      height += in.layer_thicknesses[k - 1];
-      set_point(column[row * (levels + 1) + k], sub(wall, mul(m, height)));
-    }
+  };
+  const auto col_count = static_cast<std::size_t>(columns);
+  if (in.parallelism == 1 || col_count <= 256) {
+    run_rows(0, col_count);
+  } else {
+    const int32_t st = parallel_for(
+        col_count, ParallelRequest{256, in.parallelism},
+        [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+          const GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          run_rows(begin, end);
+          return PHX_MC_OK;
+        });
+    if (st != PHX_MC_OK) return st;
   }
   place_mids();
+  return PHX_MC_OK;
 }
+
+// Small open-addressing int32 -> int32 slot map with O(1) generation clear.
+struct SmallSlotMap {
+  std::vector<int32_t> keys;
+  std::vector<int32_t> vals;
+  std::vector<uint32_t> stamps;
+  uint32_t epoch = 1;
+  uint32_t mask = 0;
+  std::size_t size = 0;
+
+  explicit SmallSlotMap(std::size_t initial_cap = 64) { reset_cap(initial_cap); }
+
+  void clear() {
+    ++epoch;
+    if (epoch == 0) {
+      std::fill(stamps.begin(), stamps.end(), 0);
+      epoch = 1;
+    }
+    size = 0;
+  }
+
+  int32_t find(int32_t key) const {
+    for (uint32_t slot = hash(key) & mask;; slot = (slot + 1) & mask) {
+      if (stamps[slot] != epoch) return -1;
+      if (keys[slot] == key) return vals[slot];
+    }
+  }
+
+  int32_t insert(int32_t key, int32_t val) {
+    if (2 * (size + 1) > keys.size()) grow();
+    for (uint32_t slot = hash(key) & mask;; slot = (slot + 1) & mask) {
+      if (stamps[slot] != epoch) {
+        stamps[slot] = epoch;
+        keys[slot] = key;
+        vals[slot] = val;
+        ++size;
+        return val;
+      }
+      if (keys[slot] == key) return vals[slot];
+    }
+  }
+
+ private:
+  static uint32_t hash(int32_t key) { return static_cast<uint32_t>(key) * 2654435761u; }
+  void reset_cap(std::size_t cap) {
+    keys.assign(cap, 0);
+    vals.assign(cap, -1);
+    stamps.assign(cap, 0);
+    mask = static_cast<uint32_t>(cap - 1);
+    epoch = 1;
+    size = 0;
+  }
+  void grow() {
+    const std::size_t old_cap = keys.size();
+    std::vector<int32_t> ok = std::move(keys);
+    std::vector<int32_t> ov = std::move(vals);
+    std::vector<uint32_t> os = std::move(stamps);
+    const uint32_t oe = epoch;
+    reset_cap(old_cap * 2);
+    for (std::size_t i = 0; i < old_cap; ++i) {
+      if (os[i] == oe) insert(ok[i], ov[i]);
+    }
+  }
+};
+
+struct RepairTask {
+  int32_t v;
+  int32_t f;
+  int32_t layer_row;
+  int32_t wall_row;
+  int32_t level;
+  int32_t movers_offset;
+  int32_t movers_count;
+  uint8_t layer;
+  uint8_t tilt;
+  uint8_t slide;
+};
+
+struct alignas(128) RepairScratch {
+  SmallSlotMap cell_map{64};
+  SmallSlotMap face_map{256};
+  std::vector<int32_t> local_cells, local_faces, local_cell_faces;
+  std::vector<std::size_t> local_cell_offsets;
+  std::vector<Vec> local_centroid, local_center, local_area, local_average;
+  std::vector<uint8_t> local_moving, local_unfolded;
+  std::vector<uint8_t> local_face_done, local_cell_done;
+  std::vector<uint32_t> moving_unfolded_trial;
+  std::vector<uint8_t> moving_unfolded_val;
+  std::vector<Vec> starts;
+  std::vector<int32_t> sample_items;
+  uint32_t trial_epoch = 0;
+};
 
 int32_t Builder::smooth() {
   Topology t = topology(mesh);
@@ -2535,6 +3125,11 @@ int32_t Builder::smooth() {
   // Layer points (role 3) are placed from the wall, never moved on their own.
   const int64_t layer_first = core_points + columns;
   for (int64_t v = layer_first; v < points; ++v) role[v] = 3;
+  std::vector<int32_t> interior_vertices;
+  interior_vertices.reserve(static_cast<std::size_t>(points / 2));
+  for (int64_t v = 0; v < points; ++v) {
+    if (role[v] == 1) interior_vertices.push_back(static_cast<int32_t>(v));
+  }
   // Boundary faces incident to every surface vertex.
   std::vector<std::vector<int32_t>> wall_faces(columns);
   for (int64_t f = core_faces; f < faces; ++f) {
@@ -2556,7 +3151,7 @@ int32_t Builder::smooth() {
   }
   // Patch columns the repair may slide: the ring around split columns.
   const std::vector<uint8_t>& slide_row = near_split;
-  // Distinct vertices of every cell.
+  // Distinct vertices of every cell (strictly ascending vertex order).
   std::vector<int64_t> cell_vertex_offsets(cells + 1, 0);
   for (int64_t v = 0; v < points; ++v) {
     for (int64_t slot = t.vertex_cell_offsets[v]; slot < t.vertex_cell_offsets[v + 1]; ++slot) {
@@ -2601,8 +3196,7 @@ int32_t Builder::smooth() {
   std::vector<Vec> centroid(cells), face_center(faces), face_area(faces), face_average(faces);
   std::vector<uint8_t> face_unfolded(faces, 0);
   auto face_update = [&](int64_t f) {
-    face_geometry(mesh, f, face_center[f], face_area[f], face_average[f]);
-    face_unfolded[f] = fan_unfolded(mesh, f);
+    face_geometry_and_unfolded(mesh, f, face_center[f], face_area[f], face_average[f], face_unfolded[f]);
   };
   auto cell_geometry = [&](int64_t c) {
     const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
@@ -2622,13 +3216,12 @@ int32_t Builder::smooth() {
   };
   // All workers see the same coordinates. Complete the face bank before
   // updating cell centroids, with the original reduction order inside a row.
-  constexpr std::size_t chunk_size = 2048;
-  const auto visit = [&](std::size_t count, const auto& row) -> int32_t {
-    if (in.parallelism == 1 || count <= chunk_size) {
+  const auto visit = [&](std::size_t count, std::size_t chunk, const auto& row) -> int32_t {
+    if (in.parallelism == 1 || count <= chunk) {
       for (std::size_t i = 0; i < count; ++i) row(i);
       return PHX_MC_OK;
     }
-    return parallel_for(count, ParallelRequest{chunk_size, in.parallelism},
+    return parallel_for(count, ParallelRequest{chunk, in.parallelism},
                         [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
       const GradualNearestScope mode;
       if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -2636,15 +3229,16 @@ int32_t Builder::smooth() {
       return PHX_MC_OK;
     });
   };
-  int32_t status = visit(faces, face_update);
+  int32_t status = visit(static_cast<std::size_t>(faces), 1024, face_update);
   if (status != PHX_MC_OK) return status;
-  status = visit(cells, cell_geometry);
+  status = visit(static_cast<std::size_t>(cells), 1024, cell_geometry);
   if (status != PHX_MC_OK) return status;
-  const auto geometry = [&]() -> int32_t {
+  const auto refresh_geometry = [&](const std::vector<int32_t>& geom_faces,
+                                    const std::vector<int32_t>& geom_cells) -> int32_t {
     const int32_t faces_status =
-        visit(active_faces.size(), [&](std::size_t i) { face_update(active_faces[i]); });
+        visit(geom_faces.size(), 1024, [&](std::size_t i) { face_update(geom_faces[i]); });
     if (faces_status != PHX_MC_OK) return faces_status;
-    return visit(active_cells.size(), [&](std::size_t i) { cell_geometry(active_cells[i]); });
+    return visit(geom_cells.size(), 1024, [&](std::size_t i) { cell_geometry(geom_cells[i]); });
   };
   // The vertex average of a cell's distinct vertices (the certified
   // decomposition's center) at the current positions.
@@ -2658,17 +3252,83 @@ int32_t Builder::smooth() {
   // The validity screen on the current face data.
   auto cell_valid_cached = [&](int64_t c) {
     return cell_screen(mesh, t, c, centroid[c], vertex_average(c), [&](int64_t f, bool& unfolded) {
-      unfolded = face_unfolded[f];
+      unfolded = face_unfolded[f] != 0;
       return face_average[f];
     });
+  };
+  // Fresh validity screen reusing cell_vertex_list and computing each incident
+  // face's geometry and unfolded flag once per cell.
+  auto cell_valid_fresh = [&](int64_t c) -> bool {
+    const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
+    if (last - first > 64) return cell_valid_float(mesh, t, c);
+    if (mesh.cell_kinds[c] == kHexahedron && !hexahedron_corners_positive(mesh, c)) return false;
+    const int64_t count = last - first;
+    Vec centers[64], areas[64], averages[64];
+    uint8_t unfolded[64];
+    Vec estimate{0, 0, 0};
+    for (int64_t slot = 0; slot < count; ++slot) {
+      const int32_t signed_face = t.cell_faces[first + slot];
+      face_geometry_and_unfolded(mesh, std::abs(signed_face) - 1, centers[slot], areas[slot],
+                                 averages[slot], unfolded[slot]);
+      if (signed_face < 0) areas[slot] = mul(areas[slot], -1.0);
+      estimate = add(estimate, centers[slot]);
+    }
+    estimate = mul(estimate, 1.0 / static_cast<double>(count));
+    double volume = 0.0;
+    Vec moment{0, 0, 0};
+    for (int64_t slot = 0; slot < count; ++slot) {
+      const double v = dot(areas[slot], sub(centers[slot], estimate)) / 3.0;
+      volume += v;
+      moment = add(moment, mul(add(mul(centers[slot], 0.75), mul(estimate, 0.25)), v));
+    }
+    const Vec fresh_centroid = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
+    const Vec vavg = vertex_average(c);
+    const double* x = mesh.points.data();
+    for (int64_t slot = 0; slot < count; ++slot) {
+      if (!unfolded[slot]) return false;
+      const int32_t signed_face = t.cell_faces[first + slot];
+      const int64_t f = std::abs(signed_face) - 1;
+      const Vec& average = averages[slot];
+      const Vec dc = sub(average, fresh_centroid);
+      const double rc = norm(dc);
+      const double tc = 1e-9 * rc * rc * rc;
+      const Vec dv = sub(average, vavg);
+      const double rv = norm(dv);
+      const double tv = 1e-9 * rv * rv * rv;
+      const int64_t ffirst = mesh.face_offsets[f], flast = mesh.face_offsets[f + 1];
+      const int32_t* fv = mesh.face_vertices.data() + ffirst;
+      const int64_t nverts = flast - ffirst;
+      Vec p = load(x + 3 * fv[0]);
+      const Vec p0 = p;
+      for (int64_t i = 0; i < nverts; ++i) {
+        const Vec n = i + 1 < nverts ? load(x + 3 * fv[i + 1]) : p0;
+        const Vec cr = cross(sub(p, average), sub(n, average));
+        double vc = dot(cr, dc);
+        double vv = dot(cr, dv);
+        if (signed_face < 0) {
+          vc = -vc;
+          vv = -vv;
+        }
+        if (!(vc > tc) || !(vv > tv)) return false;
+        p = n;
+      }
+    }
+    return true;
   };
   std::vector<double> previous(mesh.points);
   std::vector<uint8_t> moved(points, 0);
   int64_t reverted = 0;
   // Cells valid so far: smoothing never makes one of them invalid (only the
-  // active cells change shape).
+  // active cells change shape). The face bank and centroids were just computed
+  // on the initial coordinates, so cached screening matches cell_valid_float.
   std::vector<uint8_t> valid(cells, 1);
-  for (const int32_t c : active_cells) valid[c] = cell_valid_float(mesh, t, c);
+  status = visit(active_cells.size(), 256, [&](std::size_t i) {
+    const int32_t c = active_cells[i];
+    valid[c] = (t.cell_face_offsets[c + 1] - t.cell_face_offsets[c] <= 64)
+                   ? cell_valid_cached(c)
+                   : cell_valid_float(mesh, t, c);
+  });
+  if (status != PHX_MC_OK) return status;
   // Surface vertex move: onto its patch or curve by a local walk.
   auto place_surface = [&](int64_t row, const Vec& target) {
     const int32_t v = surface_vertex[row];
@@ -2687,7 +3347,44 @@ int32_t Builder::smooth() {
   }
   std::vector<int32_t> stamp(cells, -1);
   int32_t epoch = 0;
-  std::vector<int32_t> check, next;
+  std::vector<int32_t> face_stamp(faces, -1);
+  int32_t face_epoch = 0;
+  std::vector<int32_t> check, next, recheck_faces;
+  // Precomputed initial check-cell lists when no column reverts during the
+  // room check, preserving exact vertex-scan insertion order.
+  std::vector<int32_t> s1_default_check, s2_default_check;
+  {
+    std::vector<uint8_t> s1_moves(points, 0);
+    for (const int32_t v : interior_vertices) s1_moves[v] = 1;
+    for (int64_t row = 0; row < columns; ++row) {
+      const int32_t v = surface_vertex[row];
+      if (role[v] != 2) continue;
+      if (surface_kind[row] == kFeature && chain_neighbors[row][0] < 0) continue;
+      s1_moves[v] = 1;
+    }
+    for (int64_t v = layer_first; v < points; ++v) s1_moves[v] = 1;
+    ++epoch;
+    for (int64_t v = 0; v < points; ++v) {
+      if (!s1_moves[v]) continue;
+      for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
+        const int32_t c = t.vertex_cells[r];
+        if (stamp[c] != epoch) {
+          stamp[c] = epoch;
+          s1_default_check.push_back(c);
+        }
+      }
+    }
+    ++epoch;
+    for (const int32_t v : interior_vertices) {
+      for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
+        const int32_t c = t.vertex_cells[r];
+        if (stamp[c] != epoch) {
+          stamp[c] = epoch;
+          s2_default_check.push_back(c);
+        }
+      }
+    }
+  }
   auto revert = [&](int32_t v) {
     const int32_t row = column_row[v];
     const auto [stack, size] = row >= 0 ? carried(row) : std::pair<const int32_t*, int32_t>{&v, 1};
@@ -2707,7 +3404,9 @@ int32_t Builder::smooth() {
     }
   };
   std::vector<uint8_t> cached_screens;
-  const auto settle = [&]() -> int32_t {
+  const auto settle = [&](const std::vector<int32_t>& geom_faces,
+                          const std::vector<int32_t>& geom_cells,
+                          const std::vector<int32_t>& default_check) -> int32_t {
     check.clear();
     next.clear();
     ++epoch;
@@ -2718,40 +3417,55 @@ int32_t Builder::smooth() {
         revert(surface_vertex[row]);
       }
     }
-    for (int64_t v = 0; v < points; ++v) {
-      if (!moved[v]) continue;
-      for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
-        const int32_t c = t.vertex_cells[r];
-        if (stamp[c] != epoch) {
-          stamp[c] = epoch;
-          next.push_back(c);
+    if (next.empty()) {
+      next = default_check;
+    } else {
+      for (int64_t v = 0; v < points; ++v) {
+        if (!moved[v]) continue;
+        for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
+          const int32_t c = t.vertex_cells[r];
+          if (stamp[c] != epoch) {
+            stamp[c] = epoch;
+            next.push_back(c);
+          }
         }
       }
     }
     // The first pass reads the geometry of the moved positions; a later pass
     // refreshes the cells it checks (those around reverted vertices). Within
     // a pass a cell around a vertex reverted earlier in it is read afresh.
-    const int32_t geometry_status = geometry();
+    const int32_t geometry_status = refresh_geometry(geom_faces, geom_cells);
     if (geometry_status != PHX_MC_OK) return geometry_status;
     for (bool first = true; !next.empty(); first = false) {
       check.swap(next);
       next.clear();
       ++epoch;
       if (!first) {
+        recheck_faces.clear();
+        ++face_epoch;
         for (const int32_t c : check) {
           for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
-            face_update(std::abs(t.cell_faces[slot]) - 1);
+            const int32_t f = std::abs(t.cell_faces[slot]) - 1;
+            if (face_stamp[f] != face_epoch) {
+              face_stamp[f] = face_epoch;
+              recheck_faces.push_back(f);
+            }
           }
         }
-        for (const int32_t c : check) cell_geometry(c);
+        const int32_t rf_status =
+            visit(recheck_faces.size(), 256, [&](std::size_t i) { face_update(recheck_faces[i]); });
+        if (rf_status != PHX_MC_OK) return rf_status;
+        const int32_t rc_status =
+            visit(check.size(), 256, [&](std::size_t i) { cell_geometry(check[i]); });
+        if (rc_status != PHX_MC_OK) return rc_status;
       }
       // Screen the immutable pass geometry before any rollback. If an
       // earlier rollback touches a cell, its epoch forces a fresh read
       // at exactly the same point in the ordered replay as before.
-      const bool parallel_screen = in.parallelism != 1 && check.size() > chunk_size;
+      const bool parallel_screen = in.parallelism != 1 && check.size() > 256;
       if (parallel_screen) {
         cached_screens.resize(check.size());
-        const int32_t screened = visit(check.size(), [&](std::size_t i) {
+        const int32_t screened = visit(check.size(), 256, [&](std::size_t i) {
           cached_screens[i] = cell_valid_cached(check[i]);
         });
         if (screened != PHX_MC_OK) return screened;
@@ -2760,7 +3474,7 @@ int32_t Builder::smooth() {
         const int32_t c = check[i];
         bool acceptable;
         if (stamp[c] == epoch) {
-          acceptable = cell_valid_float(mesh, t, c);
+          acceptable = cell_valid_fresh(c);
         } else if (parallel_screen) {
           acceptable = cached_screens[i] != 0;
         } else {
@@ -2802,23 +3516,25 @@ int32_t Builder::smooth() {
     // The geometry is current: computed above, then by every settle().
     previous = mesh.points;
     std::fill(moved.begin(), moved.end(), 0);
-    for (int64_t v = 0; v < points; ++v) {
-      if (role[v] != 1) continue;
+    status = visit(interior_vertices.size(), 1024, [&](std::size_t idx) {
+      const int32_t v = interior_vertices[idx];
       Vec target{0, 0, 0};
       const int64_t first = t.vertex_cell_offsets[v], last = t.vertex_cell_offsets[v + 1];
       for (int64_t slot = first; slot < last; ++slot) target = add(target, centroid[t.vertex_cells[slot]]);
       target = mul(target, 1.0 / static_cast<double>(last - first));
-      const Vec p = point(v);
+      const Vec p = load(previous.data() + 3 * v);
       set_point(v, add(p, mul(sub(target, p), kRelax)));
       moved[v] = 1;
-    }
-    for (int64_t row = 0; row < columns; ++row) {
+    });
+    if (status != PHX_MC_OK) return status;
+    status = visit(static_cast<std::size_t>(columns), 256, [&](std::size_t r) {
+      const int64_t row = static_cast<int64_t>(r);
       const int32_t v = surface_vertex[row];
-      if (role[v] != 2) continue;
+      if (role[v] != 2) return;
       const Vec p = load(previous.data() + 3 * v);
       Vec target{0, 0, 0};
       if (surface_kind[row] == kFeature) {
-        if (chain_neighbors[row][0] < 0) continue;
+        if (chain_neighbors[row][0] < 0) return;
         for (const int32_t other : chain_neighbors[row]) target = add(target, load(previous.data() + 3 * surface_vertex[other]));
         target = mul(target, 0.5);
       } else if (near_split[row]) {
@@ -2829,8 +3545,8 @@ int32_t Builder::smooth() {
           const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
           for (int64_t q = first; q < last; ++q) {
             if (mesh.face_vertices[q] != v) continue;
-            for (const int64_t r : {q > first ? q - 1 : last - 1, q + 1 < last ? q + 1 : first}) {
-              const Vec u = load(previous.data() + 3 * mesh.face_vertices[r]);
+            for (const int64_t rr : {q > first ? q - 1 : last - 1, q + 1 < last ? q + 1 : first}) {
+              const Vec u = load(previous.data() + 3 * mesh.face_vertices[rr]);
               const Vec e = sub(u, p);
               const double w = dot(e, e);
               target = add(target, mul(u, w));
@@ -2850,12 +3566,14 @@ int32_t Builder::smooth() {
       }
       place_surface(row, add(p, mul(sub(target, p), kRelax)));
       moved[v] = 1;
-    }
+    });
+    if (status != PHX_MC_OK) return status;
     // The layer stack follows the wall: its points move with their columns'
     // offset directions, and a revert restores them with the wall.
-    place_layers();
+    status = place_layers();
+    if (status != PHX_MC_OK) return status;
     for (int64_t v = layer_first; v < points; ++v) moved[v] = 1;
-    status = settle();
+    status = settle(active_faces, active_cells, s1_default_check);
     if (status != PHX_MC_OK) return status;
   }
   // 2. Descent on E = sum over interior faces of (1 - cos) of the angle
@@ -2865,93 +3583,188 @@ int32_t Builder::smooth() {
   // in either incident cell cannot contribute to a used derivative, through
   // its own vertices or through those cells' centroids.
   std::vector<uint8_t> has_free_vertex(cells, 0);
-  for (const int64_t c : active_cells) {
+  std::vector<int32_t> descent_cells;
+  descent_cells.reserve(active_cells.size());
+  for (const int32_t c : active_cells) {
     const auto first = cell_vertex_list.begin() + cell_vertex_offsets[c];
     const auto last = cell_vertex_list.begin() + cell_vertex_offsets[c + 1];
-    has_free_vertex[c] = std::any_of(first, last, [&](int32_t v) { return role[v] == 1; });
+    if (std::any_of(first, last, [&](int32_t v) { return role[v] == 1; })) {
+      has_free_vertex[c] = 1;
+      descent_cells.push_back(c);
+    }
   }
-  std::vector<Vec> gradient(points), cell_gradient(cells);
+  std::vector<int32_t> descent_moving_faces, descent_eval_faces;
+  descent_moving_faces.reserve(active_faces.size());
+  descent_eval_faces.reserve(active_faces.size());
+  std::vector<int32_t> descent_face_slot(faces, -1);
+  for (const int32_t f : active_faces) {
+    const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+    bool has_role1 = false;
+    for (int64_t q = first; q < last && !has_role1; ++q) has_role1 = role[mesh.face_vertices[q]] == 1;
+    if (has_role1) descent_moving_faces.push_back(f);
+    const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
+    if (n >= 0 && (has_free_vertex[o] || has_free_vertex[n])) {
+      descent_face_slot[f] = static_cast<int32_t>(descent_eval_faces.size());
+      descent_eval_faces.push_back(f);
+    }
+  }
+  // CSR mapping each interior vertex to its incident descent_eval_faces in
+  // strictly increasing face order, enabling parallel bit-identical gathers.
+  struct VertexFaceEntry {
+    int32_t df_idx;
+    int32_t before_v;
+    int32_t after_v;
+  };
+  std::vector<int32_t> interior_index(points, -1);
+  for (std::size_t idx = 0; idx < interior_vertices.size(); ++idx) {
+    interior_index[interior_vertices[idx]] = static_cast<int32_t>(idx);
+  }
+  std::vector<int64_t> vdf_offsets(interior_vertices.size() + 1, 0);
+  for (const int32_t f : descent_eval_faces) {
+    for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
+      const int32_t idx = interior_index[mesh.face_vertices[q]];
+      if (idx >= 0) ++vdf_offsets[idx + 1];
+    }
+  }
+  for (std::size_t i = 0; i < interior_vertices.size(); ++i) vdf_offsets[i + 1] += vdf_offsets[i];
+  std::vector<VertexFaceEntry> vdf_entries(vdf_offsets.back());
+  {
+    std::vector<int64_t> fill(vdf_offsets.begin(), vdf_offsets.end() - 1);
+    for (std::size_t df = 0; df < descent_eval_faces.size(); ++df) {
+      const int32_t f = descent_eval_faces[df];
+      const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+      for (int64_t q = first; q < last; ++q) {
+        const int32_t idx = interior_index[mesh.face_vertices[q]];
+        if (idx < 0) continue;
+        const int64_t before = q > first ? q - 1 : last - 1;
+        const int64_t after = q + 1 < last ? q + 1 : first;
+        vdf_entries[fill[idx]++] = {static_cast<int32_t>(df), mesh.face_vertices[before],
+                                    mesh.face_vertices[after]};
+      }
+    }
+  }
+  struct FaceGrad {
+    Vec gd;
+    Vec gs;
+    Vec skew_n;
+    Vec skew_o;
+    Vec face_share;
+    uint8_t valid;
+    uint8_t has_skew;
+  };
+  std::vector<FaceGrad> face_grads(descent_eval_faces.size());
+  std::vector<Vec> cell_share(cells);
   std::vector<double> trust(points, kTrust * b);
+  previous = mesh.points;
   for (int iteration = 0; iteration < kIterations; ++iteration) {
     // The geometry is current (settle()).
-    std::fill(gradient.begin(), gradient.end(), Vec{0, 0, 0});
-    std::fill(cell_gradient.begin(), cell_gradient.end(), Vec{0, 0, 0});
-    for (const int64_t f : active_faces) {
+    // 2A. Per-face gradient contributions in parallel.
+    status = visit(descent_eval_faces.size(), 512, [&](std::size_t df) {
+      FaceGrad& fg = face_grads[df];
+      const int64_t f = descent_eval_faces[df];
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
-      if (n < 0 || (!has_free_vertex[o] && !has_free_vertex[n])) continue;
       const Vec d = sub(centroid[n], centroid[o]);
       const Vec& area = face_area[f];
       const double ld = norm(d), ls = norm(area);
-      if (!(ld > 0.0) || !(ls > 0.0)) continue;
+      if (!(ld > 0.0) || !(ls > 0.0)) {
+        fg.valid = 0;
+        fg.has_skew = 0;
+        return;
+      }
       const Vec dh = mul(d, 1.0 / ld), sh = mul(area, 1.0 / ls);
       const double c = dot(dh, sh);
       const double weight = -1.0;  // dE/dc
-      const Vec gd = mul(sub(sh, mul(dh, c)), weight / ld);
-      const Vec gs = mul(sub(dh, mul(sh, c)), weight / ls);
-      cell_gradient[n] = add(cell_gradient[n], gd);
-      cell_gradient[o] = sub(cell_gradient[o], gd);
-      const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-      for (int64_t q = first; q < last; ++q) {
-        const int32_t v = mesh.face_vertices[q];
-        if (role[v] != 1) continue;
-        const int64_t before = q > first ? q - 1 : last - 1, after = q + 1 < last ? q + 1 : first;
-        const Vec diff = sub(point(mesh.face_vertices[before]), point(mesh.face_vertices[after]));
-        gradient[v] = add(gradient[v], mul(cross(gs, diff), 0.5));
-      }
+      fg.gd = mul(sub(sh, mul(dh, c)), weight / ld);
+      fg.gs = mul(sub(dh, mul(sh, c)), weight / ls);
+      fg.valid = 1;
       // Skewness s = |sv| / fd, sv = Cf - (Co + alpha d) the offset of the
       // face center from where the centroid join meets the face plane
       // (OpenFOAM's measure); E += w (s^2 + mu s^4) with the face normal
       // and fd frozen, the face center moving with its vertex mean.
-      {
-        const Vec cpf = sub(face_center[f], centroid[o]);
-        const double nd = dot(sh, d);
-        if (!(std::fabs(nd) > 0.0)) continue;
-        const double alpha = dot(sh, cpf) / nd;
-        const Vec sv = sub(cpf, mul(d, alpha));
-        const double length = norm(sv);
-        double fd = 0.2 * ld;
-        if (length > 0.0) {
-          const Vec unit = mul(sv, 1.0 / length);
-          for (int64_t q = first; q < last; ++q) {
-            fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), face_center[f]))));
-          }
-        }
-        const double skew = length / fd;
-        const double scale = kSkewWeight * (1.0 + 2.0 * kSkewEmphasis * skew * skew) * 2.0 / (fd * fd);
-        const Vec w = mul(sub(sv, mul(sh, dot(sv, d) / nd)), scale);
-        const Vec face_share = mul(w, 1.0 / static_cast<double>(last - first));
+      const Vec cpf = sub(face_center[f], centroid[o]);
+      const double nd = dot(sh, d);
+      if (!(std::fabs(nd) > 0.0)) {
+        fg.has_skew = 0;
+        return;
+      }
+      const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+      const double alpha = dot(sh, cpf) / nd;
+      const Vec sv = sub(cpf, mul(d, alpha));
+      const double length = norm(sv);
+      double fd = 0.2 * ld;
+      if (length > 0.0) {
+        const Vec unit = mul(sv, 1.0 / length);
         for (int64_t q = first; q < last; ++q) {
-          const int32_t v = mesh.face_vertices[q];
-          if (role[v] == 1) gradient[v] = add(gradient[v], face_share);
+          fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), face_center[f]))));
         }
-        cell_gradient[n] = sub(cell_gradient[n], mul(w, alpha));
-        cell_gradient[o] = sub(cell_gradient[o], mul(w, 1.0 - alpha));
       }
-    }
-    for (const int64_t c : active_cells) {
-      if (!has_free_vertex[c]) continue;
-      const int64_t first = cell_vertex_offsets[c], last = cell_vertex_offsets[c + 1];
-      const Vec share = mul(cell_gradient[c], 1.0 / static_cast<double>(last - first));
-      for (int64_t slot = first; slot < last; ++slot) {
-        const int32_t v = cell_vertex_list[slot];
-        if (role[v] == 1) gradient[v] = add(gradient[v], share);
+      const double skew = length / fd;
+      const double scale = kSkewWeight * (1.0 + 2.0 * kSkewEmphasis * skew * skew) * 2.0 / (fd * fd);
+      const Vec w = mul(sub(sv, mul(sh, dot(sv, d) / nd)), scale);
+      fg.face_share = mul(w, 1.0 / static_cast<double>(last - first));
+      fg.skew_n = mul(w, alpha);
+      fg.skew_o = mul(w, 1.0 - alpha);
+      fg.has_skew = 1;
+    });
+    if (status != PHX_MC_OK) return status;
+    // 2B. Gather cell gradients in exact ascending face order (t.cell_faces).
+    status = visit(descent_cells.size(), 512, [&](std::size_t idx) {
+      const int32_t c = descent_cells[idx];
+      Vec cg{0, 0, 0};
+      for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
+        const int32_t signed_face = t.cell_faces[slot];
+        const int32_t df = descent_face_slot[std::abs(signed_face) - 1];
+        if (df < 0) continue;
+        const FaceGrad& fg = face_grads[df];
+        if (!fg.valid) continue;
+        if (signed_face > 0) {
+          cg = sub(cg, fg.gd);
+          if (fg.has_skew) cg = sub(cg, fg.skew_o);
+        } else {
+          cg = add(cg, fg.gd);
+          if (fg.has_skew) cg = sub(cg, fg.skew_n);
+        }
       }
+      const int64_t count = cell_vertex_offsets[c + 1] - cell_vertex_offsets[c];
+      cell_share[c] = mul(cg, 1.0 / static_cast<double>(count));
+    });
+    if (status != PHX_MC_OK) return status;
+    // 2C. Gather vertex gradients in exact ascending face then cell order and
+    // apply the trust-capped descent step in parallel.
+    if (iteration > 0) {
+      status = visit(interior_vertices.size(), 1024, [&](std::size_t idx) {
+        const int32_t v = interior_vertices[idx];
+        for (int a = 0; a < 3; ++a) previous[3 * v + a] = mesh.points[3 * v + a];
+      });
+      if (status != PHX_MC_OK) return status;
     }
-    previous = mesh.points;
     std::fill(moved.begin(), moved.end(), 0);
-    for (int64_t v = 0; v < points; ++v) {
-      if (role[v] != 1) continue;
-      Vec delta = mul(gradient[v], -kStep * b * b);
+    status = visit(interior_vertices.size(), 512, [&](std::size_t idx) {
+      const int32_t v = interior_vertices[idx];
+      Vec g{0, 0, 0};
+      for (int64_t slot = vdf_offsets[idx]; slot < vdf_offsets[idx + 1]; ++slot) {
+        const VertexFaceEntry& e = vdf_entries[slot];
+        const FaceGrad& fg = face_grads[e.df_idx];
+        if (!fg.valid) continue;
+        const Vec diff = sub(load(previous.data() + 3 * e.before_v),
+                             load(previous.data() + 3 * e.after_v));
+        g = add(g, mul(cross(fg.gs, diff), 0.5));
+        if (fg.has_skew) g = add(g, fg.face_share);
+      }
+      for (int64_t slot = t.vertex_cell_offsets[v]; slot < t.vertex_cell_offsets[v + 1]; ++slot) {
+        const int32_t c = t.vertex_cells[slot];
+        if (has_free_vertex[c]) g = add(g, cell_share[c]);
+      }
+      Vec delta = mul(g, -kStep * b * b);
       const double length = norm(delta);
       if (length > trust[v]) delta = mul(delta, trust[v] / length);
-      set_point(v, add(point(v), delta));
+      set_point(v, add(load(previous.data() + 3 * v), delta));
       moved[v] = 1;
-    }
-    std::vector<uint8_t> attempted(moved);
-    status = settle();
+    });
     if (status != PHX_MC_OK) return status;
-    for (int64_t v = 0; v < points; ++v) {
-      if (!attempted[v]) continue;
+    status = settle(descent_moving_faces, descent_cells, s2_default_check);
+    if (status != PHX_MC_OK) return status;
+    for (const int32_t v : interior_vertices) {
       trust[v] = moved[v] ? std::min(kTrust * b, 1.25 * trust[v]) : 0.5 * trust[v];
     }
   }
@@ -2996,38 +3809,420 @@ int32_t Builder::smooth() {
     return std::max(skewness, angle / kAngleGoal);
   };
   int64_t repaired = 0;
-  // Per vertex (with the layer points it carries), the faces of its cells
-  // with their geometry cached: a trial move recomputes only the faces
-  // through the moving points and the centroids of their cells; validity is
-  // checked only for an improving move.
-  std::vector<int32_t> face_slot(faces, -1);
-  std::vector<int32_t> cell_slot(cells, -1);
-  std::vector<int32_t> local_cells, local_faces;
-  std::vector<int32_t> local_cell_faces;
-  std::vector<std::size_t> local_cell_offsets;
-  std::vector<Vec> local_centroid, local_center, local_area, local_average;
-  // Per local face: moves with the movers; fan unfolded (2: not yet known).
-  std::vector<uint8_t> local_moving, local_unfolded;
-  std::vector<int32_t> movers;
-  std::vector<Vec> starts;
-  std::vector<int32_t> sample_items;
+  std::vector<double> bad_values(active_faces.size());
+  std::vector<uint8_t> bad_skewed(active_faces.size());
+  std::vector<RepairTask> tasks;
+  std::vector<int32_t> task_movers;
+  std::vector<int64_t> task_repaired;
+  // Exact order-preserving wave-scheduler tables (reused across rounds via wave_base).
+  std::vector<int32_t> last_w_pt, last_r_pt, last_w_cell, last_r_cell, last_w_face, last_r_face;
+  std::vector<int32_t> sched_cell_stamp, sched_face_stamp, sched_pt_stamp;
+  int32_t wave_base = 0;
+  int32_t sched_epoch = 0;
+  std::vector<int32_t> sched_w_cells, sched_r_cells, sched_r_faces, sched_w_faces, sched_r_pts;
+  std::vector<int32_t> task_waves;
+  std::vector<std::vector<int32_t>> wave_buckets;
+  if (in.parallelism > 1) {
+    last_w_pt.assign(points, -1);
+    last_r_pt.assign(points, -1);
+    last_w_cell.assign(cells, -1);
+    last_r_cell.assign(cells, -1);
+    last_w_face.assign(faces, -1);
+    last_r_face.assign(faces, -1);
+    sched_cell_stamp.assign(cells, 0);
+    sched_face_stamp.assign(faces, 0);
+    sched_pt_stamp.assign(points, 0);
+  }
+  const auto run_repair_task = [&](const RepairTask& task, RepairScratch& sc) -> int64_t {
+    const int32_t v = task.v;
+    const int32_t f = task.f;
+    const int32_t layer_row = task.layer_row;
+    const int32_t wall_row = task.wall_row;
+    const int32_t level = task.level;
+    const bool layer = task.layer != 0;
+    const bool tilt = task.tilt != 0;
+    const bool slide = task.slide != 0;
+    const int32_t* movers_ptr = task_movers.data() + task.movers_offset;
+    const std::size_t movers_count = static_cast<std::size_t>(task.movers_count);
+    const int32_t neighbor = mesh.face_neighbor[f];
+    // Largest distance from the patch of the sliding vertex's wall
+    // faces, sampled at their edge midpoints and vertex averages (the
+    // fan triangles' far points); each sample's walk starts from its
+    // last foot.
+    sc.sample_items.clear();
+    auto wall_deviation = [&]() {
+      double deviation = 0.0;
+      std::size_t next_s = 0;
+      auto sample = [&](const Vec& x) {
+        if (next_s == sc.sample_items.size()) sc.sample_items.push_back(surface_item[wall_row]);
+        const Hit hit = walk_triangle(s, x, sc.sample_items[next_s]);
+        sc.sample_items[next_s++] = hit.item;
+        deviation = std::max(deviation, hit.d2);
+      };
+      for (const int32_t g : wall_faces[wall_row]) {
+        const int64_t first = mesh.face_offsets[g], last = mesh.face_offsets[g + 1];
+        Vec average{0, 0, 0};
+        for (int64_t q = first; q < last; ++q) average = add(average, point(mesh.face_vertices[q]));
+        average = mul(average, 1.0 / static_cast<double>(last - first));
+        sample(average);
+        for (int64_t q = first; q < last; ++q) {
+          const Vec a = point(mesh.face_vertices[q]), c = point(mesh.face_vertices[q + 1 < last ? q + 1 : first]);
+          sample(mul(add(a, c), 0.5));
+        }
+      }
+      return deviation;
+    };
+    const double deviation_bound = slide ? wall_deviation() : 0.0;
+    sc.cell_map.clear();
+    sc.face_map.clear();
+    sc.local_cells.clear();
+    for (std::size_t m = 0; m < movers_count; ++m) {
+      const int32_t u = movers_ptr[m];
+      for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
+        const int32_t k = t.vertex_cells[r];
+        if (sc.cell_map.find(k) >= 0) continue;
+        sc.cell_map.insert(k, static_cast<int32_t>(sc.local_cells.size()));
+        sc.local_cells.push_back(k);
+      }
+    }
+    sc.local_faces.clear();
+    sc.local_cell_faces.clear();
+    sc.local_cell_offsets.assign(1, 0);
+    for (const int32_t k : sc.local_cells) {
+      for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
+        const int32_t signed_face = t.cell_faces[s2];
+        const int32_t g = std::abs(signed_face) - 1;
+        int32_t fslot = sc.face_map.find(g);
+        if (fslot < 0) {
+          fslot = static_cast<int32_t>(sc.local_faces.size());
+          sc.face_map.insert(g, fslot);
+          sc.local_faces.push_back(g);
+        }
+        const int32_t local = fslot + 1;
+        sc.local_cell_faces.push_back(signed_face > 0 ? local : -local);
+      }
+      sc.local_cell_offsets.push_back(sc.local_cell_faces.size());
+    }
+    const std::size_t nf = sc.local_faces.size(), nc = sc.local_cells.size();
+    sc.local_center.resize(nf);
+    sc.local_area.resize(nf);
+    sc.local_average.resize(nf);
+    sc.local_moving.assign(nf, 0);
+    sc.local_unfolded.assign(nf, 2);
+    sc.local_face_done.resize(nf);
+    sc.local_cell_done.resize(nc);
+    sc.local_centroid.resize(nc);
+    if (sc.moving_unfolded_trial.size() < nf) {
+      sc.moving_unfolded_trial.assign(nf, 0);
+      sc.moving_unfolded_val.assign(nf, 0);
+    }
+    for (std::size_t q = 0; q < nf; ++q) {
+      const int32_t g = sc.local_faces[q];
+      for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !sc.local_moving[q]; ++e) {
+        const int32_t fv = mesh.face_vertices[e];
+        for (std::size_t m = 0; m < movers_count; ++m) {
+          if (movers_ptr[m] == fv) {
+            sc.local_moving[q] = 1;
+            break;
+          }
+        }
+      }
+      if (!sc.local_moving[q]) {
+        sc.local_center[q] = face_center[g];
+        sc.local_area[q] = face_area[g];
+        sc.local_average[q] = face_average[g];
+      }
+    }
+    auto ensure_face = [&](std::size_t q) {
+      if (sc.local_moving[q] && !sc.local_face_done[q]) {
+        face_geometry(mesh, sc.local_faces[q], sc.local_center[q], sc.local_area[q], sc.local_average[q]);
+        sc.local_face_done[q] = 1;
+      }
+    };
+    auto ensure_cell = [&](std::size_t slot_c) {
+      if (sc.local_cell_done[slot_c]) return;
+      const std::size_t first = sc.local_cell_offsets[slot_c], last = sc.local_cell_offsets[slot_c + 1];
+      Vec estimate{0, 0, 0};
+      for (std::size_t s2 = first; s2 < last; ++s2) {
+        const std::size_t fq = static_cast<std::size_t>(std::abs(sc.local_cell_faces[s2]) - 1);
+        ensure_face(fq);
+        estimate = add(estimate, sc.local_center[fq]);
+      }
+      estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
+      double volume = 0.0;
+      Vec moment{0, 0, 0};
+      for (std::size_t s2 = first; s2 < last; ++s2) {
+        const int32_t signed_face = sc.local_cell_faces[s2];
+        const std::size_t fq = static_cast<std::size_t>(std::abs(signed_face) - 1);
+        const double w = (signed_face > 0 ? 1.0 : -1.0) *
+                         dot(sc.local_area[fq], sub(sc.local_center[fq], estimate)) / 3.0;
+        volume += w;
+        moment = add(moment, mul(add(mul(sc.local_center[fq], 0.75), mul(estimate, 0.25)), w));
+      }
+      sc.local_centroid[slot_c] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
+      sc.local_cell_done[slot_c] = 1;
+    };
+    auto ensure_all = [&]() {
+      for (std::size_t q = 0; q < nf; ++q) ensure_face(q);
+      for (std::size_t q = 0; q < nc; ++q) ensure_cell(q);
+    };
+    auto centroid_of = [&](int32_t k) -> const Vec& {
+      const int32_t slot_q = sc.cell_map.find(k);
+      return slot_q >= 0 ? sc.local_centroid[slot_q] : centroid[k];
+    };
+    // The largest badness of the local faces, from the hardest face of
+    // the last full evaluation on; it stops once it reaches bound (a
+    // trial no better than the current position). Local face geometries and
+    // centroids are computed lazily on demand and skipped on early exit.
+    std::size_t hardest = 0;
+    auto evaluate = [&](double bound) {
+      std::fill(sc.local_face_done.begin(), sc.local_face_done.end(), 0);
+      std::fill(sc.local_cell_done.begin(), sc.local_cell_done.end(), 0);
+      const std::size_t start = hardest;
+      double worst = 0.0, worst_cosine = 1.0;
+      for (std::size_t r = 0; r < nf && worst < bound; ++r) {
+        const std::size_t q = r == 0 ? start : r == start ? 0 : r;
+        const int32_t g = sc.local_faces[q];
+        ensure_face(q);
+        const int32_t ow = mesh.face_owner[g];
+        const int32_t ow_slot = sc.cell_map.find(ow);
+        if (ow_slot >= 0) ensure_cell(static_cast<std::size_t>(ow_slot));
+        const Vec& co = ow_slot >= 0 ? sc.local_centroid[ow_slot] : centroid[ow];
+        const int32_t nb = mesh.face_neighbor[g];
+        const Vec* cn = nullptr;
+        if (nb >= 0) {
+          const int32_t nb_slot = sc.cell_map.find(nb);
+          if (nb_slot >= 0) ensure_cell(static_cast<std::size_t>(nb_slot));
+          cn = nb_slot >= 0 ? &sc.local_centroid[nb_slot] : &centroid[nb];
+        }
+        const double value = face_badness(g, sc.local_center[q], sc.local_area[q], co, cn, worst_cosine);
+        if (value > worst) {
+          worst = value;
+          worst_cosine = std::cos(std::min(worst * kAngleGoal, 180.0) * (3.14159265358979323846 / 180.0));
+          hardest = q;
+        }
+      }
+      return worst;
+    };
+    double current = evaluate(std::numeric_limits<double>::infinity());
+    ensure_all();
+    bool geom_valid = true;
+    // A slide never raises the largest skewness among its local faces
+    // (the skewness part of the badness, on the geometry evaluate()
+    // left): it trades only non-orthogonality.
+    auto local_skew = [&]() {
+      double worst = 0.0;
+      for (std::size_t q = 0; q < nf; ++q) {
+        const int32_t g = sc.local_faces[q];
+        const int32_t n = mesh.face_neighbor[g];
+        worst = std::max(worst, face_badness(g, sc.local_center[q], sc.local_area[q],
+                                             centroid_of(mesh.face_owner[g]),
+                                             n >= 0 ? &centroid_of(n) : nullptr, -1.0));
+      }
+      return worst;
+    };
+    double skew_bound = slide || tilt ? local_skew() : 0.0, trial_skew = 0.0;
+    const int32_t stair = v < core_points ? stair_vertex[v] : -1;
+    Vec axis{0, 0, 0}, wall{0, 0, 0};
+    double below = 0.0;  // height of the layer point below v
+    if (layer) {
+      const Vec& m = layer_direction[layer_row];
+      axis = mul(m, 1.0 / norm(m));
+      wall = point(surface_vertex[layer_row]);
+      below = dot(sub(wall, point(column[layer_row * (levels + 1) + level - 1])), m) / dot(m, m);
+    }
+    std::array<Vec, 2> tilt_directions{};
+    if (tilt) {
+      wall = point(surface_vertex[layer_row]);
+      const Vec column_axis = sub(point(v), wall);
+      const double depth = norm(column_axis);
+      const auto q = static_cast<std::size_t>(sc.face_map.find(f));
+      const Vec& co = centroid_of(mesh.face_owner[f]);
+      const Vec join = sub(centroid_of(neighbor), co);
+      const Vec offset = sub(sc.local_center[q], co);
+      const Vec& area = sc.local_area[q];
+      const double normal_join = dot(area, join);
+      if (depth > 0.0 && normal_join != 0.0) {
+        const Vec unit_axis = mul(column_axis, 1.0 / depth);
+        const Vec skew = sub(offset, mul(join, dot(area, offset) / normal_join));
+        const Vec tangent = sub(skew, mul(unit_axis, dot(skew, unit_axis)));
+        if (const double size = norm(tangent); size > 0.0) {
+          tilt_directions[0] = mul(tangent, 1.0 / size);
+          tilt_directions[1] = cross(unit_axis, tilt_directions[0]);
+        }
+      }
+    }
+    int64_t local_repaired = 0;
+    for (const double scale : {0.08, 0.03, 0.01}) {
+      for (bool improved = true; improved && (!tilt || current > 1.0);) {
+        improved = false;
+        const int directions = layer ? 2 : tilt ? 4 : 6;
+        for (int direction = 0; direction < directions && (!tilt || current > 1.0); ++direction) {
+          Vec delta{0, 0, 0};
+          if (layer) {
+            delta = mul(axis, (direction & 1 ? -1.0 : 1.0) * scale * b);
+          } else if (tilt) {
+            delta = mul(tilt_directions[direction / 2], (direction & 1 ? -1.0 : 1.0) * scale * b);
+          } else {
+            delta[direction / 2] = (direction & 1 ? -1.0 : 1.0) * scale * b;
+          }
+          sc.starts.clear();
+          if (tilt) {
+            const Vec column_axis = sub(point(v), wall);
+            const double depth = norm(column_axis);
+            if (!(depth > 0.0)) continue;
+            const Vec longitudinal = mul(column_axis, 1.0 / depth);
+            const Vec lateral = sub(delta, mul(longitudinal, dot(delta, longitudinal)));
+            const double lateral_size = norm(lateral);
+            if (!(lateral_size > 0.0)) continue;
+            const Vec tangent = mul(lateral, 1.0 / lateral_size);
+            const double slope = lateral_size / norm(sub(point(movers_ptr[movers_count - 1]), wall));
+            const double cosine = 1.0 / std::sqrt(1.0 + slope * slope);
+            const double sine = slope * cosine;
+            for (std::size_t m = 0; m < movers_count; ++m) {
+              const int32_t u = movers_ptr[m];
+              sc.starts.push_back(point(u));
+              const Vec from_wall = sub(sc.starts.back(), wall);
+              const double x = dot(from_wall, longitudinal);
+              const double y = dot(from_wall, tangent);
+              // Apply one proper rotation to the entire stack.
+              const Vec change = add(mul(longitudinal, (cosine - 1.0) * x - sine * y),
+                                     mul(tangent, sine * x + (cosine - 1.0) * y));
+              set_point(u, add(sc.starts.back(), change));
+            }
+          } else {
+            for (std::size_t m = 0; m < movers_count; ++m) {
+              const int32_t u = movers_ptr[m];
+              sc.starts.push_back(point(u));
+              set_point(u, add(point(u), delta));
+            }
+          }
+          Hit slid;
+          if (slide) {
+            const Vec w = point(surface_vertex[wall_row]);
+            slid = walk_triangle(s, w, surface_item[wall_row]);
+            const Vec back = sub(slid.point, w);
+            for (std::size_t m = 0; m < movers_count; ++m) {
+              const int32_t u = movers_ptr[m];
+              set_point(u, add(point(u), back));
+            }
+          }
+          const double value = evaluate(current);
+          bool accept = value < current;
+          if (accept && slide) {
+            accept = norm(sub(point(stair_vertices[wall_row]), point(surface_vertex[wall_row]))) >= room(wall_row);
+            if (accept) {
+              trial_skew = local_skew();
+              accept = trial_skew <= skew_bound;
+            }
+          }
+          if (accept && tilt) {
+            trial_skew = local_skew();
+            accept = trial_skew <= skew_bound;
+            // A tilted stack keeps every layer cell above its floor.
+            for (std::size_t q = 0; q < nc && accept; ++q) accept = keeps_layer_floor(sc.local_cells[q]);
+          }
+          // The layer keeps its thickness.
+          if (accept && layer) {
+            const Vec& m = layer_direction[layer_row];
+            accept = dot(sub(wall, point(v)), m) / dot(m, m) - below >= in.layer_thicknesses[level - 1];
+          }
+          // The staircase vertex keeps room for the layer stack.
+          if (accept && stair >= 0) {
+            accept = norm(sub(point(v), point(surface_vertex[stair]))) >= room(stair);
+          }
+          // The validity screen on the geometry evaluate() left: the
+          // trial's faces and centroids.
+          if (accept) {
+            ++sc.trial_epoch;
+            if (sc.trial_epoch == 0) {
+              std::fill(sc.moving_unfolded_trial.begin(), sc.moving_unfolded_trial.end(), 0);
+              sc.trial_epoch = 1;
+            }
+            for (std::size_t q = 0; q < nc && accept; ++q) {
+              if (!valid[sc.local_cells[q]]) continue;
+              accept = cell_screen(mesh, t, sc.local_cells[q], sc.local_centroid[q],
+                                   vertex_average(sc.local_cells[q]),
+                                   [&](int64_t g, bool& unfolded) {
+                const int32_t slot_q = sc.face_map.find(static_cast<int32_t>(g));
+                if (sc.local_moving[slot_q]) {
+                  if (sc.moving_unfolded_trial[slot_q] != sc.trial_epoch) {
+                    sc.moving_unfolded_trial[slot_q] = sc.trial_epoch;
+                    sc.moving_unfolded_val[slot_q] = fan_unfolded(mesh, g);
+                  }
+                  unfolded = sc.moving_unfolded_val[slot_q] != 0;
+                } else {
+                  if (sc.local_unfolded[slot_q] == 2) sc.local_unfolded[slot_q] = fan_unfolded(mesh, g);
+                  unfolded = sc.local_unfolded[slot_q] != 0;
+                }
+                return sc.local_average[slot_q];
+              });
+            }
+          }
+          if (accept && slide) accept = wall_deviation() <= deviation_bound;
+          if (accept) {
+            current = value;
+            improved = true;
+            ++local_repaired;
+            geom_valid = true;
+            if (tilt) skew_bound = trial_skew;
+            if (slide) {
+              surface_item[wall_row] = slid.item;
+              skew_bound = trial_skew;
+            }
+          } else {
+            for (std::size_t q = 0; q < movers_count; ++q) set_point(movers_ptr[q], sc.starts[q]);
+            geom_valid = false;
+          }
+        }
+      }
+    }
+    if (!geom_valid) {
+      std::fill(sc.local_face_done.begin(), sc.local_face_done.end(), 0);
+      std::fill(sc.local_cell_done.begin(), sc.local_cell_done.end(), 0);
+      ensure_all();
+    }
+    for (std::size_t q = 0; q < nc; ++q) {
+      centroid[sc.local_cells[q]] = sc.local_centroid[q];
+    }
+    // Publish only the restored or accepted coordinates' face data.
+    for (std::size_t q = 0; q < nf; ++q) {
+      if (sc.local_moving[q]) {
+        const int32_t g = sc.local_faces[q];
+        face_center[g] = sc.local_center[q];
+        face_area[g] = sc.local_area[q];
+        face_average[g] = sc.local_average[q];
+      }
+    }
+    return local_repaired;
+  };
+  RepairScratch single_scratch;
+  const std::size_t max_wave_chunks = 4 * static_cast<std::size_t>(in.parallelism);
+  std::vector<RepairScratch> wave_scratches(in.parallelism > 1 ? max_wave_chunks : 0);
   for (int round = 0; round < kRepairRounds; ++round) {
-    status = geometry();
+    status = refresh_geometry(active_faces, active_cells);
     if (status != PHX_MC_OK) return status;
     std::vector<std::tuple<double, int32_t, bool>> bad;
     const double goal_cosine = std::cos(kAngleGoal * (3.14159265358979323846 / 180.0));
-    for (const int64_t f : active_faces) {
+    status = visit(active_faces.size(), 512, [&](std::size_t i) {
+      const int64_t f = active_faces[i];
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
       double skewness = 0.0;
-      const double value =
-          face_badness(f, face_center[f], face_area[f], centroid[o],
-                       n >= 0 ? &centroid[n] : nullptr, goal_cosine, &skewness);
-      if (value > 1.0) bad.emplace_back(-value, static_cast<int32_t>(f), skewness > 1.0);
+      bad_values[i] = face_badness(f, face_center[f], face_area[f], centroid[o],
+                                   n >= 0 ? &centroid[n] : nullptr, goal_cosine, &skewness);
+      bad_skewed[i] = skewness > 1.0 ? 1 : 0;
+    });
+    if (status != PHX_MC_OK) return status;
+    for (std::size_t i = 0; i < active_faces.size(); ++i) {
+      if (bad_values[i] > 1.0) bad.emplace_back(-bad_values[i], active_faces[i], bad_skewed[i] != 0);
     }
     if (bad.empty()) break;
     std::sort(bad.begin(), bad.end());
     std::vector<uint8_t> done(points, 0);
+    tasks.clear();
+    task_movers.clear();
     for (const auto& [value, f, skewed] : bad) {
+      (void)value;
       const auto face_begin = mesh.face_vertices.begin() + mesh.face_offsets[f];
       const auto face_end = mesh.face_vertices.begin() + mesh.face_offsets[f + 1];
       const bool feature_wall = in.layer_count == 0 && skewed && mesh.face_neighbor[f] < 0 &&
@@ -3065,313 +4260,189 @@ int32_t Builder::smooth() {
                                std::find(face_begin, face_end, v) != face_end));
           if ((role[v] != 1 && !layer && !slide && !tilt) || done[v]) continue;
           done[v] = 1;
-          movers.assign(1, v);
           int32_t level = 0;
           if (layer) {
             const int32_t* stack = column.data() + layer_row * (levels + 1);
             while (stack[level] != v) ++level;
-            for (int32_t k = level + 1; k < levels; ++k) movers.push_back(stack[k]);
           }
-          if (tilt) {
-            const auto [stack, size] = carried(layer_row);
-            movers.assign(stack + 1, stack + size);
-            for (const int32_t u : movers) done[u] = 1;
-          }
+          const int32_t movers_offset = static_cast<int32_t>(task_movers.size());
           if (slide) {
+            if (tilt) {
+              const auto [tstack, tsize] = carried(layer_row);
+              for (int32_t u = 1; u < tsize; ++u) done[tstack[u]] = 1;
+            }
             const auto [stack, size] = carried(wall_row);
-            movers.assign(stack, stack + size);
+            task_movers.insert(task_movers.end(), stack, stack + size);
             for (int32_t u = 0; u < size; ++u) done[stack[u]] = 1;
+          } else if (tilt) {
+            const auto [stack, size] = carried(layer_row);
+            task_movers.insert(task_movers.end(), stack + 1, stack + size);
+            for (int32_t u = 1; u < size; ++u) done[stack[u]] = 1;
+          } else if (layer) {
+            task_movers.push_back(v);
+            const int32_t* stack = column.data() + layer_row * (levels + 1);
+            for (int32_t k = level + 1; k < levels; ++k) task_movers.push_back(stack[k]);
+          } else {
+            task_movers.push_back(v);
           }
-          // Largest distance from the patch of the sliding vertex's wall
-          // faces, sampled at their edge midpoints and vertex averages (the
-          // fan triangles' far points); each sample's walk starts from its
-          // last foot.
-          sample_items.clear();
-          auto wall_deviation = [&]() {
-            double deviation = 0.0;
-            std::size_t next = 0;
-            auto sample = [&](const Vec& x) {
-              if (next == sample_items.size()) sample_items.push_back(surface_item[wall_row]);
-              const Hit hit = walk_triangle(s, x, sample_items[next]);
-              sample_items[next++] = hit.item;
-              deviation = std::max(deviation, hit.d2);
-            };
-            for (const int32_t g : wall_faces[wall_row]) {
-              const int64_t first = mesh.face_offsets[g], last = mesh.face_offsets[g + 1];
-              Vec average{0, 0, 0};
-              for (int64_t q = first; q < last; ++q) average = add(average, point(mesh.face_vertices[q]));
-              average = mul(average, 1.0 / static_cast<double>(last - first));
-              sample(average);
-              for (int64_t q = first; q < last; ++q) {
-                const Vec a = point(mesh.face_vertices[q]), c = point(mesh.face_vertices[q + 1 < last ? q + 1 : first]);
-                sample(mul(add(a, c), 0.5));
-              }
-            }
-            return deviation;
-          };
-          const double deviation_bound = slide ? wall_deviation() : 0.0;
-          local_cells.clear();
-          for (const int32_t u : movers) {
-            for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
-              const int32_t k = t.vertex_cells[r];
-              if (cell_slot[k] >= 0) continue;
-              cell_slot[k] = static_cast<int32_t>(local_cells.size());
-              local_cells.push_back(k);
-            }
-          }
-          local_faces.clear();
-          local_cell_faces.clear();
-          local_cell_offsets.assign(1, 0);
-          for (const int32_t k : local_cells) {
-            for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
-              const int32_t signed_face = t.cell_faces[s2];
-              const int32_t g = std::abs(signed_face) - 1;
-              if (face_slot[g] < 0) {
-                face_slot[g] = static_cast<int32_t>(local_faces.size());
-                local_faces.push_back(g);
-              }
-              const int32_t local = face_slot[g] + 1;
-              local_cell_faces.push_back(signed_face > 0 ? local : -local);
-            }
-            local_cell_offsets.push_back(local_cell_faces.size());
-          }
-          const std::size_t nf = local_faces.size(), nc = local_cells.size();
-          local_center.resize(nf);
-          local_area.resize(nf);
-          local_average.resize(nf);
-          local_moving.assign(nf, 0);
-          local_unfolded.assign(nf, 2);
-          local_centroid.resize(nc);
-          for (std::size_t q = 0; q < nf; ++q) {
-            const int32_t g = local_faces[q];
-            for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !local_moving[q]; ++e) {
-              local_moving[q] = std::find(movers.begin(), movers.end(), mesh.face_vertices[e]) != movers.end();
-            }
-            if (!local_moving[q]) {
-              local_center[q] = face_center[g];
-              local_area[q] = face_area[g];
-              local_average[q] = face_average[g];
-            }
-          }
-          auto centroid_of = [&](int32_t k) -> const Vec& {
-            const int32_t slot_q = cell_slot[k];
-            return slot_q >= 0 ? local_centroid[slot_q] : centroid[k];
-          };
-          // The largest badness of the local faces, from the hardest face of
-          // the last full evaluation on; it stops once it reaches bound (a
-          // trial no better than the current position).
-          std::size_t hardest = 0;
-          auto evaluate = [&](double bound) {
-            for (std::size_t q = 0; q < nf; ++q) {
-              if (!local_moving[q]) continue;
-              face_geometry(mesh, local_faces[q], local_center[q], local_area[q], local_average[q]);
-            }
-            for (std::size_t q = 0; q < nc; ++q) {
-              const std::size_t first = local_cell_offsets[q], last = local_cell_offsets[q + 1];
-              Vec estimate{0, 0, 0};
-              for (std::size_t s2 = first; s2 < last; ++s2) {
-                estimate = add(estimate, local_center[std::abs(local_cell_faces[s2]) - 1]);
-              }
-              estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
-              double volume = 0.0;
-              Vec moment{0, 0, 0};
-              for (std::size_t s2 = first; s2 < last; ++s2) {
-                const int32_t signed_face = local_cell_faces[s2];
-                const int32_t slot_q = std::abs(signed_face) - 1;
-                const double w = (signed_face > 0 ? 1.0 : -1.0) *
-                                 dot(local_area[slot_q], sub(local_center[slot_q], estimate)) / 3.0;
-                volume += w;
-                moment = add(moment, mul(add(mul(local_center[slot_q], 0.75), mul(estimate, 0.25)), w));
-              }
-              local_centroid[q] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
-            }
-            // The visiting order swaps the first face with the hardest face
-            // of the last full evaluation (fixed for this evaluation).
-            const std::size_t start = hardest;
-            double worst = 0.0, worst_cosine = 1.0;
-            for (std::size_t r = 0; r < nf && worst < bound; ++r) {
-              const std::size_t q = r == 0 ? start : r == start ? 0 : r;
-              const int32_t g = local_faces[q];
-              const int32_t n = mesh.face_neighbor[g];
-              const double value = face_badness(g, local_center[q], local_area[q], centroid_of(mesh.face_owner[g]),
-                                                n >= 0 ? &centroid_of(n) : nullptr, worst_cosine);
-              if (value > worst) {
-                worst = value;
-                worst_cosine = std::cos(std::min(worst * kAngleGoal, 180.0) * (3.14159265358979323846 / 180.0));
-                hardest = q;
-              }
-            }
-            return worst;
-          };
-          double current = evaluate(std::numeric_limits<double>::infinity());
-          // A slide never raises the largest skewness among its local faces
-          // (the skewness part of the badness, on the geometry evaluate()
-          // left): it trades only non-orthogonality.
-          auto local_skew = [&]() {
-            double worst = 0.0;
-            for (std::size_t q = 0; q < nf; ++q) {
-              const int32_t g = local_faces[q];
-              const int32_t n = mesh.face_neighbor[g];
-              worst = std::max(worst, face_badness(g, local_center[q], local_area[q], centroid_of(mesh.face_owner[g]),
-                                                   n >= 0 ? &centroid_of(n) : nullptr, -1.0));
-            }
-            return worst;
-          };
-          double skew_bound = slide || tilt ? local_skew() : 0.0, trial_skew = 0.0;
-          const int32_t stair = v < core_points ? stair_vertex[v] : -1;
-          Vec axis{0, 0, 0}, wall{0, 0, 0};
-          double below = 0.0;  // height of the layer point below v
-          if (layer) {
-            const Vec& m = layer_direction[layer_row];
-            axis = mul(m, 1.0 / norm(m));
-            wall = point(surface_vertex[layer_row]);
-            below = dot(sub(wall, point(column[layer_row * (levels + 1) + level - 1])), m) / dot(m, m);
-          }
-          std::array<Vec, 2> tilt_directions{};
-          if (tilt) {
-            wall = point(surface_vertex[layer_row]);
-            const Vec column_axis = sub(point(v), wall);
-            const double depth = norm(column_axis);
-            const auto q = static_cast<std::size_t>(face_slot[f]);
-            const Vec& co = centroid_of(mesh.face_owner[f]);
-            const Vec join = sub(centroid_of(neighbor), co);
-            const Vec offset = sub(local_center[q], co);
-            const Vec& area = local_area[q];
-            const double normal_join = dot(area, join);
-            if (depth > 0.0 && normal_join != 0.0) {
-              const Vec unit_axis = mul(column_axis, 1.0 / depth);
-              const Vec skew = sub(offset, mul(join, dot(area, offset) / normal_join));
-              const Vec tangent = sub(skew, mul(unit_axis, dot(skew, unit_axis)));
-              if (const double size = norm(tangent); size > 0.0) {
-                tilt_directions[0] = mul(tangent, 1.0 / size);
-                tilt_directions[1] = cross(unit_axis, tilt_directions[0]);
-              }
-            }
-          }
-          for (const double scale : {0.08, 0.03, 0.01}) {
-            for (bool improved = true; improved && (!tilt || current > 1.0);) {
-              improved = false;
-              const int directions = layer ? 2 : tilt ? 4 : 6;
-              for (int direction = 0; direction < directions && (!tilt || current > 1.0); ++direction) {
-                Vec delta{0, 0, 0};
-                if (layer) {
-                  delta = mul(axis, (direction & 1 ? -1.0 : 1.0) * scale * b);
-                } else if (tilt) {
-                  delta = mul(tilt_directions[direction / 2], (direction & 1 ? -1.0 : 1.0) * scale * b);
-                } else {
-                  delta[direction / 2] = (direction & 1 ? -1.0 : 1.0) * scale * b;
-                }
-                starts.clear();
-                if (tilt) {
-                  const Vec column_axis = sub(point(v), wall);
-                  const double depth = norm(column_axis);
-                  if (!(depth > 0.0)) continue;
-                  const Vec longitudinal = mul(column_axis, 1.0 / depth);
-                  const Vec lateral = sub(delta, mul(longitudinal, dot(delta, longitudinal)));
-                  const double lateral_size = norm(lateral);
-                  if (!(lateral_size > 0.0)) continue;
-                  const Vec tangent = mul(lateral, 1.0 / lateral_size);
-                  const double slope = lateral_size / norm(sub(point(movers.back()), wall));
-                  const double cosine = 1.0 / std::sqrt(1.0 + slope * slope);
-                  const double sine = slope * cosine;
-                  for (const int32_t u : movers) {
-                    starts.push_back(point(u));
-                    const Vec from_wall = sub(starts.back(), wall);
-                    const double x = dot(from_wall, longitudinal);
-                    const double y = dot(from_wall, tangent);
-                    // Apply one proper rotation to the entire stack.
-                    const Vec change = add(mul(longitudinal, (cosine - 1.0) * x - sine * y),
-                                           mul(tangent, sine * x + (cosine - 1.0) * y));
-                    set_point(u, add(starts.back(), change));
-                  }
-                } else {
-                  for (const int32_t u : movers) {
-                    starts.push_back(point(u));
-                    set_point(u, add(point(u), delta));
-                  }
-                }
-                Hit slid;
-                if (slide) {
-                  const Vec w = point(surface_vertex[wall_row]);
-                  slid = walk_triangle(s, w, surface_item[wall_row]);
-                  const Vec back = sub(slid.point, w);
-                  for (const int32_t u : movers) set_point(u, add(point(u), back));
-                }
-                const double value = evaluate(current);
-                bool accept = value < current;
-                if (accept && slide) {
-                  accept = norm(sub(point(stair_vertices[wall_row]), point(surface_vertex[wall_row]))) >= room(wall_row);
-                  if (accept) {
-                    trial_skew = local_skew();
-                    accept = trial_skew <= skew_bound;
-                  }
-                }
-                if (accept && tilt) {
-                  trial_skew = local_skew();
-                  accept = trial_skew <= skew_bound;
-                  // A tilted stack keeps every layer cell above its floor.
-                  for (std::size_t q = 0; q < nc && accept; ++q) accept = keeps_layer_floor(local_cells[q]);
-                }
-                // The layer keeps its thickness.
-                if (accept && layer) {
-                  const Vec& m = layer_direction[layer_row];
-                  accept = dot(sub(wall, point(v)), m) / dot(m, m) - below >= in.layer_thicknesses[level - 1];
-                }
-                // The staircase vertex keeps room for the layer stack.
-                if (accept && stair >= 0) {
-                  accept = norm(sub(point(v), point(surface_vertex[stair]))) >= room(stair);
-                }
-                // The validity screen on the geometry evaluate() left: the
-                // trial's faces and centroids.
-                for (std::size_t q = 0; q < nc && accept; ++q) {
-                  if (!valid[local_cells[q]]) continue;
-                  accept = cell_screen(mesh, t, local_cells[q], local_centroid[q], vertex_average(local_cells[q]),
-                                       [&](int64_t g, bool& unfolded) {
-                    const int32_t slot_q = face_slot[g];
-                    if (local_moving[slot_q]) {
-                      unfolded = fan_unfolded(mesh, g);
-                    } else {
-                      if (local_unfolded[slot_q] == 2) local_unfolded[slot_q] = fan_unfolded(mesh, g);
-                      unfolded = local_unfolded[slot_q] != 0;
-                    }
-                    return local_average[slot_q];
-                  });
-                }
-                if (accept && slide) accept = wall_deviation() <= deviation_bound;
-                if (accept) {
-                  current = value;
-                  improved = true;
-                  ++repaired;
-                  if (tilt) skew_bound = trial_skew;
-                  if (slide) {
-                    surface_item[wall_row] = slid.item;
-                    skew_bound = trial_skew;
-                  }
-                } else {
-                  for (std::size_t q = 0; q < movers.size(); ++q) set_point(movers[q], starts[q]);
-                }
-              }
-            }
-          }
-          evaluate(std::numeric_limits<double>::infinity());
-          for (std::size_t q = 0; q < nc; ++q) {
-            const int32_t k = local_cells[q];
-            centroid[k] = local_centroid[q];
-            cell_slot[k] = -1;
-          }
-          // Publish only the restored or accepted coordinates' face data.
-          for (std::size_t q = 0; q < nf; ++q) {
-            const int32_t g = local_faces[q];
-            if (local_moving[q]) {
-              face_center[g] = local_center[q];
-              face_area[g] = local_area[q];
-              face_average[g] = local_average[q];
-            }
-            face_slot[g] = -1;
-          }
+          const int32_t movers_count = static_cast<int32_t>(task_movers.size()) - movers_offset;
+          tasks.push_back({v, f, layer_row, wall_row, level, movers_offset, movers_count,
+                           static_cast<uint8_t>(layer), static_cast<uint8_t>(tilt),
+                           static_cast<uint8_t>(slide)});
         }
       }
     }
+    if (in.parallelism == 1 || tasks.size() <= 1) {
+      for (const RepairTask& task : tasks) repaired += run_repair_task(task, single_scratch);
+      continue;
+    }
+    // Build an exact dependency-preserving wave schedule over tasks: every read
+    // observes the exact write produced by sequential execution order.
+    task_waves.resize(tasks.size());
+    int32_t max_wave = 0;
+    for (std::size_t ti = 0; ti < tasks.size(); ++ti) {
+      const RepairTask& task = tasks[ti];
+      const int32_t* movers_ptr = task_movers.data() + task.movers_offset;
+      const int32_t movers_count = task.movers_count;
+      ++sched_epoch;
+      const int32_t ep = sched_epoch;
+      sched_w_cells.clear();
+      sched_r_cells.clear();
+      sched_r_faces.clear();
+      sched_w_faces.clear();
+      sched_r_pts.clear();
+      auto add_r_pt = [&](int32_t u) {
+        if (sched_pt_stamp[u] != ep) {
+          sched_pt_stamp[u] = ep;
+          sched_r_pts.push_back(u);
+        }
+      };
+      for (int32_t m = 0; m < movers_count; ++m) {
+        const int32_t u = movers_ptr[m];
+        add_r_pt(u);
+        for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
+          const int32_t k = t.vertex_cells[r];
+          if (sched_cell_stamp[k] != ep) {
+            sched_cell_stamp[k] = ep;
+            sched_w_cells.push_back(k);
+            sched_r_cells.push_back(k);
+          }
+        }
+      }
+      for (const int32_t k : sched_w_cells) {
+        for (int64_t slot = cell_vertex_offsets[k]; slot < cell_vertex_offsets[k + 1]; ++slot) {
+          add_r_pt(cell_vertex_list[slot]);
+        }
+        for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
+          const int32_t g = std::abs(t.cell_faces[s2]) - 1;
+          if (sched_face_stamp[g] == ep) continue;
+          sched_face_stamp[g] = ep;
+          sched_r_faces.push_back(g);
+          const int32_t ow = mesh.face_owner[g], nb = mesh.face_neighbor[g];
+          if (sched_cell_stamp[ow] != ep) {
+            sched_cell_stamp[ow] = ep;
+            sched_r_cells.push_back(ow);
+          }
+          if (nb >= 0 && sched_cell_stamp[nb] != ep) {
+            sched_cell_stamp[nb] = ep;
+            sched_r_cells.push_back(nb);
+          }
+          bool moving = false;
+          for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !moving; ++e) {
+            const int32_t fv = mesh.face_vertices[e];
+            for (int32_t m = 0; m < movers_count; ++m) {
+              if (movers_ptr[m] == fv) {
+                moving = true;
+                break;
+              }
+            }
+          }
+          if (moving) sched_w_faces.push_back(g);
+        }
+      }
+      if (task.slide) {
+        add_r_pt(stair_vertices[task.wall_row]);
+        add_r_pt(surface_vertex[task.wall_row]);
+        if (split_of[task.wall_row] >= 0) {
+          const auto& grid = splits[split_of[task.wall_row]].grid;
+          add_r_pt(grid.front());
+          add_r_pt(grid.back());
+        }
+        for (const int32_t g : wall_faces[task.wall_row]) {
+          for (int64_t q = mesh.face_offsets[g]; q < mesh.face_offsets[g + 1]; ++q) {
+            add_r_pt(mesh.face_vertices[q]);
+          }
+        }
+      }
+      if (task.layer) {
+        add_r_pt(surface_vertex[task.layer_row]);
+        add_r_pt(column[task.layer_row * (levels + 1) + task.level - 1]);
+      }
+      if (task.tilt) {
+        add_r_pt(surface_vertex[task.layer_row]);
+      }
+      if (task.v < core_points && stair_vertex[task.v] >= 0) {
+        const int32_t st_row = stair_vertex[task.v];
+        add_r_pt(surface_vertex[st_row]);
+        if (split_of[st_row] >= 0) {
+          const auto& grid = splits[split_of[st_row]].grid;
+          add_r_pt(grid.front());
+          add_r_pt(grid.back());
+        }
+      }
+      int32_t dep = wave_base - 1;
+      for (const int32_t u : sched_r_pts) dep = std::max(dep, last_w_pt[u]);
+      for (const int32_t k : sched_r_cells) dep = std::max(dep, last_w_cell[k]);
+      for (const int32_t g : sched_r_faces) dep = std::max(dep, last_w_face[g]);
+      for (int32_t m = 0; m < movers_count; ++m) {
+        const int32_t u = movers_ptr[m];
+        dep = std::max(dep, std::max(last_r_pt[u], last_w_pt[u]));
+      }
+      for (const int32_t k : sched_w_cells) dep = std::max(dep, std::max(last_r_cell[k], last_w_cell[k]));
+      for (const int32_t g : sched_w_faces) dep = std::max(dep, std::max(last_r_face[g], last_w_face[g]));
+      const int32_t w = dep + 1;
+      for (const int32_t u : sched_r_pts) last_r_pt[u] = std::max(last_r_pt[u], w);
+      for (const int32_t k : sched_r_cells) last_r_cell[k] = std::max(last_r_cell[k], w);
+      for (const int32_t g : sched_r_faces) last_r_face[g] = std::max(last_r_face[g], w);
+      for (int32_t m = 0; m < movers_count; ++m) last_w_pt[movers_ptr[m]] = w;
+      for (const int32_t k : sched_w_cells) last_w_cell[k] = w;
+      for (const int32_t g : sched_w_faces) last_w_face[g] = w;
+      const int32_t rel = w - wave_base;
+      task_waves[ti] = rel;
+      if (rel > max_wave) max_wave = rel;
+    }
+    const int32_t num_waves = max_wave + 1;
+    wave_base += num_waves;
+    wave_buckets.resize(static_cast<std::size_t>(num_waves));
+    for (int32_t w = 0; w < num_waves; ++w) wave_buckets[w].clear();
+    for (std::size_t ti = 0; ti < tasks.size(); ++ti) {
+      wave_buckets[task_waves[ti]].push_back(static_cast<int32_t>(ti));
+    }
+    task_repaired.assign(tasks.size(), 0);
+    const std::size_t min_parallel_wave = std::max<std::size_t>(8, 2 * static_cast<std::size_t>(in.parallelism));
+    for (int32_t w = 0; w < num_waves; ++w) {
+      const auto& bucket = wave_buckets[w];
+      if (bucket.empty()) continue;
+      if (bucket.size() < min_parallel_wave) {
+        for (const int32_t ti : bucket) task_repaired[ti] = run_repair_task(tasks[ti], single_scratch);
+        continue;
+      }
+      const std::size_t chunk = (bucket.size() + max_wave_chunks - 1) / max_wave_chunks;
+      status = parallel_for(
+          bucket.size(), ParallelRequest{chunk, in.parallelism},
+          [&](std::size_t begin, std::size_t end, ChunkContext& ctx) -> int32_t {
+            const GradualNearestScope mode;
+            if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+            RepairScratch& sc = wave_scratches[ctx.chunk_index];
+            for (std::size_t j = begin; j < end; ++j) {
+              const int32_t ti = bucket[j];
+              task_repaired[ti] = run_repair_task(tasks[ti], sc);
+            }
+            return PHX_MC_OK;
+          });
+      if (status != PHX_MC_OK) return status;
+    }
+    for (const int64_t r : task_repaired) repaired += r;
   }
   stats[26] = static_cast<double>(repaired);
   stats[21] = static_cast<double>(reverted);
@@ -3424,7 +4495,8 @@ int32_t build(const Input& in, Mesh& mesh) {
   if (status != PHX_MC_OK) return status;
   stats[3] = seconds(stage);
   stage = Clock::now();
-  builder.partition();
+  status = builder.partition();
+  if (status != PHX_MC_OK) return status;
   builder.build_pieces();
   builder.split_core_faces();
   status = builder.project();
@@ -3432,7 +4504,8 @@ int32_t build(const Input& in, Mesh& mesh) {
   builder.levels = in.layer_count + 1;
   status = builder.emit_layers();
   if (status != PHX_MC_OK) return status;
-  builder.place_layers();
+  status = builder.place_layers();
+  if (status != PHX_MC_OK) return status;
   stats[4] = seconds(stage);
   stage = Clock::now();
   status = builder.smooth();
@@ -3450,22 +4523,39 @@ int32_t build(const Input& in, Mesh& mesh) {
     mesh.vertex_kinds[v] = kLayerVertex;
   }
   double vertex_distance = 0.0;
-  for (std::size_t row = 0; row < builder.stair_vertices.size(); ++row) {
-    const int32_t v = builder.surface_vertex[row];
-    const int32_t item = builder.surface_item[row];
-    const Vec p = builder.point(v);
-    mesh.vertex_kinds[v] = builder.surface_kind[row];
-    Hit hit;
-    if (builder.surface_kind[row] == kPatch) {
-      hit = walk_triangle(surface, p, item);
-    } else if (builder.surface_kind[row] == kFeature) {
-      hit = walk_edge(surface, p, item);
-      hit.item = surface.edge_triangles[hit.item];
+  {
+    const std::size_t n_stair = builder.stair_vertices.size();
+    std::vector<double> row_dist(n_stair, 0.0);
+    auto eval_stair = [&](std::size_t row) {
+      const int32_t v = builder.surface_vertex[row];
+      const int32_t item = builder.surface_item[row];
+      const Vec p = builder.point(v);
+      mesh.vertex_kinds[v] = builder.surface_kind[row];
+      Hit hit;
+      if (builder.surface_kind[row] == kPatch) {
+        hit = walk_triangle(surface, p, item);
+      } else if (builder.surface_kind[row] == kFeature) {
+        hit = walk_edge(surface, p, item);
+        hit.item = surface.edge_triangles[hit.item];
+      } else {
+        hit = nearest_triangle(surface, p, -1);
+      }
+      mesh.vertex_triangles[v] = hit.item;
+      row_dist[row] = norm(sub(hit.point, p));
+    };
+    if (in.parallelism == 1 || n_stair <= 256) {
+      for (std::size_t row = 0; row < n_stair; ++row) eval_stair(row);
     } else {
-      hit = nearest_triangle(surface, p, -1);
+      status = parallel_for(n_stair, ParallelRequest{256, in.parallelism},
+                            [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        for (std::size_t row = begin; row < end; ++row) eval_stair(row);
+        return PHX_MC_OK;
+      });
+      if (status != PHX_MC_OK) return status;
     }
-    mesh.vertex_triangles[v] = hit.item;
-    vertex_distance = std::max(vertex_distance, norm(sub(hit.point, p)));
+    for (const double d : row_dist) vertex_distance = std::max(vertex_distance, d);
   }
   // Slid wall points of split curve columns: on their patch.
   const int32_t layers = builder.levels - 1;
@@ -3507,24 +4597,46 @@ int32_t build(const Input& in, Mesh& mesh) {
   const int64_t faces = static_cast<int64_t>(mesh.face_owner.size());
   mesh.face_facets.assign(faces, -1);
   double sampled = 0.0;
-  for (int64_t f = 0; f < faces; ++f) {
-    if (mesh.face_neighbor[f] >= 0) continue;
-    Vec center, area, average;
-    face_geometry(mesh, f, center, area, average);
-    int32_t seed = -1;
-    for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1] && seed < 0; ++q) {
-      const int32_t v = mesh.face_vertices[q];
-      if (mesh.vertex_kinds[v] == kPatch) seed = mesh.vertex_triangles[v];
+  {
+    std::vector<int32_t> boundary_faces;
+    boundary_faces.reserve(builder.stair_vertices.size() * 2);
+    for (int64_t f = 0; f < faces; ++f) {
+      if (mesh.face_neighbor[f] < 0) boundary_faces.push_back(static_cast<int32_t>(f));
     }
-    Hit hit = seed >= 0 ? walk_triangle(surface, average, seed) : nearest_triangle(surface, average, -1);
-    mesh.face_facets[f] = surface.patch_facet[surface.patch[hit.item]];
-    sampled = std::max(sampled, std::sqrt(hit.d2));
-    for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
-      const int64_t r = q + 1 < mesh.face_offsets[f + 1] ? q + 1 : mesh.face_offsets[f];
-      const Vec mid = mul(add(builder.point(mesh.face_vertices[q]), builder.point(mesh.face_vertices[r])), 0.5);
-      hit = walk_triangle(surface, mid, hit.item);
-      sampled = std::max(sampled, std::sqrt(hit.d2));
+    std::vector<double> face_sampled(boundary_faces.size(), 0.0);
+    auto eval_bface = [&](std::size_t i) {
+      const int64_t f = boundary_faces[i];
+      Vec center, area, average;
+      face_geometry(mesh, f, center, area, average);
+      int32_t seed = -1;
+      for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1] && seed < 0; ++q) {
+        const int32_t v = mesh.face_vertices[q];
+        if (mesh.vertex_kinds[v] == kPatch) seed = mesh.vertex_triangles[v];
+      }
+      Hit hit = seed >= 0 ? walk_triangle(surface, average, seed) : nearest_triangle(surface, average, -1);
+      mesh.face_facets[f] = surface.patch_facet[surface.patch[hit.item]];
+      double local_sampled = std::sqrt(hit.d2);
+      for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
+        const int64_t r = q + 1 < mesh.face_offsets[f + 1] ? q + 1 : mesh.face_offsets[f];
+        const Vec mid = mul(add(builder.point(mesh.face_vertices[q]), builder.point(mesh.face_vertices[r])), 0.5);
+        hit = walk_triangle(surface, mid, hit.item);
+        local_sampled = std::max(local_sampled, std::sqrt(hit.d2));
+      }
+      face_sampled[i] = local_sampled;
+    };
+    if (in.parallelism == 1 || boundary_faces.size() <= 256) {
+      for (std::size_t i = 0; i < boundary_faces.size(); ++i) eval_bface(i);
+    } else {
+      status = parallel_for(boundary_faces.size(), ParallelRequest{256, in.parallelism},
+                            [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        for (std::size_t i = begin; i < end; ++i) eval_bface(i);
+        return PHX_MC_OK;
+      });
+      if (status != PHX_MC_OK) return status;
     }
+    for (const double d : face_sampled) sampled = std::max(sampled, d);
   }
   stats[15] = vertex_distance;
   stats[16] = sampled;

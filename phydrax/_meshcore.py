@@ -1468,6 +1468,37 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_packed_cell_vertex_counts": (
+        _I32,
+        (_I64, _I64, _P, _I64, _P, _I64, _P, _P),
+    ),
+    "phx_mc_packed_polyhedral_mesh_entities": (
+        _I32,
+        (
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+        ),
+    ),
     "phx_mc_incidence_order": (_I32, (_I64, _I64, _I64, _P, _P, _P, _P)),
     "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_verify_chart_partition": (
@@ -4798,6 +4829,139 @@ def polyhedral_mesh_entities(
     )
 
 
+class PackedPolyhedralMeshEntities(NamedTuple):
+    """Oriented entities of arbitrary packed polyhedral cells, first-appearance numbered."""
+
+    loop_faces: np.ndarray
+    loop_signs: np.ndarray
+    face_owner_loops: np.ndarray
+    face_neighbor_loops: np.ndarray
+    face_vertex_offsets: np.ndarray
+    face_vertex_values: np.ndarray
+    cell_vertex_offsets: np.ndarray
+    cell_vertex_values: np.ndarray
+    edges: np.ndarray
+    edge_first_sides: np.ndarray
+    face_edge_values: np.ndarray
+    face_order: np.ndarray
+    edge_order: np.ndarray
+
+
+def packed_cell_vertex_counts(
+    cell_face_counts: object,
+    loop_lengths: object,
+    loop_values: object,
+    vertex_count: int,
+    /,
+) -> np.ndarray | None:
+    """Distinct vertex count per cell for packed polyhedral face loops, or ``None``."""
+    counts = _native_integer_array(
+        cell_face_counts, "cell_face_counts", np.dtype(np.int64)
+    )
+    lengths = _native_integer_array(loop_lengths, "loop_lengths", np.dtype(np.int64))
+    values = _native_integer_array(loop_values, "loop_values", np.dtype(np.int32))
+    if counts.ndim != 1 or lengths.ndim != 1 or values.ndim != 1:
+        raise ValueError("Packed polyhedral loop arrays must be rank one.")
+    output = np.empty((counts.size,), dtype=np.int64)
+    status = load_meshcore()["phx_mc_packed_cell_vertex_counts"](
+        int(vertex_count),
+        counts.size,
+        counts.ctypes.data,
+        lengths.size,
+        lengths.ctypes.data,
+        values.size,
+        values.ctypes.data,
+        output.ctypes.data,
+    )
+    if status == MeshcoreStatus.INVALID_INPUT:
+        return None
+    _raise_for_call(status, "packed_cell_vertex_counts")
+    return output
+
+
+def packed_polyhedral_mesh_entities(
+    cell_face_counts: object,
+    loop_lengths: object,
+    loop_values: object,
+    vertex_count: int,
+    /,
+) -> PackedPolyhedralMeshEntities | None:
+    """Oriented entities of arbitrary packed polyhedral cells, or ``None`` if invalid."""
+    counts = _native_integer_array(
+        cell_face_counts, "cell_face_counts", np.dtype(np.int64)
+    )
+    lengths = _native_integer_array(loop_lengths, "loop_lengths", np.dtype(np.int64))
+    values = _native_integer_array(loop_values, "loop_values", np.dtype(np.int32))
+    if counts.ndim != 1 or lengths.ndim != 1 or values.ndim != 1:
+        raise ValueError("Packed polyhedral loop arrays must be rank one.")
+    cell_count = counts.size
+    loop_count = lengths.size
+    entry_count = values.size
+    if cell_count == 0 or loop_count == 0 or entry_count == 0 or vertex_count <= 0:
+        return None
+    loop_faces = np.empty((loop_count,), dtype=np.int32)
+    loop_signs = np.empty((loop_count,), dtype=np.int32)
+    owners = np.empty((loop_count,), dtype=np.int32)
+    neighbors = np.empty((loop_count,), dtype=np.int32)
+    face_offsets = np.empty((loop_count + 1,), dtype=np.int32)
+    face_values = np.empty((entry_count,), dtype=np.int32)
+    cell_vertex_offsets = np.empty((cell_count + 1,), dtype=np.int32)
+    cell_vertex_values = np.empty((entry_count,), dtype=np.int32)
+    edges = np.empty((entry_count, 2), dtype=np.int32)
+    edge_first_sides = np.empty((entry_count,), dtype=np.int32)
+    face_edges = np.empty((entry_count,), dtype=np.int32)
+    face_order = np.empty((loop_count,), dtype=np.int32)
+    edge_order = np.empty((entry_count,), dtype=np.int32)
+    face_count = ctypes.c_int64()
+    edge_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_packed_polyhedral_mesh_entities"](
+        int(vertex_count),
+        cell_count,
+        counts.ctypes.data,
+        loop_count,
+        lengths.ctypes.data,
+        entry_count,
+        values.ctypes.data,
+        loop_faces.ctypes.data,
+        loop_signs.ctypes.data,
+        ctypes.byref(face_count),
+        owners.ctypes.data,
+        neighbors.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        cell_vertex_offsets.ctypes.data,
+        cell_vertex_values.ctypes.data,
+        ctypes.byref(edge_count),
+        edges.ctypes.data,
+        edge_first_sides.ctypes.data,
+        face_edges.ctypes.data,
+        face_order.ctypes.data,
+        edge_order.ctypes.data,
+    )
+    if status == MeshcoreStatus.INVALID_INPUT:
+        return None
+    _raise_for_call(status, "packed_polyhedral_mesh_entities")
+    faces = face_count.value
+    edge_total = edge_count.value
+    face_entries = int(face_offsets[faces])
+    cell_entries = int(cell_vertex_offsets[cell_count])
+    return PackedPolyhedralMeshEntities(
+        loop_faces,
+        loop_signs,
+        owners[:faces].copy(),
+        neighbors[:faces].copy(),
+        face_offsets[: faces + 1].copy(),
+        face_values[:face_entries].copy(),
+        cell_vertex_offsets,
+        cell_vertex_values[:cell_entries].copy(),
+        edges[:edge_total].copy(),
+        edge_first_sides[:edge_total].copy(),
+        face_edges[:face_entries].copy(),
+        face_order[:faces].copy(),
+        edge_order[:edge_total].copy(),
+    )
+
+
 def incidence_order(
     lower: object, upper: object, signs: object, lower_count: int, upper_count: int, /
 ) -> np.ndarray:
@@ -4921,14 +5085,17 @@ def cell_map_validity(
     significand_array = np.ascontiguousarray(significands, dtype=np.int64)
     exponent_array = np.ascontiguousarray(exponents, dtype=np.int16)
     route_array = np.ascontiguousarray(routes, dtype=np.int64)
+    expected_ambient = 2 if domain == "simplex_2d" else 3
     if (
         significand_array.ndim != 2
-        or significand_array.shape[1] != 3
+        or significand_array.shape[1] != expected_ambient
         or exponent_array.shape != significand_array.shape
         or route_array.ndim != 2
         or route_array.shape[1] != len(basis)
     ):
-        raise ValueError("Cell map validity requires (rows, 3) banks and dof routes.")
+        raise ValueError(
+            f"Cell map validity requires (rows, {expected_ambient}) banks and dof routes."
+        )
     wide_args: tuple[int, int | None, int | None, int, int | None] = (
         0,
         None,
@@ -4972,7 +5139,7 @@ def cell_map_validity(
     upper = np.zeros((count,), dtype=np.float64)
     digests = np.zeros((count, 16), dtype=np.uint8)
     result = load_meshcore()["phx_mc_certify_cell_maps"](
-        {"simplex": 0, "box": 1, "prism": 2}[domain],
+        {"simplex": 0, "box": 1, "prism": 2, "simplex_2d": 3}[domain],
         len(basis),
         starts.ctypes.data,
         term_exponents.ctypes.data,

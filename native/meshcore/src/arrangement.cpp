@@ -970,8 +970,8 @@ class Arranger {
       add_point(ends[0]);
       return;
     }
-    const int a = add_point(ends[0]);
-    const int b = add_point(ends[1]);
+    const std::int64_t a = add_point(ends[0]);
+    const std::int64_t b = add_point(ends[1]);
     if (a == b) {
       return;
     }

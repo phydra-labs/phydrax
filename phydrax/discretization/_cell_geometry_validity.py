@@ -2467,13 +2467,19 @@ def _native_cell_map_proofs(
         np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8),
     )
     family = reference_cell_topology(cell_kind).family
-    domain = {"tetrahedron": "simplex", "hexahedron": "box", "prism": "prism"}.get(family)
+    domain = {
+        "tetrahedron": "simplex",
+        "hexahedron": "box",
+        "prism": "prism",
+        "triangle": "simplex_2d",
+    }.get(family)
+    expected_ambient = 2 if domain == "simplex_2d" else 3
     if (
         not count
         or domain is None
         or basis is None
         or not isinstance(coordinates, ExactCoordinateBank)
-        or coordinates.shape[1] != 3
+        or coordinates.shape[1] != expected_ambient
         or routes.ndim != 2
         or not cell_kind.isascii()
         or not cell_kind.isprintable()
@@ -2494,7 +2500,7 @@ def _native_cell_map_proofs(
         or len(integer_basis) != routes.shape[1]
         or not 0.0 <= floor < 1.0
         or not all(
-            len(exponent) == 3
+            len(exponent) == expected_ambient
             and all(0 <= power <= 7 for power in exponent)
             and -(1 << 63) <= numerator < (1 << 63)
             for function in integer_basis
@@ -2548,7 +2554,14 @@ def _native_cell_map_proofs(
         domain,
         tuple(
             tuple(
-                ((exponent[0], exponent[1], exponent[2]), numerator)
+                (
+                    (
+                        exponent[0],
+                        exponent[1],
+                        exponent[2] if expected_ambient == 3 else 0,
+                    ),
+                    numerator,
+                )
                 for exponent, numerator in function
             )
             for function in integer_basis

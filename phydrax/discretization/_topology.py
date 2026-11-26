@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
@@ -304,7 +305,7 @@ class EntitySubset(StrictModule, NonTrainableState):
         if mask_.ndim != 1:
             raise ValueError("Entity subset masks must be rank-1.")
         self.name = name_
-        self.mask = jnp.asarray(mask_)
+        self.mask = jax.device_put(mask_)
         self.subset_id = resolved_identifier(
             "subset_id",
             subset_id,
@@ -359,8 +360,7 @@ class EntitySet(StrictModule, NonTrainableState):
         active_ids = identifiers[active]
         if np.any(active_ids < 0):
             raise ValueError("Active entity IDs must be non-negative.")
-        ordered_ids = np.sort(active_ids)
-        if np.any(ordered_ids[1:] == ordered_ids[:-1]):
+        if has_repeated_values(active_ids):
             raise ValueError("Active entity IDs must be unique.")
         subsets_ = tuple(subsets)
         if not all(isinstance(subset, EntitySubset) for subset in subsets_):
@@ -379,8 +379,8 @@ class EntitySet(StrictModule, NonTrainableState):
         self.name = name_
         self.intrinsic_dimension = dimension
         self.count = count
-        self.entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
-        self.active_mask = jnp.asarray(active)
+        self.entity_ids = jax.device_put(identifiers)
+        self.active_mask = jax.device_put(active)
         self.subsets = subsets_
         self.entity_set_id = resolved_identifier(
             "entity_set_id",
@@ -441,8 +441,8 @@ class EntitySelection(StrictModule, NonTrainableState):
         if np.any(mask_ & ~active):
             raise ValueError("Entity selections cannot include inactive entities.")
         self.entity_set_id = entity_set_id
-        self.mask = jnp.asarray(mask_)
-        self.active_mask = jnp.asarray(active)
+        self.mask = jax.device_put(mask_)
+        self.active_mask = jax.device_put(active)
         self.selection_id = resolved_identifier(
             "selection_id",
             selection_id,
@@ -621,7 +621,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id
         self.relation = relation
-        self.signs = jnp.asarray(coefficients, dtype=jnp.float64)
+        self.signs = jax.device_put(coefficients.astype(np.float64, copy=False))
         self.incidence_id = resolved_identifier(
             "incidence_id",
             incidence_id,

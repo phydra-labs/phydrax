@@ -9,12 +9,18 @@ from itertools import combinations
 from typing import final, TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._meshcore import incidence_order, meshcore_available, polyhedral_mesh_entities
+from .._meshcore import (
+    incidence_order,
+    meshcore_available,
+    packed_polyhedral_mesh_entities,
+    polyhedral_mesh_entities,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
@@ -529,16 +535,16 @@ def polygonal_connectivity(
     boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     boundary_vertices[edges[boundary_edges].reshape((-1,))] = True
     return PolygonalConnectivity(
-        edges=jnp.asarray(edges),
-        cell_vertices=jnp.asarray(cell_vertices),
-        cell_vertex_valid=jnp.asarray(cell_valid),
-        cell_kinds=jnp.asarray(cell_kinds),
-        cell_edges=jnp.asarray(cell_edges),
-        cell_edge_signs=jnp.asarray(cell_signs),
-        cell_edge_valid=jnp.asarray(cell_valid),
-        edge_cell_counts=jnp.asarray(counts),
-        boundary_edges=jnp.asarray(boundary_edges),
-        boundary_vertices=jnp.asarray(boundary_vertices),
+        edges=jax.device_put(edges),
+        cell_vertices=jax.device_put(cell_vertices),
+        cell_vertex_valid=jax.device_put(cell_valid),
+        cell_kinds=jax.device_put(cell_kinds),
+        cell_edges=jax.device_put(cell_edges),
+        cell_edge_signs=jax.device_put(cell_signs),
+        cell_edge_valid=jax.device_put(cell_valid),
+        edge_cell_counts=jax.device_put(counts),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_vertices=jax.device_put(boundary_vertices),
         vertex_count=vertices,
         triangle_count=triangle_cells.shape[0],
         quadrilateral_count=quadrilateral_cells.shape[0],
@@ -1195,31 +1201,33 @@ def _native_standard_connectivity(
         )
     )
     return PolyhedralConnectivity(
-        edges=jnp.asarray(edges),
-        face_vertex_offsets=jnp.asarray(tables.face_vertex_offsets),
-        face_vertex_values=jnp.asarray(face_values),
-        face_edge_offsets=jnp.asarray(tables.face_vertex_offsets),
-        face_edge_values=jnp.asarray(tables.face_edge_values),
-        face_edge_sign_values=jnp.asarray(np.where(face_values < following, 1.0, -1.0)),
-        cell_face_offsets=jnp.asarray(cell_face_offsets),
-        cell_face_values=jnp.asarray(tables.loop_faces),
-        cell_face_sign_values=jnp.asarray(loop_signs.astype(np.float64)),
-        cell_vertex_offsets=jnp.asarray(_csr_offsets(cell_vertex_counts)),
-        cell_vertex_values=jnp.asarray(
+        edges=jax.device_put(tables.edges),
+        face_vertex_offsets=jax.device_put(tables.face_vertex_offsets),
+        face_vertex_values=jax.device_put(face_values),
+        face_edge_offsets=jax.device_put(tables.face_vertex_offsets),
+        face_edge_values=jax.device_put(tables.face_edge_values),
+        face_edge_sign_values=jax.device_put(
+            np.where(face_values < following, 1.0, -1.0)
+        ),
+        cell_face_offsets=jax.device_put(cell_face_offsets),
+        cell_face_values=jax.device_put(tables.loop_faces),
+        cell_face_sign_values=jax.device_put(loop_signs.astype(np.float64)),
+        cell_vertex_offsets=jax.device_put(_csr_offsets(cell_vertex_counts)),
+        cell_vertex_values=jax.device_put(
             np.concatenate(tuple(rows.reshape((-1,)) for rows in sorted_cells))
         ),
-        face_owner=jnp.asarray(owner),
-        face_neighbor=jnp.asarray(neighbor),
-        face_owner_local=jnp.asarray(owner_local),
-        face_neighbor_local=jnp.asarray(neighbor_local),
-        face_cell_counts=jnp.asarray(counts),
-        boundary_vertices=jnp.asarray(boundary_vertices),
-        boundary_edges=jnp.asarray(boundary_edges),
-        boundary_faces=jnp.asarray(boundary_faces),
-        vertex_global_ids=jnp.asarray(vertex_ids),
-        edge_global_ids=jnp.asarray(edge_ids),
-        face_global_ids=jnp.asarray(face_ids),
-        cell_global_ids=jnp.asarray(cell_ids),
+        face_owner=jax.device_put(owner),
+        face_neighbor=jax.device_put(neighbor),
+        face_owner_local=jax.device_put(owner_local),
+        face_neighbor_local=jax.device_put(neighbor_local),
+        face_cell_counts=jax.device_put(counts),
+        boundary_vertices=jax.device_put(boundary_vertices),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_faces=jax.device_put(boundary_faces),
+        vertex_global_ids=jax.device_put(vertex_ids),
+        edge_global_ids=jax.device_put(edge_ids),
+        face_global_ids=jax.device_put(face_ids),
+        cell_global_ids=jax.device_put(cell_ids),
         vertex_count=vertex_count,
         edge_count=edge_count,
         face_count=face_count,
@@ -1298,6 +1306,115 @@ def polyhedral_connectivity(
     )
 
 
+def _native_packed_connectivity(
+    cell_face_counts: np.ndarray,
+    loop_lengths: np.ndarray,
+    loop_values: np.ndarray,
+    vertex_count: int,
+    vertex_global_ids: ArrayLike | None,
+    edge_global_ids: ArrayLike | None,
+    face_global_ids: ArrayLike | None,
+    cell_global_ids: ArrayLike | None,
+    /,
+) -> PolyhedralConnectivity | None:
+    """Native connectivity of arbitrary packed face loops when valid and monotonic."""
+    if vertex_global_ids is None:
+        vertex_ids = np.arange(vertex_count, dtype=np.int64)
+    else:
+        vertex_ids = np.asarray(vertex_global_ids, dtype=np.int64)
+        if (
+            vertex_ids.shape != (vertex_count,)
+            or (vertex_count > 0 and int(vertex_ids[0]) < 0)
+            or np.any(vertex_ids[1:] <= vertex_ids[:-1])
+        ):
+            return None
+    tables = packed_polyhedral_mesh_entities(
+        cell_face_counts, loop_lengths, loop_values, vertex_count
+    )
+    if tables is None:
+        return None
+    cell_count = cell_face_counts.size
+    cell_ids = _resolved_entity_ids("cell_global_ids", cell_global_ids, cell_count)
+    owners = tables.face_owner_loops.astype(np.int64)
+    neighbors = tables.face_neighbor_loops.astype(np.int64)
+    face_count = owners.size
+    edge_count = tables.edges.shape[0]
+    shared = neighbors >= 0
+    cell_face_offsets = _csr_offsets(cell_face_counts)
+    loop_cells = np.repeat(np.arange(cell_count, dtype=np.int64), cell_face_counts)
+    loop_locals = (
+        np.arange(tables.loop_faces.size, dtype=np.int64) - cell_face_offsets[loop_cells]
+    )
+    owner = loop_cells[owners].astype(np.int32)
+    owner_local = loop_locals[owners].astype(np.int32)
+    neighbor = np.full((face_count,), -1, dtype=np.int32)
+    neighbor[shared] = loop_cells[neighbors[shared]]
+    neighbor_local = np.full((face_count,), -1, dtype=np.int32)
+    neighbor_local[shared] = loop_locals[neighbors[shared]]
+    counts = (1 + shared).astype(np.int32)
+    boundary_faces = ~shared
+    face_offsets = tables.face_vertex_offsets.astype(np.int64)
+    face_sizes = np.diff(face_offsets)
+    face_values = tables.face_vertex_values
+    face_edges = tables.face_edge_values
+    boundary_sides = np.repeat(boundary_faces, face_sizes)
+    boundary_edges = np.zeros((edge_count,), dtype=np.bool_)
+    boundary_edges[face_edges[boundary_sides]] = True
+    boundary_vertices = np.zeros((vertex_count,), dtype=np.bool_)
+    boundary_vertices[face_values[boundary_sides]] = True
+    face_entries = np.repeat(np.arange(face_count, dtype=np.int64), face_sizes)
+    face_positions = (
+        np.arange(face_values.size, dtype=np.int64) - face_offsets[face_entries]
+    )
+    following = face_values[
+        face_offsets[face_entries] + (face_positions + 1) % face_sizes[face_entries]
+    ]
+    face_edge_sign_values = np.where(face_values < following, 1.0, -1.0)
+    if edge_global_ids is None:
+        edge_ids = np.empty((edge_count,), dtype=np.int64)
+        edge_ids[tables.edge_order] = np.arange(edge_count, dtype=np.int64)
+    else:
+        edge_ids = _resolved_entity_ids("edge_global_ids", edge_global_ids, edge_count)
+    if face_global_ids is None:
+        face_ids = np.empty((face_count,), dtype=np.int64)
+        face_ids[tables.face_order] = np.arange(face_count, dtype=np.int64)
+    else:
+        face_ids = _resolved_entity_ids("face_global_ids", face_global_ids, face_count)
+    cell_vertex_counts = np.diff(tables.cell_vertex_offsets)
+    return PolyhedralConnectivity(
+        edges=jax.device_put(tables.edges),
+        face_vertex_offsets=jax.device_put(tables.face_vertex_offsets),
+        face_vertex_values=jax.device_put(face_values),
+        face_edge_offsets=jax.device_put(tables.face_vertex_offsets),
+        face_edge_values=jax.device_put(face_edges),
+        face_edge_sign_values=jax.device_put(face_edge_sign_values),
+        cell_face_offsets=jax.device_put(cell_face_offsets),
+        cell_face_values=jax.device_put(tables.loop_faces),
+        cell_face_sign_values=jax.device_put(tables.loop_signs.astype(np.float64)),
+        cell_vertex_offsets=jax.device_put(tables.cell_vertex_offsets),
+        cell_vertex_values=jax.device_put(tables.cell_vertex_values),
+        face_owner=jax.device_put(owner),
+        face_neighbor=jax.device_put(neighbor),
+        face_owner_local=jax.device_put(owner_local),
+        face_neighbor_local=jax.device_put(neighbor_local),
+        face_cell_counts=jax.device_put(counts),
+        boundary_vertices=jax.device_put(boundary_vertices),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_faces=jax.device_put(boundary_faces),
+        vertex_global_ids=jax.device_put(vertex_ids),
+        edge_global_ids=jax.device_put(edge_ids),
+        face_global_ids=jax.device_put(face_ids),
+        cell_global_ids=jax.device_put(cell_ids),
+        vertex_count=vertex_count,
+        edge_count=edge_count,
+        face_count=face_count,
+        cell_count=cell_count,
+        maximum_face_arity=int(np.max(face_sizes)),
+        maximum_cell_faces=int(np.max(cell_face_counts)),
+        maximum_cell_vertices=int(np.max(cell_vertex_counts)),
+    )
+
+
 def _polyhedral_loop_connectivity(
     cell_face_counts: np.ndarray,
     loop_lengths: np.ndarray,
@@ -1323,6 +1440,19 @@ def _polyhedral_loop_connectivity(
     cell_count = cell_face_counts.size
     if cell_count == 0:
         raise ValueError("At least one polyhedral cell is required.")
+    if meshcore_available():
+        native = _native_packed_connectivity(
+            cell_face_counts,
+            loop_lengths,
+            loop_values,
+            vertices,
+            vertex_global_ids,
+            edge_global_ids,
+            face_global_ids,
+            cell_global_ids,
+        )
+        if native is not None:
+            return native
     vertex_ids = _resolved_entity_ids("vertex_global_ids", vertex_global_ids, vertices)
     cell_ids = _resolved_entity_ids("cell_global_ids", cell_global_ids, cell_count)
 
@@ -1654,16 +1784,16 @@ def tetrahedral_connectivity(
     boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     boundary_vertices[faces[boundary_faces].reshape((-1,))] = True
     return TetrahedralConnectivity(
-        edges=jnp.asarray(edges),
-        faces=jnp.asarray(faces),
-        face_edges=jnp.asarray(face_edges),
-        face_edge_signs=jnp.asarray(face_edge_signs),
-        cell_faces=jnp.asarray(cell_faces),
-        cell_face_signs=jnp.asarray(cell_face_signs),
-        face_cell_counts=jnp.asarray(counts),
-        boundary_vertices=jnp.asarray(boundary_vertices),
-        boundary_edges=jnp.asarray(boundary_edges),
-        boundary_faces=jnp.asarray(boundary_faces),
+        edges=jax.device_put(edges),
+        faces=jax.device_put(faces),
+        face_edges=jax.device_put(face_edges),
+        face_edge_signs=jax.device_put(face_edge_signs),
+        cell_faces=jax.device_put(cell_faces),
+        cell_face_signs=jax.device_put(cell_face_signs),
+        face_cell_counts=jax.device_put(counts),
+        boundary_vertices=jax.device_put(boundary_vertices),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_faces=jax.device_put(boundary_faces),
         vertex_count=vertices,
         cell_count=cells.shape[0],
     )

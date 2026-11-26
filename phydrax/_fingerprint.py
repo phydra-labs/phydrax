@@ -167,9 +167,22 @@ def rational_chart_bank_fingerprint(
 ) -> str:
     """Hash a rational chart table from framed, signed big-endian row digests."""
     digest = hashlib.sha256(b"rational-chart-bank\0")
-    digest.update(len(bank).to_bytes(8, "big"))
+    total = len(bank)
+    digest.update(total.to_bytes(8, "big"))
+    if total == 0:
+        return digest.hexdigest()
+    if bank.count(bank[0]) == total:
+        row_digest = _rational_chart_row_digest(bank[0])
+        full, remainder = divmod(total, _SEQUENCE_CHUNK)
+        if full:
+            block = row_digest * _SEQUENCE_CHUNK
+            for _ in range(full):
+                digest.update(block)
+        if remainder:
+            digest.update(row_digest * remainder)
+        return digest.hexdigest()
     rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
-    for start in range(0, len(bank), _SEQUENCE_CHUNK):
+    for start in range(0, total, _SEQUENCE_CHUNK):
         chunk = bank[start : start + _SEQUENCE_CHUNK]
         # Row digests concatenate exactly as successive updates would; equal
         # rows have equal digests, so a chunk of one row repeats its digest.

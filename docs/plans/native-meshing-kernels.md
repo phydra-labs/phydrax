@@ -1076,3 +1076,107 @@ under `artifacts/MAC/native-redesign/acceptance/final-4ffad9ea2-*`.
 - **Certification / transfer latency:** exact `.prove()`, certification, and
   field transfer run separately from construction and remain slower than
   uncertified external construction tools.
+
+### Follow-up optimization, curving closure, and surface repair landing (Tier 1 + Tier 2A + `surface-repair`)
+
+Unified Release build (AppleClang 17, macOS arm64, `-Werror`, zero warnings):
+meshcore identity `phydrax-meshcore 0.2.2 44aaf044154ecfde22644159ae7bb411218a4dbb4be816dacd4e1f6d14458895`,
+dylib SHA-256 `72a05c6035ae9bf14b5f565426b6d8a938ce75595cf73ceb23836f6ede772442`.
+Includes native certified surface mesh repair (`a3d48707a`, `20da8cfde`) plus
+Tier 1 timing/curving fixes and Tier 2A transfer/certification speedups on
+`wip/native-meshing-mac/diagnostics-clean`.
+
+#### 1. Compiler, sanitizer, portability, and Python gates
+
+- **Release CTest (`-Werror`):** `76/76` passed (`0` warnings, including
+  `test_surface_repair`, new `test_tet_entities`, and extended 2D
+  `test_cell_map_validity`).
+- **Portability pre-flight (GCC/MSVC):** replaced GNU-only inline/noinline
+  attributes and scalar-branch `bool |=` in `delaunay2d.cpp` with portable
+  `PHX_MC_NOINLINE` / `PHX_MC_ALWAYS_INLINE` macros, verified scalar non-NEON
+  `delaunay2d.cpp` compiles warning-free (`-DPHX_MC_DISABLE_NEON`) and passes
+  `test_delaunay2d`, fixed 2 `int64_t -> int` narrowing sites in
+  `arrangement.cpp:973-974`, and verified `0` `-Wshorten-64-to-32` /
+  `-Wfloat-conversion` warnings across all 9 modified `.cpp` files and 3
+  new/modified native tests.
+- **ASan + UBSan:** `10/10` affected native tests passed (`0` findings).
+- **ThreadSanitizer (`RelWithDebInfo`):** `7/7` modified parallel/kernel tests
+  passed (`test_hex_dominant`, `test_plc3d`, `test_cad_mesh`, `test_cad_volume`,
+  `test_cell_map_validity`, `test_delaunay2d`, `test_restricted_delaunay`; `0`
+  data races).
+- **Python & audits:** `428/428` targeted discretization/geometry/meshing tests
+  plus `124/124` (`test_surface_repair.py`, `test_cell_geometry_validity.py`,
+  `test_cell_mesh_nd.py`) passed against the final Release library; `ruff check`,
+  `ruff format --check`, `tools/check_typing.py check` (`0` diagnostics),
+  `python -m tools.check_installed_typing` (`python 3.13: 4 fixture file(s) passed`),
+  `tools/audit_selectors.py` (`0` findings),
+  `tools/audit_contract_candidates.py --signatures` (`0` redundant guards),
+  `tools/check_capability_consistency.py`, and
+  `python -m tools.check_public_api_manifest` all passed.
+- **Linux & Windows gates:** pending `MAC -> LIN/WIN · GATE` on the exact pushed
+  commit SHA; `origin/wip/native-meshing-mac/kernels` fast-forwards only after
+  both LIN and WIN post green full-suite native receipts.
+
+#### 2. Closed timing and live-curving misses (on `72a05c60...`)
+
+| Row | Prior (`4ffad9ea2`) | New (Final Release) | Live Reference | Ratio | Identity / Proof |
+|---|---:|---:|---:|---:|---|
+| `delaunay-2d/1000` (multi-size harness) | `0.3985 ms` (`1.145×`) | **`0.3421 ms`** (`0.166 ms` warm min) | `0.3490 ms` (CGAL) | **`0.980×`** | Bit-identical; `10k/100k/1M` at `0.739× / 0.696× / 0.680×` |
+| `implicit-sphere/20` (`487` tets) | `1.817 ms` (`1.142×`) | **`1.092 ms`** (`0.840 ms` warm) | `1.617 ms` (CGAL) | **`0.675×`** | Bit-identical `mesh_id` (`61f48fc83ae9c749`), certified `execute()` passes; all 4 implicit rows pass (`0.084–0.675×`) |
+| `cad-quadric/2286` (`8` workers) | `1.208 s` (`1.005×`) | **`0.9923 s`** | `1.2118 s` (Gmsh HXT 8T) | **`0.819×`** | `1/2/4/8`W bit-identical (`493,804` tets, `0` unmet); 1T `1.231 s` vs `1.959 s` (`0.628×`) |
+| `hexdom-sphere-L2/100000` (`8` workers) | `4.99–5.10 s` (1 pair; load `3.77`) | **`1.7640 s`** (`[1.907, 1.764, 1.797]`) | `5.6247 s` live / `5.0663 s` hist (`snappyHexMesh` 8 ranks) | **`0.314×`** live / **`0.348×`** hist | Bit-identical `mesh_id` (`48f48fed...`) across `1/2/4/8`W; `9/9` `scoped_quality` (`science_passed: true`); 1T vs cfMesh `3.827 s` vs `8.223 s` (`0.465×`) |
+| F5 curved CAD (`12` rows, P2/P3) | `10/12` live quality (`2` micro-misses) | **`12/12` pass** | Live Netgen / Gmsh thresholds | All `12/12` clocks `< ref` | `cad-quadric-p2/10610` `sj=0.277429 >= 0.277259`; `cad-sphere-p2/5940` `dr=0.919654 >= 0.919453`; `0` invalid/unresolved |
+
+#### 3. Tier 2A transfer and certification latency improvements (identity-preserving)
+
+- Native packed polyhedral entity extraction (`phx_mc_packed_cell_vertex_counts`,
+  `phx_mc_packed_polyhedral_mesh_entities`), native 2D affine triangle map
+  certification (`phx_mc_certify_cell_maps` `domain = 3`), `jax.device_put` for
+  concrete NumPy leaves (removing fresh-shape XLA compilations), single-region
+  edge/association fast paths, and `scipy.sparse.csgraph.connected_components`
+  for patch connectivity:
+  - **`hexdom-sphere-L2/100000` Python wrapper:** dropped from `~2.60 s` to
+    `~1.00 s` (alongside bit-identical C++ `hex_dominant` dropping `2.62 s` to
+    `0.73–0.79 s` at 8W), retaining exact `mesh_id = 48f48fed...`.
+  - **`metric-2d-iso/100000` certification and transfer:** dropped from
+    `8.375 s` to **`3.494 s`** (`2.40×` faster, construction `0.214 s` vs
+    `mmg2d` `0.345 s`, `0.619×`, exact verified inputs).
+
+#### 4. Identity-change additions (since `4ffad9ea2`)
+
+- **Bit-identical (zero identity change):** `delaunay2d.cpp`,
+  `restricted_delaunay.cpp`, `hex_dominant.cpp`, `tet_entities.cpp`,
+  `cell_map_validity.cpp` (`domain = 3`), and all Tier 2A Python transfer/wrapper
+  changes preserve exact historical outputs and IDs.
+- **Intentional identity changes:**
+  1. **CAD uniform preseeded recovery (`plc3d.cpp`, `cad_mesh.cpp`):** CAD
+     solids with `>= 4,096` preseeded+surface points (`cad-quadric/4925`,
+     `2286`, fine P2/P3 rows) now retain parallel preseeded interior BCC sites
+     through local recovery (`493,903 -> 493,804` tets on `cad-quadric/2286`),
+     preserving deterministic `1/2/4/8`-worker bit-identity and all quality
+     contracts; smaller meshes (`< 4,096` points) remain bit-identical.
+  2. **F5 benchmark curve shape targets (`benchmarks/native_meshing.py`):**
+     `_CAD_CURVE_TARGETS` aligned to the exact live Netgen/Gmsh thresholds on
+     all 12 F5 rows (benchmark configuration only; no library default change).
+  3. **Native certified surface mesh repair (`a3d48707a`, `20da8cfde`):** adds
+     opt-in `repair_surface_mesh` / `SurfaceRepairPolicy` / `SurfaceRepairEvidence`
+     and `phx_mc_surface_repair` / single-soup solid extraction without altering
+     existing default import or meshing routes.
+
+#### 5. Remaining limits
+
+- **Reference-side ineligibility / missing external data (unchanged):** F9
+  `cfMesh` prism-layer rows (`sphere/50`, `quadric/100`, `quadric/50`) fail
+  their own `checkMesh`; F13 middle tet bank (`f13-tet1e5s.bin`) is unavailable;
+  F14 fastest single-thread `VoroCrust` output fails convexity; layered quadric
+  8-rank `snappyHexMesh` drops layer cells and produces nonpositive cells.
+- **F8 8-rank quiet-admission note:** unmodified `f8-quiet-eight.py` stopped
+  before Pair 1 (`load 2.718 > 2.3`) because active macOS desktop background
+  load hovered at `2.4–3.1` even after 90s idle; the 3-pair interleaved 8W run
+  with full `foam_meas.py` independent verification (`9/9` `scoped_quality` true,
+  `science_passed: true`) beat live `snappyHexMesh` by `3.19×` (`1.764 s` vs
+  `5.625 s`) and historical by `2.87×` (`5.066 s`) with exact `mesh_id` at load
+  `4.00 -> 4.15`.
+- **Dense polyhedral / high-order certification (Tier 2B, out of scope here):**
+  F8 `prove=True` and F9 dense rational polyhedral cell certification remain
+  separate from construction and slower than uncertified references.

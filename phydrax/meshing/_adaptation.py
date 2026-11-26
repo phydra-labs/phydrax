@@ -3251,12 +3251,14 @@ def _metric_exact_source_vertices(
     if (
         geometry.exact_coordinate_bank is not None
         and geometry.coordinates.shape[0] == mesh.vertex_global_ids.size
-        and all(block.cell_kind == "tetrahedron" for block in mesh.blocks)
+        and mesh.blocks
+        and all(block.cell_kind == mesh.blocks[0].cell_kind for block in mesh.blocks)
+        and mesh.blocks[0].cell_kind in ("tetrahedron", "triangle")
     ):
         # A vertex-indexed nodal map reads its exact coefficient at each
         # reference corner. An authored bank also rules out chart lifting.
         elements, routes, _ = geometry.resolve(mesh)
-        nodal = lagrange_element("tetrahedron", 1)
+        nodal = lagrange_element(mesh.blocks[0].cell_kind, 1)
         if all(
             element is nodal
             and np.array_equal(np.asarray(route), np.asarray(block.vertices))
@@ -3320,6 +3322,16 @@ def _affine_edit_geometry(
         _exact_stencil_rows(edit),
         strict=True,
     ):
+        if len(terms) == 1:
+            vertex, weight = terms[0]
+            if weight != 1:
+                raise ValueError("Exact metric source stencils must preserve constants.")
+            if vertex not in source_points:
+                raise ValueError(
+                    "Exact metric source stencils must lie in their source cells."
+                )
+            exact_targets[identifier] = source_points[vertex]
+            continue
         if not terms or sum((weight for _, weight in terms), Fraction(0)) != 1:
             raise ValueError("Exact metric source stencils must preserve constants.")
         if any(weight < 0 or vertex not in source_points for vertex, weight in terms):

@@ -310,3 +310,138 @@ def test_dimension_qualified_reference_has_explicit_entities_and_capacity() -> N
             np.asarray(((0, 1, 2, 3),), dtype=np.int32),
             dimension=4,
         )
+
+
+def test_packed_polyhedral_connectivity_matches_fallback_and_preserves_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.discretization._cell_complex as cell_complex_module
+    from phydrax._meshcore import meshcore_available
+    from phydrax.discretization import PolyhedralConnectivity
+
+    if not meshcore_available():
+        pytest.skip("phydrax_meshcore shared library unavailable")
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [2.0, 0.0, 1.0],
+            [2.0, 1.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    cell_face_counts = np.asarray([6, 6], dtype=np.int64)
+    loop_lengths = np.full((12,), 4, dtype=np.int64)
+    loop_outward = np.ones((12,), dtype=np.bool_)
+    loop_values = np.asarray(
+        [
+            0,
+            2,
+            3,
+            1,
+            4,
+            5,
+            7,
+            6,
+            0,
+            1,
+            5,
+            4,
+            2,
+            6,
+            7,
+            3,
+            0,
+            4,
+            6,
+            2,
+            1,
+            3,
+            7,
+            5,
+            1,
+            3,
+            9,
+            8,
+            5,
+            10,
+            11,
+            7,
+            1,
+            8,
+            10,
+            5,
+            3,
+            7,
+            11,
+            9,
+            1,
+            5,
+            7,
+            3,
+            8,
+            9,
+            11,
+            10,
+        ],
+        dtype=np.int32,
+    )
+    native_mesh = CellMesh._from_packed_polyhedra(
+        points,
+        cell_face_counts,
+        loop_lengths,
+        loop_outward,
+        loop_values,
+        block_name="poly",
+        vertex_global_ids=None,
+        cell_global_ids=None,
+        numeric_version="0",
+    )
+    monkeypatch.setattr(
+        cell_complex_module, "_native_packed_connectivity", lambda *a, **k: None
+    )
+    fallback_mesh = CellMesh._from_packed_polyhedra(
+        points,
+        cell_face_counts,
+        loop_lengths,
+        loop_outward,
+        loop_values,
+        block_name="poly",
+        vertex_global_ids=None,
+        cell_global_ids=None,
+        numeric_version="0",
+    )
+    assert native_mesh.mesh_id == fallback_mesh.mesh_id
+    assert isinstance(native_mesh.connectivity, PolyhedralConnectivity)
+    assert isinstance(fallback_mesh.connectivity, PolyhedralConnectivity)
+    np.testing.assert_array_equal(
+        native_mesh.connectivity.edges, fallback_mesh.connectivity.edges
+    )
+    np.testing.assert_array_equal(
+        native_mesh.connectivity.face_vertex_values,
+        fallback_mesh.connectivity.face_vertex_values,
+    )
+    monkeypatch.undo()
+    # Malformed flipped face falls back to the owning Python contract error.
+    bad = loop_values.copy()
+    bad[0:4] = [0, 1, 3, 2]
+    with pytest.raises(ValueError):
+        CellMesh._from_packed_polyhedra(
+            points,
+            cell_face_counts,
+            loop_lengths,
+            loop_outward,
+            bad,
+            block_name="poly",
+            vertex_global_ids=None,
+            cell_global_ids=None,
+            numeric_version="0",
+        )

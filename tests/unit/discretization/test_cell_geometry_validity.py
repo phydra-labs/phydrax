@@ -2312,3 +2312,69 @@ def test_polyhedral_star_enclosure_covers_subnormal_determinants() -> None:
     assert int(certificate.status[0]) == Status.CERTIFIED_VALID
     assert Fraction(float(certificate.determinant_lower[0])) <= min(determinants)
     assert max(determinants) <= Fraction(float(certificate.determinant_upper[0]))
+
+
+def test_native_triangle_2d_validity_matches_rational_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not meshcore_available():
+        pytest.skip("phydrax_meshcore shared library unavailable")
+    points = np.asarray(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [0.5, 0.5],
+            [0.25, 0.75],
+        ],
+        dtype=np.float64,
+    )
+    triangles = np.asarray(
+        [
+            [0, 1, 2],
+            [0, 2, 1],
+            [0, 3, 4],
+            [1, 3, 5],
+        ],
+        dtype=np.int64,
+    )
+    element = D.fem.lagrange_element("triangle", 1)
+    geometry = CellGeometrySpec({"cells": element}, {"cells": triangles}, points)
+    policy = D.CellValidityPolicy(relative_determinant_floor=2.0**-35)
+
+    native_cert = D.certify_cell_geometry_validity(geometry, policy=policy)
+
+    def _no_native(
+        _cell_kind: object,
+        _basis: object,
+        _coordinates: object,
+        routes: np.ndarray,
+        _policy: object,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        count = routes.shape[0]
+        return (
+            np.zeros((count,), dtype=np.bool_),
+            np.zeros((count,), dtype=np.int32),
+            np.zeros((count,), dtype=np.float64),
+            np.zeros((count,), dtype=np.float64),
+            np.zeros((count, validity_module._MAP_DIGEST_SIZE), dtype=np.uint8),
+        )
+
+    monkeypatch.setattr(validity_module, "_native_cell_map_proofs", _no_native)
+    fallback_cert = D.certify_cell_geometry_validity(geometry, policy=policy)
+
+    assert native_cert.certificate_id == fallback_cert.certificate_id
+    np.testing.assert_array_equal(
+        np.asarray(native_cert.status, dtype=np.int32),
+        np.asarray(fallback_cert.status, dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(native_cert.determinant_lower, dtype=np.float64).view(np.uint64),
+        np.asarray(fallback_cert.determinant_lower, dtype=np.float64).view(np.uint64),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(native_cert.determinant_upper, dtype=np.float64).view(np.uint64),
+        np.asarray(fallback_cert.determinant_upper, dtype=np.float64).view(np.uint64),
+    )

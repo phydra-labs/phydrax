@@ -9,12 +9,14 @@ from itertools import combinations
 from typing import final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import meshcore_available, packed_cell_vertex_counts
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
@@ -175,9 +177,9 @@ class CellBlock(StrictModule, NonTrainableState):
         ids = _admit_cell_global_ids(cells.shape[0], global_ids)
         self.name = block_name
         self.cell_kind = kind
-        self.vertices = jnp.asarray(cells)
-        self.vertex_valid = jnp.asarray(valid)
-        self.global_ids = jnp.asarray(ids)
+        self.vertices = jax.device_put(cells)
+        self.vertex_valid = jax.device_put(valid)
+        self.global_ids = jax.device_put(ids)
         self.block_id = canonical_fingerprint(
             {
                 "kind": "cell-block",
@@ -250,16 +252,16 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
         )
         if ids.shape != (cells.shape[0],):
             raise ValueError("Polyhedral global_ids must match the cell count.")
-        if np.any(ids < 0) or np.unique(ids).size != ids.size:
+        if np.any(ids < 0) or has_repeated_values(ids):
             raise ValueError(
                 "Polyhedral global_ids must be unique non-negative integers."
             )
         valid = np.ones_like(cells, dtype=np.bool_)
         self.name = block_name
         self.cell_kind = "polyhedron"
-        self.vertices = jnp.asarray(cells)
-        self.vertex_valid = jnp.asarray(valid)
-        self.global_ids = jnp.asarray(ids)
+        self.vertices = jax.device_put(cells)
+        self.vertex_valid = jax.device_put(valid)
+        self.global_ids = jax.device_put(ids)
         self.block_id = canonical_fingerprint(
             {
                 "kind": "polyhedral-block",
@@ -1637,9 +1639,9 @@ class CellMesh(StrictModule, NonTrainableState):
             }
         )
         support = DiscreteSupport(prepared.topology, points.shape[1], geometry_layout_id)
-        self.coordinates = jnp.asarray(points)
+        self.coordinates = jax.device_put(points)
         self.blocks = prepared.blocks
-        self.vertex_global_ids = jnp.asarray(prepared.vertex_global_ids)
+        self.vertex_global_ids = jax.device_put(prepared.vertex_global_ids)
         self.topology = prepared.topology
         self.connectivity = prepared.connectivity
         self.support = support
@@ -2077,12 +2079,20 @@ class CellMesh(StrictModule, NonTrainableState):
         if source_ids.shape != (cell_count,):
             raise ValueError("cell_global_ids must match the polyhedral cell count.")
         sizes = np.maximum(loop_lengths, 0)
-        loop_cells = np.repeat(np.arange(cell_count, dtype=np.int64), cell_face_counts)
-        # Distinct (cell, vertex) keys; malformed vertex rows are refused by
-        # the connectivity below.
-        span = max(points.shape[0], int(np.max(loop_values, initial=0)) + 1)
-        keys = np.unique(np.repeat(loop_cells, sizes) * span + loop_values)
-        vertex_counts = np.bincount(keys // span, minlength=cell_count)
+        vertex_counts: np.ndarray | None = None
+        if meshcore_available():
+            vertex_counts = packed_cell_vertex_counts(
+                cell_face_counts, loop_lengths, loop_values, points.shape[0]
+            )
+        if vertex_counts is None:
+            loop_cells = np.repeat(
+                np.arange(cell_count, dtype=np.int64), cell_face_counts
+            )
+            # Distinct (cell, vertex) keys; malformed vertex rows are refused by
+            # the connectivity below.
+            span = max(points.shape[0], int(np.max(loop_values, initial=0)) + 1)
+            keys = np.unique(np.repeat(loop_cells, sizes) * span + loop_values)
+            vertex_counts = np.bincount(keys // span, minlength=cell_count)
         # Cells in stable order of their distinct vertex counts, their loops
         # and loop entries gathered along.
         order = np.argsort(vertex_counts, kind="stable")

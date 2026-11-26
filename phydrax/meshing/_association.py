@@ -48,7 +48,7 @@ from typing import (
 )
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
@@ -1271,12 +1271,28 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Target geometry association IDs must be unique and non-negative."
             )
         count = targets.size
-        sources = tuple(map(str.strip, map(str, source_entity_ids)))
+        raw_sources = (
+            source_entity_ids
+            if type(source_entity_ids) is tuple
+            else tuple(source_entity_ids)
+        )
         distances = np.asarray(residuals, dtype=np.float64)
-        if len(sources) != count or not all(sources):
+        if len(raw_sources) != count:
             raise ValueError(
                 "Source geometry IDs must match target entities and be non-empty."
             )
+        distinct_sources = _distinct(raw_sources)
+        if distinct_sources is not None and all(
+            type(item) is str and bool(item) and item == item.strip()
+            for item in distinct_sources
+        ):
+            sources = raw_sources
+        else:
+            sources = tuple(map(str.strip, map(str, raw_sources)))
+            if not all(sources):
+                raise ValueError(
+                    "Source geometry IDs must match target entities and be non-empty."
+                )
         resolved_ = _rows_or(resolved, True, (count,), np.bool_)
         ambiguous_ = _rows_or(ambiguous, False, (count,), np.bool_)
         if resolved_.shape != targets.shape or ambiguous_.shape != targets.shape:
@@ -1303,46 +1319,33 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     "Exact geometry associations require zero residuals",
                     target_id=int(targets[rejected[0]]),
                 )
-        roles = (None,) * count if source_roles is None else tuple(source_roles)
-        occurrences = (
-            ((),) * count
-            if source_occurrence_paths is None
-            else tuple(source_occurrence_paths)
-        )
-        region_sides = (
-            ((None, None),) * count
-            if source_region_sides is None
-            else tuple(source_region_sides)
-        )
-        parameter_intervals = (
-            (None,) * count
-            if source_parameter_intervals is None
-            else tuple(source_parameter_intervals)
-        )
-        target_intervals = (
-            (None,) * count
-            if target_parameter_intervals is None
-            else tuple(target_parameter_intervals)
-        )
-        target_pieces = (
-            (None,) * count
-            if target_reference_pieces is None
-            else tuple(target_reference_pieces)
-        )
-        parameter_points = (
-            (None,) * count
-            if source_parameter_points is None
-            else tuple(source_parameter_points)
-        )
-        # Row tables repeat few distinct values: types are checked on every row
-        # (C-level maps), contents once per distinct value.
-        if len(roles) != count or not set(map(type, roles)) <= {
-            type(None),
-            GeometrySourceEntityRole,
-        }:
-            raise ValueError("Source roles must align with target association rows.")
-        if len(occurrences) != count or not _canonical_name_paths(occurrences):
-            raise ValueError("Source occurrence paths must be aligned immutable tuples.")
+        if source_roles is None:
+            roles: tuple[GeometrySourceEntityRole | None, ...] = (None,) * count
+            edge = np.zeros((count,), dtype=np.bool_)
+            facet = np.zeros((count,), dtype=np.bool_)
+            role_present = np.zeros((count,), dtype=np.bool_)
+        else:
+            roles = source_roles if type(source_roles) is tuple else tuple(source_roles)
+            if len(roles) != count or not set(map(type, roles)) <= {
+                type(None),
+                GeometrySourceEntityRole,
+            }:
+                raise ValueError("Source roles must align with target association rows.")
+            edge = _rows_are(roles, GeometrySourceEntityRole.EDGE)
+            facet = _rows_are(roles, GeometrySourceEntityRole.FACET)
+            role_present = _present_rows(roles)
+        if source_occurrence_paths is None:
+            occurrences: tuple[tuple[str, ...], ...] = ((),) * count
+        else:
+            occurrences = (
+                source_occurrence_paths
+                if type(source_occurrence_paths) is tuple
+                else tuple(source_occurrence_paths)
+            )
+            if len(occurrences) != count or not _canonical_name_paths(occurrences):
+                raise ValueError(
+                    "Source occurrence paths must be aligned immutable tuples."
+                )
         dimensions, indices = _source_entities(
             association_kind,
             source,
@@ -1352,38 +1355,87 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             source_indices,
             occurrences,
         )
-        if len(region_sides) != count or not _region_side_pairs(region_sides):
-            raise ValueError(
-                "Source region sides must be aligned (minus, plus) ID pairs."
+        if source_region_sides is None:
+            region_sides: tuple[tuple[str | None, str | None], ...] = (
+                (None, None),
+            ) * count
+            unsided = np.ones((count,), dtype=np.bool_)
+        else:
+            region_sides = (
+                source_region_sides
+                if type(source_region_sides) is tuple
+                else tuple(source_region_sides)
             )
-        if len(parameter_intervals) != count or not _fraction_pairs(
-            parameter_intervals, lambda first, second: first < second
-        ):
-            raise ValueError(
-                "Source parameter intervals must be exact increasing Fraction pairs."
+            if len(region_sides) != count or not _region_side_pairs(region_sides):
+                raise ValueError(
+                    "Source region sides must be aligned (minus, plus) ID pairs."
+                )
+            unsided = _rows_equal(region_sides, (None, None))
+        if source_parameter_intervals is None:
+            parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...] = (
+                None,
+            ) * count
+            interval_rows = np.zeros((count,), dtype=np.bool_)
+            has_param_intervals = False
+        else:
+            parameter_intervals = (
+                source_parameter_intervals
+                if type(source_parameter_intervals) is tuple
+                else tuple(source_parameter_intervals)
             )
-        if len(target_intervals) != count or not _fraction_pairs(
-            target_intervals, lambda first, second: 0 <= first < second <= 1
-        ):
-            raise ValueError(
-                "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
+            if len(parameter_intervals) != count or not _fraction_pairs(
+                parameter_intervals, lambda first, second: first < second
+            ):
+                raise ValueError(
+                    "Source parameter intervals must be exact increasing Fraction pairs."
+                )
+            interval_rows = _present_rows(parameter_intervals)
+            has_param_intervals = bool(np.any(interval_rows))
+        if target_parameter_intervals is None:
+            target_intervals: tuple[tuple[Fraction, Fraction] | None, ...] = (
+                None,
+            ) * count
+            target_interval_rows = np.zeros((count,), dtype=np.bool_)
+            has_target_intervals = False
+        else:
+            target_intervals = (
+                target_parameter_intervals
+                if type(target_parameter_intervals) is tuple
+                else tuple(target_parameter_intervals)
             )
-        whole = (Fraction(0), Fraction(1))
-        if target_intervals.count(whole):
-            target_intervals = tuple(
-                None if interval == whole else interval for interval in target_intervals
+            if len(target_intervals) != count or not _fraction_pairs(
+                target_intervals, lambda first, second: 0 <= first < second <= 1
+            ):
+                raise ValueError(
+                    "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
+                )
+            whole = (Fraction(0), Fraction(1))
+            if target_intervals.count(whole):
+                target_intervals = tuple(
+                    None if interval == whole else interval
+                    for interval in target_intervals
+                )
+            target_interval_rows = _present_rows(target_intervals)
+            has_target_intervals = bool(np.any(target_interval_rows))
+        if target_reference_pieces is None:
+            target_pieces: tuple[SourceBoundaryTargetPieceRow | None, ...] = (
+                None,
+            ) * count
+            pieces = np.zeros((count,), dtype=np.bool_)
+        else:
+            target_pieces = (
+                target_reference_pieces
+                if type(target_reference_pieces) is tuple
+                else tuple(target_reference_pieces)
             )
-        _validate_target_reference_piece_rows(target_pieces, roles, count)
+            _validate_target_reference_piece_rows(target_pieces, roles, count)
+            pieces = _present_rows(target_pieces)
         if source_boundary_witness_id is not None and (
             not isinstance(source_boundary_witness_id, str)
             or not source_boundary_witness_id
             or source_boundary_witness_id != source_boundary_witness_id.strip()
         ):
             raise ValueError("Source boundary witness identity must be nonempty.")
-        edge = _rows_are(roles, GeometrySourceEntityRole.EDGE)
-        facet = _rows_are(roles, GeometrySourceEntityRole.FACET)
-        interval_rows = _present_rows(parameter_intervals)
-        pieces = _present_rows(target_pieces)
         if np.any(pieces):
             if source_boundary_witness_id is None or not np.all(pieces):
                 raise ValueError(
@@ -1397,21 +1449,34 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Witness-bound edge support requires resolved source facets."
             )
-        if len(parameter_points) != count or not all(
-            issubclass(kind, Fraction)
-            for kind in set(map(type, parameter_points)) - {type(None)}
-        ):
-            raise ValueError("Source parameter points must be exact Fraction scalars.")
+        if source_parameter_points is None:
+            parameter_points: tuple[Fraction | None, ...] = (None,) * count
+            point_rows = np.zeros((count,), dtype=np.bool_)
+            has_param_points = False
+        else:
+            parameter_points = (
+                source_parameter_points
+                if type(source_parameter_points) is tuple
+                else tuple(source_parameter_points)
+            )
+            if len(parameter_points) != count or not all(
+                issubclass(kind, Fraction)
+                for kind in set(map(type, parameter_points)) - {type(None)}
+            ):
+                raise ValueError(
+                    "Source parameter points must be exact Fraction scalars."
+                )
+            point_rows = _present_rows(parameter_points)
+            has_param_points = bool(np.any(point_rows))
         _require_exact_parameter_rows(
             association_kind,
             edge,
             facet if source_boundary_witness_id is not None else np.zeros_like(facet),
             resolved_,
             interval_rows,
-            _present_rows(parameter_points),
-            _present_rows(target_intervals),
+            point_rows,
+            target_interval_rows,
         )
-        unsided = _rows_equal(region_sides, (None, None))
         if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
             resolved_ & facet & unsided
         ):
@@ -1419,7 +1484,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Resolved piecewise-linear facets need at least one incident source region."
             )
         if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
-            resolved_ & ~_present_rows(roles)
+            resolved_ & ~role_present
         ):
             raise ValueError("Resolved piecewise-linear associations need source roles.")
         if np.any(~resolved_ & ~unsided):
@@ -1442,18 +1507,18 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.source_id = source
         self.source_revision = revision
         self.target_entity_set_id = entity_set
-        self.target_global_ids = jnp.asarray(targets)
+        self.target_global_ids = jax.device_put(targets)
         # The per-row banks were validated above to hold host metadata only.
         self.source_entity_ids = StaticRows(sources)
-        self.residuals = jnp.asarray(distances)
-        self.resolved = jnp.asarray(resolved_)
-        self.ambiguous = jnp.asarray(ambiguous_)
-        self.source_dimensions = jnp.asarray(dimensions)
-        self.source_indices = jnp.asarray(indices)
-        self.parameters = jnp.asarray(parameters_)
-        self.orientations = jnp.asarray(orientations_)
-        self.parent_dimensions = jnp.asarray(parent_dimensions_)
-        self.parent_ids = jnp.asarray(parent_ids_)
+        self.residuals = jax.device_put(distances)
+        self.resolved = jax.device_put(resolved_)
+        self.ambiguous = jax.device_put(ambiguous_)
+        self.source_dimensions = jax.device_put(dimensions)
+        self.source_indices = jax.device_put(indices)
+        self.parameters = jax.device_put(parameters_)
+        self.orientations = jax.device_put(orientations_)
+        self.parent_dimensions = jax.device_put(parent_dimensions_)
+        self.parent_ids = jax.device_put(parent_ids_)
         self.exact = bool(exact)
         self.provenance = provenance
         self.parent_association_id = parent
@@ -1465,6 +1530,45 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.target_reference_pieces = StaticRows(target_pieces)
         self.source_boundary_witness_id = source_boundary_witness_id
         self.source_parameter_points = StaticRows(parameter_points)
+        empty_fraction_fp = (
+            rational_chart_bank_fingerprint(((),) * count)
+            if not has_param_intervals or not has_param_points
+            else ""
+        )
+        param_intervals_fp = (
+            _fraction_rows_fingerprint(parameter_intervals)
+            if has_param_intervals
+            else empty_fraction_fp
+        )
+        param_points_fp = (
+            _fraction_rows_fingerprint(
+                tuple(
+                    map(
+                        {
+                            point: None if point is None else (point,)
+                            for point in set(parameter_points)
+                        }.__getitem__,
+                        parameter_points,
+                    )
+                )
+            )
+            if has_param_points
+            else empty_fraction_fp
+        )
+        role_tokens = (
+            (None,) * count
+            if source_roles is None
+            else (roles[0].value,) * count
+            if roles.count(roles[0]) == count and roles[0] is not None
+            else tuple(
+                map(
+                    {
+                        role: None if role is None else role.value for role in set(roles)
+                    }.__getitem__,
+                    roles,
+                )
+            )
+        )
         self.association_id = canonical_fingerprint(
             {
                 "kind": "geometry-association",
@@ -1479,27 +1583,17 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "resolved": array_tree_fingerprint(resolved_),
                 "ambiguous": array_tree_fingerprint(ambiguous_),
                 "parameters": array_tree_fingerprint(parameters_),
-                "source_roles": tuple(
-                    map(
-                        {
-                            role: None if role is None else role.value
-                            for role in set(roles)
-                        }.__getitem__,
-                        roles,
-                    )
-                ),
+                "source_roles": role_tokens,
                 "source_occurrence_paths": occurrences,
                 "source_region_sides": region_sides,
-                "source_parameter_intervals": _fraction_rows_fingerprint(
-                    parameter_intervals
-                ),
+                "source_parameter_intervals": param_intervals_fp,
                 **(
                     {
                         "target_parameter_intervals": _fraction_rows_fingerprint(
                             target_intervals
                         )
                     }
-                    if has_present_rows(target_intervals)
+                    if has_target_intervals
                     else {}
                 ),
                 **(
@@ -1535,17 +1629,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     if source_boundary_witness_id is not None
                     else {}
                 ),
-                "source_parameter_points": _fraction_rows_fingerprint(
-                    tuple(
-                        map(
-                            {
-                                point: None if point is None else (point,)
-                                for point in set(parameter_points)
-                            }.__getitem__,
-                            parameter_points,
-                        )
-                    )
-                ),
+                "source_parameter_points": param_points_fp,
                 "orientations": array_tree_fingerprint(orientations_),
                 "parent_dimensions": array_tree_fingerprint(parent_dimensions_),
                 "parent_ids": array_tree_fingerprint(parent_ids_),

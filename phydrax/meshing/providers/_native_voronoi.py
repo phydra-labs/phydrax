@@ -318,6 +318,31 @@ def _association_from(
         (complex_.facet_ids, complex_.facet_occurrence_paths),
     )
     count = ancestry.codes.size
+    region_count = len(complex_.region_ids)
+    region_slots = (*complex_.region_ids, None, None)
+    stride = region_count + 2
+    # Fast uniform path (e.g., all cells belong to one region).
+    if (
+        count > 0
+        and bool(np.all(ancestry.codes == ancestry.codes[0]))
+        and bool(np.all(ancestry.rows == ancestry.rows[0]))
+        and bool(np.all(ancestry.sides == ancestry.sides[0]))
+    ):
+        code = int(ancestry.codes[0])
+        row = int(ancestry.rows[0])
+        names, occurrences = banks[code]
+        s0, s1 = int(ancestry.sides[0, 0]), int(ancestry.sides[0, 1])
+        return _association(
+            source,
+            mesh,
+            dimension,
+            target_ids,
+            (names[row],) * count,
+            (_ROLES[code],) * count,
+            ancestry.residuals,
+            ((region_slots[s0], region_slots[s1]),) * count,
+            (tuple(occurrences[row]),) * count,
+        )
     identifiers = np.empty((count,), dtype=object)
     paths = np.empty((count,), dtype=object)
     for code, (names, occurrences) in enumerate(banks):
@@ -326,10 +351,15 @@ def _association_from(
             identifiers[selected], paths[selected] = _names(
                 names, occurrences, ancestry.rows[selected]
             )
-    region_names = np.empty((len(complex_.region_ids) + 2,), dtype=object)
-    region_names[: len(complex_.region_ids)] = complex_.region_ids
-    region_names[-2:] = None
-    side_names = region_names[ancestry.sides]
+    # Pre-intern the (region, region) pair tuples so every row shares the same
+    # pair objects rather than allocating one fresh 2-tuple per entity.
+    pair_bank = np.empty((stride * stride,), dtype=object)
+    for i, left in enumerate(region_slots):
+        for j, right in enumerate(region_slots):
+            pair_bank[i * stride + j] = (left, right)
+    side_left = np.where(ancestry.sides[:, 0] < 0, region_count, ancestry.sides[:, 0])
+    side_right = np.where(ancestry.sides[:, 1] < 0, region_count, ancestry.sides[:, 1])
+    side_pairs = pair_bank[side_left * stride + side_right]
     roles = np.empty((len(_ROLES),), dtype=object)
     roles[:] = _ROLES
     return _association(
@@ -340,7 +370,7 @@ def _association_from(
         tuple(identifiers.tolist()),
         tuple(roles[ancestry.codes].tolist()),
         ancestry.residuals,
-        tuple(map(tuple, side_names.tolist())),
+        tuple(side_pairs.tolist()),
         tuple(paths.tolist()),
     )
 
@@ -403,27 +433,32 @@ def _edge_ancestry(
     )
     edge_facet = np.full((count,), -1, dtype=np.int64)
     np.maximum.at(edge_facet, face_edges, face_facets[edge_faces])
-    owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
-    neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)[edge_faces]
-    # Distinct (edge, region) pairs as one sortable key each.
-    span = int(np.max(cell_regions, initial=0)) + 1
-    keys = np.unique(
-        np.concatenate(
-            (
-                face_edges * span + cell_regions[owner],
-                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[
-                    neighbor >= 0
-                ],
+    if cell_regions.size > 0 and bool(np.all(cell_regions == cell_regions[0])):
+        sides = np.full((count, 2), -2, dtype=np.int64)
+        sides[:, 0] = int(cell_regions[0])
+        counts = np.ones((count,), dtype=np.int64)
+    else:
+        owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
+        neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)[edge_faces]
+        # Distinct (edge, region) pairs as one sortable key each.
+        span = int(np.max(cell_regions, initial=0)) + 1
+        keys = np.unique(
+            np.concatenate(
+                (
+                    face_edges * span + cell_regions[owner],
+                    (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[
+                        neighbor >= 0
+                    ],
+                )
             )
         )
-    )
-    region_rows = np.stack((keys // span, keys % span), axis=1)
-    starts = np.searchsorted(region_rows[:, 0], np.arange(count, dtype=np.int64))
-    counts = np.bincount(region_rows[:, 0], minlength=count)
-    sides = np.full((count, 2), -2, dtype=np.int64)
-    sides[:, 0] = region_rows[starts, 1]
-    second_side = counts > 1
-    sides[second_side, 1] = region_rows[starts[second_side] + 1, 1]
+        region_rows = np.stack((keys // span, keys % span), axis=1)
+        starts = np.searchsorted(region_rows[:, 0], np.arange(count, dtype=np.int64))
+        counts = np.bincount(region_rows[:, 0], minlength=count)
+        sides = np.full((count, 2), -2, dtype=np.int64)
+        sides[:, 0] = region_rows[starts, 1]
+        second_side = counts > 1
+        sides[second_side, 1] = region_rows[starts[second_side] + 1, 1]
     codes = np.where(edge_facet >= 0, _FACET, _REGION)
     rows = np.where(edge_facet >= 0, edge_facet, sides[:, 0])
     if np.any((codes == _REGION) & (counts != 1)):

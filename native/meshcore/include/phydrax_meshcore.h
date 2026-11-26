@@ -3548,6 +3548,34 @@ PHX_MC_API int32_t phx_mc_polyhedral_mesh_entities(
     int64_t* edge_count, int32_t* edges, int32_t* edge_first_sides, int32_t* face_edge_values,
     int32_t* face_order, int32_t* edge_order);
 
+/* Distinct vertex count per cell for packed polyhedral face loops. Cell c owns
+ * the next cell_face_counts[c] loops in loop_lengths, and loop l owns the next
+ * loop_lengths[l] vertices in loop_values. Returns PHX_MC_INVALID_INPUT if any
+ * loop length is negative or any vertex lies outside [0, vertex_count). */
+PHX_MC_API int32_t phx_mc_packed_cell_vertex_counts(
+    int64_t vertex_count, int64_t cell_count, const int64_t* cell_face_counts,
+    int64_t loop_count, const int64_t* loop_lengths, int64_t entry_count,
+    const int32_t* loop_values, int64_t* vertex_counts);
+
+/* Oriented entities of arbitrary packed polyhedral cells, numbered exactly as
+ * _polyhedral_loop_connectivity numbers them. Cell c owns cell_face_counts[c]
+ * loops; loop l owns loop_lengths[l] vertices in loop_values. Outputs match
+ * phx_mc_polyhedral_mesh_entities plus cell_vertex_offsets (cell_count + 1)
+ * and cell_vertex_values (ascending distinct vertices per cell). Returns
+ * PHX_MC_INVALID_INPUT for any malformed loop, non-simple loop, open shell,
+ * cell with fewer than 4 faces or 4 vertices, repeated face in a cell,
+ * non-manifold or misoriented shared face, or two distinct faces sharing the
+ * same vertex set. */
+PHX_MC_API int32_t phx_mc_packed_polyhedral_mesh_entities(
+    int64_t vertex_count, int64_t cell_count, const int64_t* cell_face_counts,
+    int64_t loop_count, const int64_t* loop_lengths, int64_t entry_count,
+    const int32_t* loop_values, int32_t* loop_faces, int32_t* loop_signs,
+    int64_t* face_count, int32_t* face_owner_loops, int32_t* face_neighbor_loops,
+    int32_t* face_vertex_offsets, int32_t* face_vertex_values,
+    int32_t* cell_vertex_offsets, int32_t* cell_vertex_values,
+    int64_t* edge_count, int32_t* edges, int32_t* edge_first_sides,
+    int32_t* face_edge_values, int32_t* face_order, int32_t* edge_order);
+
 /* The stable order of n incidence routes sorting their (lower, upper, sign)
  * rows: lower[k] in [0, lower_count), upper[k] in [0, upper_count) are
  * dense entity ranks and signs[k] is -1 or +1 (otherwise
@@ -3570,14 +3598,15 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double floor, int8_t* valid, double* lower,
                                               double* upper);
 
-/* Exact validity proof of dof-linear polynomial cell maps in three dimensions
- * (domain 0: affine simplices; 1: affine or multilinear boxes; 2: affine or
- * P1 prisms, triangle-linear times interval-linear), identical to
+/* Exact validity proof of dof-linear polynomial cell maps (domain 0: 3D affine
+ * simplices; 1: 3D affine or multilinear boxes; 2: 3D affine or P1 prisms,
+ * triangle-linear times interval-linear; 3: 2D affine simplices), identical to
  * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
  * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
  * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
- * (significands and exponents are shaped (row_count, 3)). An exponent equal to
- * sparse_exponent makes the corresponding significand a packed reference:
+ * (significands and exponents are shaped (row_count, dim), dim = 2 for
+ * domain 3 else 3). An exponent equal to sparse_exponent makes the corresponding
+ * significand a packed reference:
  * 0 denotes an unknown coordinate, ±(i + 1) denotes wide row i with that
  * sign and exponent wide_exponents[i] (not sparse_exponent). Its magnitude
  * is stored as 1..24 little-endian uint64_t limbs, odd with nonzero high

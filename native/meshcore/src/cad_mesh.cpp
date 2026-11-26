@@ -579,7 +579,8 @@ using PlcHandle = std::unique_ptr<phx_mc_plc3d_result, PlcResultDeleter>;
 
 // S3 fixed-boundary recovery: one facet per surface triangle (its row), the
 // triangle's region sides, curve segments as protected PLC edges.
-int32_t recover_surface(const CadSurfaceMesh& s, PlcHandle& handle) {
+int32_t recover_surface(const CadSurfaceMesh& s, PlcHandle& handle,
+                        double uniform_radius = 0.0, int32_t parallelism = 1) {
   const auto count = static_cast<int64_t>(s.triangles.size());
   std::vector<int64_t> offsets(static_cast<std::size_t>(count) + 1);
   std::vector<int32_t> facets(static_cast<std::size_t>(count));
@@ -600,7 +601,14 @@ int32_t recover_surface(const CadSurfaceMesh& s, PlcHandle& handle) {
   request.segments = reinterpret_cast<const int32_t*>(s.curve_edges.data());
   request.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
   request.result = &result;
-  const int32_t status = phx_mc_plc3d_recover(&request);
+  int32_t status = PHX_MC_OK;
+  if (uniform_radius > 0.0) {
+    double preseeded_radius = 0.0;
+    status = phx_mc_plc3d_recover_uniform_sized(&request, uniform_radius, parallelism,
+                                                &preseeded_radius);
+  } else {
+    status = phx_mc_plc3d_recover(&request);
+  }
   handle.reset(result);
   return status;
 }
@@ -856,10 +864,28 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   result = CadVolumeMesh{};
   auto& stats = result.stats;
   const auto& model = geometry.model();
-  if (!sizes || controls.geometry_order < 1 || controls.geometry_order > 3) {
+  if (!sizes || controls.geometry_order < 1 || controls.geometry_order > 3 ||
+      controls.parallelism == 0) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   const auto volume_start = std::chrono::steady_clock::now();
+  double smallest = std::numeric_limits<double>::infinity();
+  bool uniform_sizes = controls.proximity == nullptr && model.surface_count > 0;
+  for (int64_t f = 0; f < model.surface_count; ++f) {
+    const double h = sizes[f];
+    smallest = std::min(smallest, h);
+    uniform_sizes = uniform_sizes && std::isfinite(h) && h > 0.0 && h == sizes[0];
+  }
+  const bool affine_reserve = controls.sampled_minimum_scaled_jacobian > 0.0 ||
+                              controls.sampled_minimum_determinant_ratio > 0.0;
+  // Leave headroom below the requested cap before improving the affine
+  // cells. Source charts and the fixed wall are not part of this fill.
+  constexpr double reserve = 0.90;
+  const double uniform_radius =
+      uniform_sizes ? (affine_reserve ? smallest * reserve : smallest) : 0.0;
+  const int32_t recovery_parallelism = static_cast<int32_t>(
+      std::min<std::uint64_t>(controls.parallelism,
+                              static_cast<std::uint64_t>(std::numeric_limits<int32_t>::max())));
   PlcHandle recovery;
   for (int attempt = 0;; ++attempt) {
     phx_mc_cad_boundary_split split{};
@@ -871,7 +897,8 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
       b = forced->b;
     } else {
       ++stats.recovery_attempts;
-      const int32_t status = recover_surface(surface, recovery);
+      const int32_t status =
+          recover_surface(surface, recovery, uniform_radius, recovery_parallelism);
       stats.recovery_status = status;
       if (status == PHX_MC_OK) break;
       if (!recovery) return status;
@@ -933,19 +960,22 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   const auto surface_points = surface.points.size();
   const auto& recovered = recovery->recovery;
   const std::size_t point_count = recovered.points.size() / 3;
-  double smallest = std::numeric_limits<double>::infinity();
-  for (int64_t f = 0; f < model.surface_count; ++f) smallest = std::min(smallest, sizes[f]);
-  std::vector<double> targets(point_count, std::numeric_limits<double>::infinity());
-  for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
-    const int32_t face = surface.triangle_patches[t];
-    for (int32_t v : surface.triangles[t]) {
-      targets[v] = std::min(targets[v], sizes[face]);
-      // A proximity control's size at the point bounds it too.
-      if (controls.proximity)
-        targets[v] = std::min(targets[v], controls.proximity->size(face, surface.points[v].data()));
+  std::vector<double> targets;
+  if (uniform_sizes) {
+    targets.assign(point_count, smallest);
+  } else {
+    targets.assign(point_count, std::numeric_limits<double>::infinity());
+    for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
+      const int32_t face = surface.triangle_patches[t];
+      for (int32_t v : surface.triangles[t]) {
+        targets[v] = std::min(targets[v], sizes[face]);
+        // A proximity control's size at the point bounds it too.
+        if (controls.proximity)
+          targets[v] = std::min(targets[v], controls.proximity->size(face, surface.points[v].data()));
+      }
     }
+    for (double& target : targets) target = std::isfinite(target) ? target : smallest;
   }
-  for (double& target : targets) target = std::isfinite(target) ? target : smallest;
   phx_mc_tet_mesh_create_request create{};
   create.point_count = static_cast<int64_t>(point_count);
   create.tetrahedron_count = static_cast<int64_t>(recovered.tets.size() / 4);
@@ -961,11 +991,6 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   recovery.reset();
   if (created != PHX_MC_OK) return created;
   TetMesh& state = tet_mesh_state(*handle);
-  const bool affine_reserve = controls.sampled_minimum_scaled_jacobian > 0.0 ||
-                              controls.sampled_minimum_determinant_ratio > 0.0;
-  // Leave headroom below the requested cap before improving the affine
-  // cells. Source charts and the fixed wall are not part of this fill.
-  constexpr double reserve = 0.90;
   if (affine_reserve) {
     for (double& target : targets) target *= reserve;
   }
@@ -1043,6 +1068,7 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   }
   // Live vertex slots in order; the surface keeps its rows.
   std::vector<int32_t> rows(state.vertex_slot_count(), -1);
+  result.points.reserve(state.vertex_slot_count());
   for (std::size_t slot = 0; slot < rows.size(); ++slot) {
     const double* p = state.point(static_cast<int32_t>(slot));
     if (!p) continue;
@@ -1054,50 +1080,51 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     if (rows[v] != static_cast<int32_t>(v) || result.points[v] != surface.points[v])
       return PHX_MC_INTERNAL_ERROR;
   const auto& complex = state.complex();
+  const auto finite_count =
+      static_cast<std::size_t>(std::max<int64_t>(complex.finite_count, 0));
+  result.tetrahedra.reserve(finite_count);
+  result.regions.reserve(finite_count);
+  // Each fixed surface triangle carries its own row index as its facet
+  // constraint; a triangle between two cells takes the cell of region
+  // facet_regions[t][0] when that is a region, else the lower cell index.
+  result.boundary_faces.assign(surface.triangles.size(), {-1, -1});
   for (std::size_t slot = 0; slot < complex.tets.size(); ++slot) {
     const Tetrahedron& tet = complex.tets[slot];
     if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+    const auto cell = static_cast<int32_t>(result.tetrahedra.size());
+    const int32_t region = complex.region(static_cast<int32_t>(slot));
     result.tetrahedra.push_back({rows[tet.v[0]], rows[tet.v[1]], rows[tet.v[2]], rows[tet.v[3]]});
-    result.regions.push_back(complex.region(static_cast<int32_t>(slot)));
-  }
-  handle.reset();
-  // The boundary face of each surface triangle: faces whose corners are all
-  // surface points, matched by sorted corners; a triangle between two cells
-  // takes the cell of region facet_regions[t][0] when that is a region.
-  using Key = std::array<int32_t, 3>;
-  struct Face {
-    Key key;
-    int32_t cell, local;
-  };
-  const auto sorted = [](Key k) {
-    std::sort(k.begin(), k.end());
-    return k;
-  };
-  std::vector<Face> faces;
-  const auto limit = static_cast<int32_t>(surface_points);
-  for (std::size_t c = 0; c < result.tetrahedra.size(); ++c) {
-    const auto& v = result.tetrahedra[c];
+    result.regions.push_back(region);
+    if (tet.constrained == 0) continue;
     for (int local = 0; local < 4; ++local) {
-      const Key key{v[(local + 1) % 4], v[(local + 2) % 4], v[(local + 3) % 4]};
-      if (key[0] < limit && key[1] < limit && key[2] < limit)
-        faces.push_back({sorted(key), static_cast<int32_t>(c), local});
+      const int32_t t = complex.constraint(static_cast<int32_t>(slot), local);
+      if (t == kNoConstraint) continue;
+      if (t < 0 || static_cast<std::size_t>(t) >= result.boundary_faces.size()) {
+        return PHX_MC_INTERNAL_ERROR;
+      }
+      auto& entry = result.boundary_faces[static_cast<std::size_t>(t)];
+      if (entry[0] < 0 ||
+          (region == surface.facet_regions[static_cast<std::size_t>(t)][0] &&
+           result.regions[static_cast<std::size_t>(entry[0])] !=
+               surface.facet_regions[static_cast<std::size_t>(t)][0])) {
+        entry = {cell, local};
+      }
     }
   }
-  std::sort(faces.begin(), faces.end(), [](const Face& x, const Face& y) {
-    return x.key != y.key ? x.key < y.key : x.cell < y.cell;
-  });
-  result.boundary_faces.resize(surface.triangles.size());
+  handle.reset();
+  const auto sorted = [](std::array<int32_t, 3> k) {
+    if (k[0] > k[1]) std::swap(k[0], k[1]);
+    if (k[1] > k[2]) std::swap(k[1], k[2]);
+    if (k[0] > k[1]) std::swap(k[0], k[1]);
+    return k;
+  };
   for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
-    const Key key = sorted(surface.triangles[t]);
-    auto it = std::lower_bound(faces.begin(), faces.end(), key,
-                               [](const Face& f, const Key& k) { return f.key < k; });
-    if (it == faces.end() || it->key != key) return PHX_MC_INTERNAL_ERROR;
-    const auto next = std::next(it);
-    if (next != faces.end() && next->key == key &&
-        result.regions[next->cell] == surface.facet_regions[t][0] &&
-        result.regions[it->cell] != surface.facet_regions[t][0])
-      it = next;
-    result.boundary_faces[t] = {it->cell, it->local};
+    const auto& entry = result.boundary_faces[t];
+    if (entry[0] < 0) return PHX_MC_INTERNAL_ERROR;
+    const auto& v = result.tetrahedra[static_cast<std::size_t>(entry[0])];
+    const int local = entry[1];
+    const std::array<int32_t, 3> face{v[(local + 1) % 4], v[(local + 2) % 4], v[(local + 3) % 4]};
+    if (sorted(face) != sorted(surface.triangles[t])) return PHX_MC_INTERNAL_ERROR;
   }
   stats.volume_ns = elapsed_ns(volume_start);
   // UNRESOLVED iff some unmet cell is not forced by the input
