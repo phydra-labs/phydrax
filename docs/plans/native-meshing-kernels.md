@@ -14,9 +14,8 @@ tetrahedra, then implicit volumes, then the CAD solid.
 
 - Acceptance = the slice's ledger row is beaten at equal or better quality, measured by the in-repository
   benchmark (S0-D) on one thread, plus the slice's correctness tests. A slice that does not beat its row
-  is not done.
-  The original 10,452-cell F6 coarsening row is an explicit timing exception;
-  its scientific requirements still apply.
+  is not done. All ten registered 2D and 3D graded F6 metric rows enforce `allowed_ratio = 1.0` against
+  the faster of quiet single-threaded MMG and serial Omega_h.
 - Construction kernels contain no proof that steers construction and no Python in an inner loop. Exact
   arithmetic only inside filtered predicates.
 - Certification is a separate verifier over (mesh, source, tolerances) and reports pass, fail with
@@ -223,10 +222,13 @@ tetrahedra, then implicit volumes, then the CAD solid.
   Coarsening edge share uses the archived source sizes interpolated at target
   edge midpoints, not the transferred output metric. Mean and worst-cell shape
   are Euclidean for scalar targets and use the analytic centroid metric for
-  anisotropic targets. The worst-cell shape must beat the unrounded MMG3D
-  reference in addition to the existing band, mean, and completion gates.
-  Construction timing is separate. Only the original 10,452-cell
-  coarsening row has an authorized timing allowance above its reference.
+  anisotropic targets. The worst-cell shape must beat the unrounded best
+  reference in addition to the band, mean-shape, zero-inversion,
+  zero-out-of-band, and completion gates. Construction timing is separate from
+  certification and transfer. All ten registered graded metric rows
+  (`metric-3d-{iso,aniso,coarsen}` at 10k/100k/1M and `metric-2d-iso` at 100k)
+  enforce `allowed_ratio = 1.0` against the faster of quiet single-threaded
+  MMG 5.8.0 and serial Omega_h 9.34.13 on identical byte-verified inputs.
 - S5 STEP import and remaining exchange formats. S7 threads and devices at scale.
   `OMP_NUM_THREADS=1 python -m benchmarks.native_meshing --rows cad-step-washer`
   times construction on the literal NIST STEP washer at h=.39663 mm and a
@@ -873,3 +875,42 @@ Raw receipts are in the coordination board under
 `artifacts/MAC/native-redesign/`, including the original no-op adaptation
 and unlayered sphere/quadric JSON. Provider ineligibility, timing misses,
 and unresolved native proofs are separate outcomes.
+
+### Unified 10-row graded metric qualification
+
+On the verified 3D unit-cube banks (`10,452 / 98,932 / 965,817` tetrahedra,
+`iso` / `aniso` / `coarsen`) and the 2D unit-square circle bank
+(`99,954` triangles, `square1e5.iso.mbin`, target
+`h = min(0.0005 + 0.3 |r - 0.3|, 0.02)` about `(0.5, 0.5)`), single-thread
+Phydrax (`OMP_NUM_THREADS=1`, minimum of three runs via
+`python -m benchmarks.native_meshing --sizes 10000 100000 1000000 --rows metric-3d-iso metric-3d-aniso metric-3d-coarsen metric-2d-iso --repeats 3 --metric-inputs DIR`)
+beats both quiet single-threaded MMG 5.8.0 (`mmg3d_O3` / `mmg2d_O3`) and
+serial Omega_h 9.34.13 on construction time and all three independent quality
+metrics across all ten rows with `allowed_ratio = 1.0`, `status == complete`,
+`0` out-of-band edges, `0` unrepresentable edges, and `0` inverted cells.
+Construction time covers gradation, preparation, and mesh edit construction;
+certification and field transfer run on a separate clock.
+
+| Row | Size | Phydrax (s) | Ceiling (s, tool) | Ratio | Quiet MMG (s) | Quiet Omega_h (s) | Worst shape (Phx / MMG / Osh) | Mean shape (Phx / MMG / Osh) | Band share (Phx / MMG / Osh) | Finalization (s) |
+|---|---:|---:|---:|---:|---:|---:|---|---|---|---:|
+| `metric-3d-iso` | 10,000 | 1.788 | 2.020 (mmg3d) | 0.885 | 2.273 | 11.195 | .6050 / .4498 / .3000 | .8708 / .8446 / .7816 | .8253 / .7744 / .7593 | 8.396 |
+| `metric-3d-aniso` | 10,000 | 0.281 | 0.935 (omega_h) | 0.300 | 1.244 | 0.935 | .4395 / .3361 / .1853 | .8582 / .8472 / .7913 | .9800 / .9346 / .9026 | 0.953 |
+| `metric-3d-coarsen` | 10,000 | 0.0685 | 0.1177 (omega_h) | 0.582 | 0.356 | 0.1177 | .6050 / .4748 / .3002 | .8460 / .8265 / .7306 | .9497 / .7939 / .8002 | 0.123 |
+| `metric-3d-iso` | 100,000 | 2.978 | 3.317 (mmg3d) | 0.898 | 3.553 | 15.716 | .6043 / .4478 / .3000 | .8696 / .8453 / .7806 | .8951 / .8704 / .8342 | 10.626 |
+| `metric-3d-aniso` | 100,000 | 0.643 | 3.455 (mmg3d) | 0.186 | 3.690 | 5.237 | .7709 / .3458 / .2832 | .8691 / .8383 / .7517 | 1.0000 / .9063 / .8307 | 1.116 |
+| `metric-3d-coarsen` | 100,000 | 0.476 | 1.161 (mmg3d) | 0.410 | 1.188 | 1.271 | .6044 / .4235 / .3010 | .8516 / .8386 / .7329 | .9641 / .8622 / .8152 | 0.888 |
+| `metric-3d-iso` | 1,000,000 | 7.956 | 13.826 (mmg3d) | 0.575 | 14.900 | 41.536 | .6050 / .3777 / .3000 | .8672 / .8434 / .7775 | .9609 / .9175 / .8679 | 17.582 |
+| `metric-3d-aniso` | 1,000,000 | 3.538 | 20.244 (mmg3d) | 0.175 | 22.819 | 54.860 | .8160 / .4364 / .2776 | .8702 / .8394 / .7464 | 1.0000 / .9116 / .8252 | 5.699 |
+| `metric-3d-coarsen` | 1,000,000 | 7.402 | 14.124 (mmg3d) | 0.524 | 15.439 | 19.543 | .6047 / .3546 / .3007 | .8619 / .8416 / .7320 | .9589 / .8926 / .8108 | 9.855 |
+| `metric-2d-iso` | 100,000 | 0.227 | 0.345 (mmg2d) | 0.658 | 0.345 | 0.829 | .7400 / .6119 / .4000 | .9405 / .9357 / .8978 | .8912 / .8026 / .8179 | 8.375 |
+
+Identity notes: 3D output-identical box-route optimizations (lazy cell grid,
+lazy per-cell scalar field, compact source cells, target-planes-first ancestry
+pruning, split binding, fast unchanged export) preserve all nine outcome IDs
+bit-exact; extending 3D scalar retessellation to coarsening, SoA local-first
+L-BFGS repair with post-stage-0 re-localization, and adding the native 2D
+scalar rectangle retessellation route can change adapted mesh and evidence IDs
+on newly retessellated scalar boxes while preserving exact local-only and no-op
+evidence identities (`retriangulations == 0` is omitted from `evidence_id`).
+End-to-end runtime including certification and transfer remains separate and
+slower than uncertified construction.

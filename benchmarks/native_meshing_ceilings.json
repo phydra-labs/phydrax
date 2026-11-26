@@ -3,8 +3,8 @@
     "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
     "measured": "2026-11-19",
     "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions); recovery rows: CGAL CDT_3 on the ledger's icosphere and grid torus surfaces (the generators of this benchmark); refinement rows: Gmsh HXT generate(3) wall time, minimum of three, on the same generated surface given as a discrete surface with MeshSizeMin = MeshSizeMax = the mean surface edge (element counts within 1% of this benchmark's); surface remesh rows: the ledger's surface remeshing table, MMGS library time (MMGS_mmgslib) on the same generated surfaces with -hsiz h -hausd h^2/4; improve rows: MMG3D -optim -nosurf library time (MMG3DLIB elapsed, minimum of four runs interleaved with the row) on the TetGen inputs of benchmarks/native_meshing_mmg3d.py prepare (the ledger improvement inputs, byte-identical); MMG3D reaches minimum dihedral 21.97 / 19.29 / 19.74 degrees; the row targets these rounded up to 0.1 degree (minimum_dihedral_degrees); query rows: the ledger's F10 table, query throughput on its inputs (99,856-triangle torus, 930,942-tet sphere; 1e5 and 1e6 queries), acceleration-structure build excluded; layer rows: the ledger's F9 table (5 layers, first 0.01, growth 1.2, inward), the fastest valid reference per row on the same Gmsh surface meshes: Gmsh's whole classify + extrude + generate(3), else cfMesh's generateBoundaryLayers alone (its tetMesh untimed); the row times the larger scope, surface in to layers plus core out; metric rows: the ledger's F6b table, MMG3D library time (MMG3DLIB elapsed, minimum of three) on the same Gmsh cube and sampled targets",
-    "metric_rows": "Gmsh 4.15.2 source banks regenerated 2026-11-24 with the ledger recipe (10,452 / 98,932 / 965,817 tetrahedra). The 10,452-cell source and coarsening target reproduce the archived digests byte for byte. MMG3D 5.8.0 minima rerun on the registered input digests, except that the authenticated 0.377-second coarsening reference is retained at 10,452 cells with a 3.5x allowed ratio. Its rerun minimum was 0.337 seconds. The timing allowance does not change the scientific gates.",
-    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, default optimizer (Mesh.Optimize 1)", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4", "mmg3d": "5.8.0; improve rows: -optim -nosurf on the given mesh; metric rows: mmg3d_O3 with -sol (scalar size or tensor), defaults (-hgrad 1.3, -hausd 0.01), -m 3800", "libigl": "2.6.3 Python bindings, one thread (IGL_NUM_THREADS=1): AABB squared_distance, signed_distance pseudonormal (build in the call), FastWindingNumberBVH winding_number, AABB in_element"}
+    "metric_rows": "Gmsh 4.15.2 source banks regenerated with the ledger recipe: 3D cubes (10,452 / 98,932 / 965,817 tetrahedra, 2026-11-24) and 2D square (99,954 triangles, 2026-11-25, target h = min(0.0005 + 0.3 |r - 0.3|, 0.02) about (0.5, 0.5)). Every metric row ceiling is the faster of quiet single-threaded MMG 5.8.0 (mmg3d_O3 / mmg2d_O3) and serial Omega_h 9.34.13 on the identical byte-verified input digests, with allowed_ratio 1.0 on all ten rows (retaining the tighter 2026-11-24 MMG3D minima on the seven MMG3D-fastest 3D rows, tightening metric-3d-aniso 10000 and metric-3d-coarsen 10000 to serial Omega_h's 0.935 s and 0.1177 s, and registering metric-2d-iso 100000 at MMG2D's 0.345 s).",
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, default optimizer (Mesh.Optimize 1)", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4", "mmg2d": "5.8.0; metric-2d-iso row: mmg2d_O3 with -sol (scalar size), defaults (-hgrad 1.3, -hausd 0.01), -m 3800", "mmg3d": "5.8.0; improve rows: -optim -nosurf on the given mesh; metric rows: mmg3d_O3 with -sol (scalar size or tensor), defaults (-hgrad 1.3, -hausd 0.01), -m 3800", "omega_h": "9.34.13 serial (one thread); metric rows: osh_adapt_drv with gradation (1.3) and approach/adapt on the exact input mesh and target bank", "libigl": "2.6.3 Python bindings, one thread (IGL_NUM_THREADS=1): AABB squared_distance, signed_distance pseudonormal (build in the call), FastWindingNumberBVH winding_number, AABB in_element"}
   },
   "rows": {
     "delaunay-2d": {
@@ -128,8 +128,8 @@
     },
     "metric-3d-aniso": {
       "10000": {
-        "tool": "mmg3d",
-        "seconds": 1.204,
+        "tool": "omega_h",
+        "seconds": 0.935,
         "allowed_ratio": 1.0,
         "input_sha256": {
           "points": "2d1433ca4f32731a6a97e22e5e24d189dea3e15080a9c38ae0025c6489a09c05",
@@ -160,9 +160,9 @@
     },
     "metric-3d-coarsen": {
       "10000": {
-        "tool": "mmg3d",
-        "seconds": 0.377,
-        "allowed_ratio": 3.5,
+        "tool": "omega_h",
+        "seconds": 0.1177,
+        "allowed_ratio": 1.0,
         "input_sha256": {
           "points": "2d1433ca4f32731a6a97e22e5e24d189dea3e15080a9c38ae0025c6489a09c05",
           "cells": "931bb935201bb671634d994f9bf1b8514dddffe4c9ef059ce89ca8676a1604b4",
@@ -187,6 +187,18 @@
           "points": "60dde4f1778b215030d911ed8ebf55c72589ab8272c4a8268b50e7357e3a3c96",
           "cells": "8d11d3d5fbe1deb6dfb344d5ed4e48b0a96540837240bcd6b170ee49e0271dc2",
           "target_metric": "a0ca01f1ebaa51af16ddf065b88f1809d790c4c2bb928cfcf5f58d60039ad653"
+        }
+      }
+    },
+    "metric-2d-iso": {
+      "100000": {
+        "tool": "mmg2d",
+        "seconds": 0.345,
+        "allowed_ratio": 1.0,
+        "input_sha256": {
+          "points": "e6aa510656de54e8a755151a03ecdaf45f17fb10f6899f194a1e805eb71f8af7",
+          "cells": "7bb499638a84515296cbbb6665a73473c9d21d73333003131b3e7cfe88b189a9",
+          "target_metric": "81ffbb3e124f0d30bcd3085b6d89430c54e72bed0e4d57f31469f21eb5a14045"
         }
       }
     },

@@ -2590,7 +2590,27 @@ def test_native_metric_band_evidence_uses_persistent_endpoint_order() -> None:
 
 def test_relocation_progress_survives_topology_edits() -> None:
     source = _source(4, nonuniform=True)
-    outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
+    # Protect one already-unit boundary edge so the local edit loop runs rather
+    # than whole-box scalar retessellation.
+    coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    order = np.argsort(vertex_ids)
+    edges = order[np.searchsorted(vertex_ids[order], entity_keys(source.mesh, 1))]
+    a, b = coordinates[edges[:, 0]], coordinates[edges[:, 1]]
+    protected = (
+        (a[:, 1] == 0.0)
+        & (b[:, 1] == 0.0)
+        & (a[:, 2] == 0.0)
+        & (b[:, 2] == 0.0)
+        & (np.minimum(a[:, 0], b[:, 0]) == 0.5)
+        & (np.maximum(a[:, 0], b[:, 0]) == 1.0)
+    )
+    assert int(np.count_nonzero(protected)) == 1
+    outcome = _adapt(
+        source,
+        np.eye(3, dtype=np.float64) * 4.0,
+        protected_edges=protected,
+    )
 
     assert outcome.evidence.relocations > 0
     assert (

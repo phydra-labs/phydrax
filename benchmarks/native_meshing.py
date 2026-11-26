@@ -8,7 +8,7 @@ kernel's minimum time is at most its ceiling times the row's allowed ratio.
 Ratios above one are interim acceptance targets of the plan
 `docs/plans/native-meshing-kernels.md`; the final target of every row is 1.
 
-The 3D metric rows require the ledger's ordered mesh and raw target banks
+The 2D and 3D metric rows require the ledger's ordered mesh and raw target banks
 (``--metric-inputs``). Native out-of-band and unrepresentable edges are
 reported separately from the independent provider quality and cell ``unmet``
 counts. Certification and transfer are excluded from construction timing.
@@ -76,7 +76,8 @@ from phydrax.meshing._overset import (
 if TYPE_CHECKING:
     from phydrax.discretization import PreparedSimplicialCellLocator
     from phydrax.meshing import CellMeshingCandidate, CellMeshingResult, NativeMeshingPlan
-    from phydrax.meshing._adaptation import _RouteOutcome
+    from phydrax.meshing._adaptation import _ExactSourceVertices2D, _RouteOutcome
+    from phydrax.meshing._local_metric import LocalMetricOutcome
     from phydrax.meshing._tetra_metric import TetraMetricOutcome
 
 
@@ -372,7 +373,7 @@ def _rows(
         families += ((_F6_ROWS, lambda: _f6_rows(sizes, metric_inputs, names)),)
     elif names is not None and _F6_ROWS & names:
         raise ValueError(
-            "The 3D metric rows read the ledger's F6b banks: pass --metric-inputs."
+            "The metric rows read the ledger's F6b banks: pass --metric-inputs."
         )
     queries = frozenset(
         {"query-closest", "query-signed", "query-winding", "query-locate"}
@@ -1921,7 +1922,13 @@ _F6_SIZES = {
     1_000_000: ("cube1e6", 965_817),
 }
 _F6_FIELDS = ("iso", "aniso", "coarsen")
-_F6_ROWS = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
+_F6_2D_SIZES = {
+    100_000: ("square1e5", 99_954),
+}
+_F6_2D_FIELDS = ("iso",)
+_F6_3D_ROWS = frozenset(f"metric-3d-{field}" for field in _F6_FIELDS)
+_F6_2D_ROWS = frozenset(f"metric-2d-{field}" for field in _F6_2D_FIELDS)
+_F6_ROWS = _F6_3D_ROWS | _F6_2D_ROWS
 
 
 class _F6QualityReference(NamedTuple):
@@ -1930,6 +1937,8 @@ class _F6QualityReference(NamedTuple):
     minimum_shape: float
 
 
+# Quality floors equal or exceed the better of quiet single-threaded MMG and
+# serial Omega_h on every row.
 _F6_REFERENCE = {
     ("iso", 10_000): _F6QualityReference(0.774, 0.845, 0.4497603849454286),
     ("iso", 100_000): _F6QualityReference(0.870, 0.845, 0.4477792626580644),
@@ -1937,9 +1946,12 @@ _F6_REFERENCE = {
     ("aniso", 10_000): _F6QualityReference(0.935, 0.847, 0.33614727278988854),
     ("aniso", 100_000): _F6QualityReference(0.906, 0.838, 0.3458181881222734),
     ("aniso", 1_000_000): _F6QualityReference(0.912, 0.839, 0.43638662906545406),
-    ("coarsen", 10_000): _F6QualityReference(0.794, 0.827, 0.47481118457443033),
+    ("coarsen", 10_000): _F6QualityReference(0.8002, 0.827, 0.47481118457443033),
     ("coarsen", 100_000): _F6QualityReference(0.862, 0.839, 0.4235206692485812),
     ("coarsen", 1_000_000): _F6QualityReference(0.893, 0.842, 0.35457173515222545),
+}
+_F6_2D_REFERENCE = {
+    ("iso", 100_000): _F6QualityReference(0.818, 0.936, 0.6119132160803513),
 }
 
 
@@ -1966,8 +1978,36 @@ def _f6_source(
     return points, cells, digests
 
 
+def _f6_source_2d(
+    path: Path, cell_count: int, /
+) -> tuple[np.ndarray, np.ndarray, tuple[tuple[str, str], ...]]:
+    with np.load(path, allow_pickle=False) as bank:
+        points, cells = bank["xyz"], bank["el"]
+    if points.ndim != 2 or points.shape[1] != 2 or points.dtype != np.dtype("<f8"):
+        raise ValueError(f"{path}: xyz must contain little-endian binary64 2D points.")
+    if (
+        cells.shape != (cell_count, 3)
+        or cells.dtype not in (np.dtype("<i4"), np.dtype("<i8"))
+        or np.any(cells < 0)
+        or np.any(cells >= points.shape[0])
+    ):
+        raise ValueError(f"{path}: el must contain {cell_count} ordered triangles.")
+    points = np.ascontiguousarray(points)
+    cells = np.ascontiguousarray(cells, dtype="<i4")
+    digests = (
+        ("points", sha256(memoryview(points).cast("B")).hexdigest()),
+        ("cells", sha256(memoryview(cells).cast("B")).hexdigest()),
+    )
+    return points, cells, digests
+
+
 def _tet_edges(cells: np.ndarray, /) -> np.ndarray:
     pairs = np.concatenate([cells[:, [i, j]] for i in range(4) for j in range(i + 1, 4)])
+    return np.unique(np.sort(pairs, axis=1), axis=0)
+
+
+def _tri_edges(cells: np.ndarray, /) -> np.ndarray:
+    pairs = np.concatenate((cells[:, [0, 1]], cells[:, [1, 2]], cells[:, [2, 0]]))
     return np.unique(np.sort(pairs, axis=1), axis=0)
 
 
@@ -1990,6 +2030,16 @@ def _f6_target(
         tensors[:, 0, 1] = tensors[:, 1, 0] = values[:, 3]
         tensors[:, 1, 2] = tensors[:, 2, 1] = values[:, 4]
         tensors[:, 0, 2] = tensors[:, 2, 0] = values[:, 5]
+    return tensors, sha256(raw).hexdigest()
+
+
+def _f6_target_2d(path: Path, vertex_count: int, /) -> tuple[np.ndarray, str]:
+    raw = path.read_bytes()
+    if len(raw) != 8 + 8 * vertex_count or unpack_from("<ii", raw) != (vertex_count, 1):
+        raise ValueError(f"{path}: 2D scalar target bank must match the source vertices.")
+    values = np.frombuffer(raw, dtype="<f8", offset=8)
+    tensors = np.zeros((vertex_count, 2, 2), dtype=np.float64)
+    tensors[:, 0, 0] = tensors[:, 1, 1] = values
     return tensors, sha256(raw).hexdigest()
 
 
@@ -2038,13 +2088,158 @@ def _f6_rows(
     from phydrax.meshing._tetra_metric import TetraMetricEvidence
 
     rows: list[_Row] = []
+    if names is None or bool(_F6_3D_ROWS & names):
+        for size, (label, cell_count) in sources.items():
+            if size not in sizes:
+                continue
+            points, cells, source_digests = _f6_source(
+                inputs / f"{label}.npz", cell_count
+            )
+            block = CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                cells,
+                global_ids=np.arange(cells.shape[0], dtype=np.int64),
+            )
+            source = certify_cell_mesh(
+                CellMesh(
+                    points,
+                    (block,),
+                    vertex_global_ids=np.arange(points.shape[0], dtype=np.int64),
+                ),
+                SpatialCoordinateContract.si(),
+            )
+            vertices = source.mesh.entity_set(0)
+            scope = MeshingScope(
+                source.mesh.mesh_id,
+                source.mesh.numeric_version,
+                MeshingEntityKind.MESH,
+                0,
+                vertices.entity_set_id,
+                np.asarray(vertices.entity_ids, dtype=np.int64),
+            )
+            edges = _tet_edges(cells)
+            policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D)
+            for field in _F6_FIELDS:
+                name = f"metric-3d-{field}"
+                if names is not None and name not in names:
+                    continue
+                tensors, target_digest = _f6_target(
+                    inputs / f"{label}.{field}.mbin",
+                    points.shape[0],
+                    6 if field == "aniso" else 1,
+                )
+                target = MeshMetricField(
+                    scope,
+                    tensors,
+                    minimum_size=1.0e-3,
+                    maximum_size=10.0,
+                    maximum_anisotropy=100.0,
+                )
+                coarsen_sizes = (
+                    1.0 / np.sqrt(tensors[:, 0, 0]) if field == "coarsen" else None
+                )
+                gradation = MetricGradationPolicy(
+                    1.0 + math.log(1.3), anisotropic=field == "aniso"
+                )
+
+                def run(
+                    source: CellMeshingResult = source,
+                    target: MeshMetricField = target,
+                    gradation: MetricGradationPolicy = gradation,
+                    edges: np.ndarray = edges,
+                    points: np.ndarray = points,
+                ) -> _F6Run:
+                    def construct() -> tuple[
+                        PreparedMeshAdaptation,
+                        MetricMeshAdaptation,
+                        TetraMetricOutcome | TetraMetricEvidence,
+                    ]:
+                        graded, _ = grade_mesh_metric(
+                            target, policy=gradation, adjacency=edges, coordinates=points
+                        )
+                        request = MetricMeshAdaptation(graded)
+                        prepared = prepare_mesh_adaptation(source, request, policy=policy)
+                        return (
+                            prepared,
+                            request,
+                            _construct_tetra_metric_edit(prepared, request),
+                        )
+
+                    construction, construction_seconds = measure_host(construct)
+                    outcome, finalization_seconds = measure_synchronized(
+                        partial(_finish_tetra_metric_route, *construction)
+                    )
+                    evidence = outcome.evidence
+                    if not isinstance(evidence, TetraMetricEvidence):
+                        raise TypeError(
+                            "The tetra metric route must report tetra metric evidence."
+                        )
+                    return _F6Run(
+                        outcome,
+                        construction_seconds,
+                        finalization_seconds,
+                        evidence.out_of_range_edges,
+                        evidence.unrepresentable_edges,
+                    )
+
+                rows.append(
+                    _Row(
+                        name,
+                        size,
+                        run,
+                        _adapted_cells,
+                        quality=partial(
+                            _f6_quality,
+                            field,
+                            references[field, size],
+                            points,
+                            coarsen_sizes,
+                        ),
+                        stage_seconds=_f6_stage_seconds,
+                        input_sha256=(*source_digests, ("target_metric", target_digest)),
+                    )
+                )
+    if names is None or bool(_F6_2D_ROWS & names):
+        rows.extend(_f6_2d_rows(sizes, inputs, names))
+    return tuple(rows)
+
+
+def _f6_2d_rows(
+    sizes: tuple[int, ...],
+    inputs: Path,
+    names: frozenset[str] | None,
+    /,
+    *,
+    sources: Mapping[int, tuple[str, int]] = _F6_2D_SIZES,
+    references: Mapping[tuple[str, int], _F6QualityReference] = _F6_2D_REFERENCE,
+) -> tuple[_Row, ...]:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+    from phydrax.meshing import (
+        grade_mesh_metric,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        MeshingEntityKind,
+        MeshingScope,
+        MeshMetricField,
+        MetricGradationPolicy,
+        MetricMeshAdaptation,
+        prepare_mesh_adaptation,
+        PreparedMeshAdaptation,
+    )
+    from phydrax.meshing._adaptation import _construct_metric_edit, _finish_metric_route
+    from phydrax.meshing._canonical import certify_cell_mesh
+    from phydrax.meshing._local_metric import LocalMetricEvidence
+
+    rows: list[_Row] = []
     for size, (label, cell_count) in sources.items():
         if size not in sizes:
             continue
-        points, cells, source_digests = _f6_source(inputs / f"{label}.npz", cell_count)
+        points, cells, source_digests = _f6_source_2d(inputs / f"{label}.npz", cell_count)
         block = CellBlock(
-            "tetrahedra",
-            "tetrahedron",
+            "triangles",
+            "triangle",
             cells,
             global_ids=np.arange(cells.shape[0], dtype=np.int64),
         )
@@ -2065,30 +2260,23 @@ def _f6_rows(
             vertices.entity_set_id,
             np.asarray(vertices.entity_ids, dtype=np.int64),
         )
-        edges = _tet_edges(cells)
-        policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D)
-        for field in _F6_FIELDS:
-            name = f"metric-3d-{field}"
+        edges = _tri_edges(cells)
+        policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D)
+        for field in _F6_2D_FIELDS:
+            name = f"metric-2d-{field}"
             if names is not None and name not in names:
                 continue
-            tensors, target_digest = _f6_target(
-                inputs / f"{label}.{field}.mbin",
-                points.shape[0],
-                6 if field == "aniso" else 1,
+            tensors, target_digest = _f6_target_2d(
+                inputs / f"{label}.{field}.mbin", points.shape[0]
             )
             target = MeshMetricField(
                 scope,
                 tensors,
-                minimum_size=1.0e-3,
+                minimum_size=1.0e-4,
                 maximum_size=10.0,
                 maximum_anisotropy=100.0,
             )
-            coarsen_sizes = (
-                1.0 / np.sqrt(tensors[:, 0, 0]) if field == "coarsen" else None
-            )
-            gradation = MetricGradationPolicy(
-                1.0 + math.log(1.3), anisotropic=field == "aniso"
-            )
+            gradation = MetricGradationPolicy(1.0 + math.log(1.3), anisotropic=False)
 
             def run(
                 source: CellMeshingResult = source,
@@ -2099,35 +2287,32 @@ def _f6_rows(
             ) -> _F6Run:
                 def construct() -> tuple[
                     PreparedMeshAdaptation,
-                    MetricMeshAdaptation,
-                    TetraMetricOutcome | TetraMetricEvidence,
+                    LocalMetricOutcome,
+                    _ExactSourceVertices2D | None,
                 ]:
                     graded, _ = grade_mesh_metric(
                         target, policy=gradation, adjacency=edges, coordinates=points
                     )
                     request = MetricMeshAdaptation(graded)
                     prepared = prepare_mesh_adaptation(source, request, policy=policy)
-                    return (
-                        prepared,
-                        request,
-                        _construct_tetra_metric_edit(prepared, request),
-                    )
+                    outcome, exact_source = _construct_metric_edit(prepared)
+                    return prepared, outcome, exact_source
 
                 construction, construction_seconds = measure_host(construct)
                 outcome, finalization_seconds = measure_synchronized(
-                    partial(_finish_tetra_metric_route, *construction)
+                    partial(_finish_metric_route, *construction)
                 )
                 evidence = outcome.evidence
-                if not isinstance(evidence, TetraMetricEvidence):
+                if not isinstance(evidence, LocalMetricEvidence):
                     raise TypeError(
-                        "The tetra metric route must report tetra metric evidence."
+                        "The 2D metric route must report local metric evidence."
                     )
                 return _F6Run(
                     outcome,
                     construction_seconds,
                     finalization_seconds,
                     evidence.out_of_range_edges,
-                    evidence.unrepresentable_edges,
+                    0,
                 )
 
             rows.append(
@@ -2136,13 +2321,7 @@ def _f6_rows(
                     size,
                     run,
                     _adapted_cells,
-                    quality=partial(
-                        _f6_quality,
-                        field,
-                        references[field, size],
-                        points,
-                        coarsen_sizes,
-                    ),
+                    quality=partial(_f6_2d_quality, field, references[field, size]),
                     stage_seconds=_f6_stage_seconds,
                     input_sha256=(*source_digests, ("target_metric", target_digest)),
                 )
@@ -2970,6 +3149,66 @@ def _f6_quality(
         + int(quality["quality_mean"] < reference.mean_shape)
         + int(not (quality["quality_min"] > reference.minimum_shape))
         + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
+        + int(result.out_of_band_edges > 0)
+        + int(result.unrepresentable_edges > 0)
+    )
+    return missed, {
+        **quality,
+        "certification_and_transfer_seconds": result.finalization_seconds,
+        "reference_share": reference.band_share,
+        "reference_quality_mean": reference.mean_shape,
+        "reference_quality_min": reference.minimum_shape,
+    }
+
+
+def _f6_2d_quality_values(
+    field: str, points: np.ndarray, cells: np.ndarray, /
+) -> dict[str, float]:
+    # Independent 2D F6b measurement matching MMG2D and Omega_h baselines:
+    # midpoint analytic circle size field and Euclidean triangle mean-ratio shape.
+    edges = _tri_edges(cells)
+    vector = points[edges[:, 1]] - points[edges[:, 0]]
+    midpoint = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
+    match field:
+        case "iso":
+            radius = np.hypot(midpoint[:, 0] - 0.5, midpoint[:, 1] - 0.5)
+            size = np.minimum(0.0005 + 0.3 * np.abs(radius - 0.3), 0.02)
+            length = np.linalg.norm(vector, axis=1) / size
+        case _:
+            raise ValueError(f"Unknown 2D F6 field {field!r}.")
+    corners = points[cells]
+    u = corners[:, 1] - corners[:, 0]
+    v = corners[:, 2] - corners[:, 0]
+    w = corners[:, 2] - corners[:, 1]
+    det = u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]
+    squares = np.sum(u * u, axis=1) + np.sum(v * v, axis=1) + np.sum(w * w, axis=1)
+    quality = (2.0 * math.sqrt(3.0)) * det / squares
+    share = float(np.mean((length >= 0.7) & (length <= 1.4)))
+    inverted = int(np.count_nonzero(det <= 0.0))
+    return {
+        "share_0_7_1_4": share,
+        "quality_min": float(quality.min()),
+        "quality_mean": float(quality.mean()),
+        "inverted": float(inverted),
+    }
+
+
+def _f6_2d_quality(
+    field: str, reference: _F6QualityReference, result: object, /
+) -> tuple[int, dict[str, float]]:
+    from phydrax.meshing import MeshAdaptationStatus
+
+    if not isinstance(result, _F6Run):
+        raise TypeError("The F6 row returns construction and finalization evidence.")
+    quality = _f6_2d_quality_values(field, *_adapted_arrays(result))
+    missed = (
+        int(quality["inverted"])
+        + int(quality["share_0_7_1_4"] < reference.band_share)
+        + int(quality["quality_mean"] < reference.mean_shape)
+        + int(not (quality["quality_min"] > reference.minimum_shape))
+        + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
+        + int(result.out_of_band_edges > 0)
+        + int(result.unrepresentable_edges > 0)
     )
     return missed, {
         **quality,
@@ -4209,8 +4448,8 @@ def main(argv: list[str] | None = None) -> int:
         "--metric-inputs",
         type=Path,
         default=None,
-        help="directory of the ledger's F6b cube1eN.npz and cube1eN.FIELD.mbin "
-        "input banks; the 3D metric rows run only with it",
+        help="directory of the ledger's F6b cube1eN/square1e5 .npz and .FIELD.mbin "
+        "input banks; the 2D and 3D metric rows run only with it",
     )
     parser.add_argument(
         "--reference-mesh",

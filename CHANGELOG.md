@@ -11,17 +11,41 @@
   Derived seam primitives do not add live constraints. Relocation retains
   source stencils, stable identities, and the existing metric band.
 - Native metric adaptation can retessellate single-region Cartesian boxes
-  in graded scalar or aligned anisotropic fields. Scalar refinement spaces
-  the box seams in metric length and repairs the tetrahedra without widening
-  the strict edge band. The transaction preserves wall identities and records
-  exact transfer stencils and positive-volume cell ancestry.
-  `TetraMetricEvidence.retriangulations` distinguishes it from
-  local tetrahedral edits. The counter is always stored but contributes to
-  the evidence fingerprint only when at least one retessellation committed.
-  Wider initial site spacing and local correction can change the scalar
-  output mesh and its IDs. Eligible completed boxes now reuse committed
-  measurements instead of rebuilding the full edge census; for the same
-  mesh this preserves every public metric evidence field and fingerprint.
+  in graded scalar (refinement and coarsening) or aligned anisotropic fields.
+  Scalar adaptation spaces the box seams in metric length, relaxes interior,
+  face, and seam sites, and repairs edges and tetrahedra via local-first
+  augmented-Lagrangian L-BFGS without widening the strict `[1/sqrt(2), sqrt(2)]`
+  edge band. The transaction preserves wall identities and records exact
+  transfer stencils and positive-volume cell ancestry.
+  `TetraMetricEvidence.retriangulations` distinguishes it from local
+  tetrahedral edits. The counter is always stored but contributes to the
+  evidence fingerprint only when at least one retessellation committed.
+  Scalar box coarsening, wider initial site spacing, and local-first repair
+  can change scalar output meshes and their IDs. Lazy source-cell grid and
+  scalar-field initialization, compact source-cell records, target-planes-first
+  ancestry pruning, split core/local binding, and fast unchanged-box export
+  preserve outputs and identities on existing routes. Eligible completed boxes
+  reuse committed measurements instead of rebuilding the full edge census; for
+  the same mesh this preserves every public metric evidence field and
+  fingerprint.
+- Native 2D planar metric adaptation (`NATIVE_METRIC_2D`) can retessellate
+  unprotected single-region Cartesian rectangles in graded scalar fields
+  (`phx_mc_metric_adapt_2d_box`) in one transaction while enforcing the strict
+  `[1/sqrt(2), sqrt(2)]` metric edge band and recording exact source-bound
+  transfer stencils and positive-area cell ancestry (both rounded and exact
+  lifted). `LocalMetricEvidence.retriangulations` counts committed transactions
+  and contributes to `evidence_id` only when positive, preserving unchanged
+  local-only and no-op evidence identities. Newly retessellated planar boxes
+  can change mesh and evidence IDs. Rebuild native clients for the added 2D
+  metric box entry points (`phx_mc_metric_adapt_2d_box`, `_sizes`, `_export`,
+  `_free`).
+- `benchmarks/native_meshing.py` now registers the 2D graded circle row
+  (`metric-2d-iso` at 100,000 nominal cells / 99,954 triangles) alongside the
+  nine 3D graded metric rows under `--metric-inputs`. All ten rows in
+  `benchmarks/native_meshing_ceilings.json` enforce `allowed_ratio = 1.0`
+  against the faster of quiet single-threaded MMG 5.8.0 and serial Omega_h
+  9.34.13 on byte-verified inputs, retiring the former 3.5x timing allowance on
+  10,452-cell 3D coarsening.
 - Planar CDT refinement can seed an exact source-admitted interior lattice
   when the size target implies enough work to amortize the preflight.
   Generated sites can change mesh identity;

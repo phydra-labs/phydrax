@@ -2606,7 +2606,17 @@ bound to the source vertices). Routes:
   were excluded by bounds; `optimal=periodic`: an endpoint orbit is not simple,
   having several copies or a stabilizer, so optimal-point collapse is not
   attempted on the periodic quotient). `RelocationMeshAdaptation` moves vertices
-  only.
+  only. An unprotected, nonperiodic, single-region Cartesian rectangle in a
+  graded scalar metric with both topology operations and relocation enabled can
+  instead be retessellated in one native transaction (`phx_mc_metric_adapt_2d_box`),
+  spacing boundary walls by integrated metric length, relaxing interior and wall
+  sites, repairing edge lengths and triangle quality without widening the strict
+  `[1/sqrt(2), sqrt(2)]` band, and recording exact source-bound dyadic transfer
+  stencils and positive-area cell ancestry (verified on both rounded and exact
+  lifted coordinates). A refusal leaves the original mesh available for local
+  operations. `LocalMetricEvidence.retriangulations` records committed
+  transactions (zero on local-only and no-op runs) and enters `evidence_id`
+  only when positive, preserving existing local-only and no-op fingerprints.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
@@ -3080,19 +3090,20 @@ by the host phase schedule until native periodic local commits exist.
 An unprotected, single-block Cartesian box can instead be rebuilt in one
 transaction. For one varying diagonal metric component and two constant
 tangential components, the route integrates the transported metric along
-columns. For graded scalar refinement, it spaces sites along the twelve
-seams by metric length and relaxes interior, face, and seam sites within
-their respective strata. It corrects edge lengths and tetrahedron shapes;
-a local change of connectivity must retain its oriented interface and the
-boundary of each wall patch. The scalar proposal checks mean-ratio quality
-of at least 0.60 after snapping. Both routes remeasure the strict band on
-the actual source-bound vertices. Each new cell records positive-volume source intersections;
-an edge or face contact alone is not a parent. Rounded mesh geometry and
-exact stencil geometry are checked separately when they disagree. A refusal
-leaves the original mesh available for local adaptation. The
-`retriangulations` evidence counter counts committed transactions, not cells.
-Its stored value is zero on local-only and no-op routes. Only a positive
-count enters the fingerprint; unchanged local evidence retains its ID.
+columns. For graded scalar refinement and coarsening, it spaces sites along the
+twelve seams by metric length and relaxes interior, face, and seam sites within
+their respective strata. It corrects edge lengths and tetrahedron shapes through
+local-first augmented-Lagrangian L-BFGS repair; a local change of connectivity
+must retain its oriented interface and the boundary of each wall patch. The
+scalar proposal checks mean-ratio quality of at least 0.60 after snapping. Both
+routes remeasure the strict band on the actual source-bound vertices. Each new
+cell records positive-volume source intersections; an edge or face contact alone
+is not a parent. Rounded mesh geometry and exact stencil geometry are checked
+separately when they disagree. A refusal leaves the original mesh available for
+local adaptation. The `retriangulations` evidence counter counts committed
+transactions, not cells. Its stored value is zero on local-only and no-op
+routes. Only a positive count enters the fingerprint; unchanged local evidence
+retains its ID.
 
 On CPU, physical gradation of an exactly diagonal binary64 tensor can fold
 its candidates in the coordinate basis. The ordered square-root products
