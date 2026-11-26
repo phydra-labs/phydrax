@@ -351,6 +351,23 @@ Distance-only analytic or envelope witnesses do not establish source topology.
 An explicitly changed envelope has its own source domain; its original-source
 deviation and its derived-domain coverage are separate obligations.
 
+For raw or dirty triangle soups (cracked float32 STL/OBJ exports, T-junctions,
+degenerate slivers, holes, self-intersections, internal baffles, inverted
+shells, nested cavities, or stray debris), `phydrax.geometry.surface.repair_surface_mesh`
+(and the optional `SurfaceImportPolicy.repair_policy` hook on `import_surface`)
+provides an explicit, audited native C++20 repair pipeline sitting cleanly
+between zero-displacement `AuthoredTriangleSheet` and offset-band
+`SurfaceEnvelopeSource`. Every geometry-changing switch on `SurfaceRepairPolicy`
+defaults to disabled; use `SurfaceRepairPolicy.watertight_solid(...)` for the
+canonical solid-repair preset. Single-soup self-arrangement decomposes exact
+3D arrangement cells via indirect-predicate radial edge sorting and Kirchhoff
+integer winding propagation (falling back to Van Oosterom–Strackee generalized
+winding on non-cycle or open soups), Liepa minimum-dihedral dynamic programming
+fills eligible loops with exact illegal-contact cap verification, and every run
+records `SurfaceRepairEvidence` (max vertex displacement, entity edit counts,
+`SurfaceClosureEvidence`, exact `verify_surface_embedding` status, optional
+certified Hausdorff bound, and canonical `evidence_id`).
+
 `evaluate_finite_volume_quality` reports skewness and non-orthogonality of every
 interior face of a full-dimensional mesh.
 

@@ -3000,6 +3000,125 @@ PHX_MC_API int32_t phx_mc_arrangement_export_classification(
     int64_t operand_capacity, int64_t* fragment_components, int32_t* component_windings);
 PHX_MC_API void phx_mc_arrangement_free(phx_mc_arrangement* result);
 
+/* ------------------------------------------- single-soup arrangement & repair */
+/* Exact self-arrangement of one triangle soup over implicit points. When
+ * pair_count == 0 and pairs == NULL, an internal Morton AABB broad phase
+ * collects all self-overlapping triangle pairs (excluding strictly legal
+ * non-coplanar shared-vertex and shared-edge contacts). Returns a standard
+ * phx_mc_arrangement handle exported with phx_mc_arrangement_* and freed with
+ * phx_mc_arrangement_free. */
+PHX_MC_API int32_t phx_mc_arrange_soup(
+    int64_t vertex_count, const double* vertices, int64_t triangle_count,
+    const int64_t* triangles, int64_t pair_count, const int64_t* pairs,
+    int64_t* failed_face, phx_mc_arrangement** result);
+
+enum phx_mc_solid_winding_rule {
+  PHX_MC_WINDING_NONZERO = 0,
+  PHX_MC_WINDING_POSITIVE = 1,
+  PHX_MC_WINDING_EVEN_ODD = 2,
+  PHX_MC_WINDING_GENERALIZED_HALF = 3
+};
+
+typedef struct phx_mc_solid_extraction_report {
+  int64_t patch_count;
+  int64_t cell_count;
+  int64_t canceled_coplanar_fragments;
+  int64_t boundary_edge_count;
+  int64_t nonmanifold_edge_count;
+  int64_t nonmanifold_vertex_count;
+  int64_t split_pinch_vertices;
+  int32_t used_generalized_winding;
+  int32_t closed;
+} phx_mc_solid_extraction_report;
+
+/* Extract the outward-oriented solid boundary from a published arrangement by
+ * decomposing R^3 into exact arrangement cells via indirect-predicate radial
+ * edge sorting. Closed complexes classify every cell with exact symbolic-ray
+ * winding + Kirchhoff propagation; open or non-cycle complexes automatically
+ * fall back to Van Oosterom-Strackee generalized winding (used_generalized_winding = 1).
+ * The returned surface handle is owned and exported via phx_mc_surface_result_*. */
+PHX_MC_API int32_t phx_mc_arrangement_extract_solid(
+    const phx_mc_arrangement* arrangement, int32_t winding_rule,
+    int32_t split_nonmanifold_pinches, phx_mc_solid_extraction_report* report,
+    void** out_surface);
+
+typedef struct phx_mc_surface_clean_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  double weld_tolerance;
+  double t_junction_tolerance;
+  double min_edge_length;
+  double min_triangle_area;
+  int32_t drop_degenerate;
+  int32_t preserve_embedding;
+} phx_mc_surface_clean_request;
+
+typedef struct phx_mc_surface_clean_report {
+  int64_t welded_vertices;
+  int64_t t_junction_splits;
+  int64_t collapsed_edges;
+  int64_t flipped_caps;
+  int64_t dropped_degenerate_faces;
+  int64_t dropped_duplicate_faces;
+  int64_t rejected_fold_welds;
+  double max_vertex_displacement;
+} phx_mc_surface_clean_report;
+
+PHX_MC_API int32_t phx_mc_surface_weld_and_clean(
+    const phx_mc_surface_clean_request* request,
+    phx_mc_surface_clean_report* report, void** out_surface);
+
+typedef struct phx_mc_surface_hole_fill_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  int64_t max_hole_edges;
+  double max_hole_diameter;
+  int32_t fair_caps;
+  int32_t refine_caps;
+  int32_t check_embedding;
+} phx_mc_surface_hole_fill_request;
+
+typedef struct phx_mc_surface_hole_fill_report {
+  int64_t filled_hole_count;
+  int64_t skipped_large_holes;
+  int64_t added_cap_triangles;
+  int64_t colliding_cap_triangles;
+  int64_t remaining_boundary_edges;
+  double filled_hole_area;
+} phx_mc_surface_hole_fill_report;
+
+PHX_MC_API int32_t phx_mc_surface_fill_holes(
+    const phx_mc_surface_hole_fill_request* request,
+    phx_mc_surface_hole_fill_report* report, void** out_surface);
+
+typedef struct phx_mc_surface_orient_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  int32_t orient_shells;
+  int32_t prune_small;
+  int64_t min_component_faces;
+  double min_component_area_fraction;
+  double min_component_volume_fraction;
+} phx_mc_surface_orient_request;
+
+typedef struct phx_mc_surface_orient_report {
+  int64_t component_count;
+  int64_t flipped_face_count;
+  int64_t cavity_component_count;
+  int64_t pruned_component_count;
+  int64_t pruned_face_count;
+} phx_mc_surface_orient_report;
+
+PHX_MC_API int32_t phx_mc_surface_orient_and_prune(
+    const phx_mc_surface_orient_request* request,
+    phx_mc_surface_orient_report* report, void** out_surface);
+
 /* Exact reference-triangle clipping retains the caller's output-row extent. */
 PHX_MC_API int32_t phx_mc_clip_reference_triangle_exact(
     const uint32_t* words, int64_t word_count, const int64_t* offsets, const int8_t* signs,

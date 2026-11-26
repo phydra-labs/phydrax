@@ -186,6 +186,7 @@ benchmarks/*
 !benchmarks/native_meshing.py
 !benchmarks/native_meshing_ceilings.json
 !benchmarks/native_meshing_mmg3d.py
+!benchmarks/surface_repair_comparison.py
 !benchmarks/_meshing_surfaces.py
 !benchmarks/native_meshing_inputs/
 !benchmarks/native_meshing_inputs/q2ring_pts.npy

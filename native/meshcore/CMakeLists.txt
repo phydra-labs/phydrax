@@ -103,6 +103,7 @@ set(PHX_MC_SOURCES
   src/surface_certify.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
+  src/surface_repair.cpp
   src/tet_mesh.cpp
   src/tet_mesh_collapse.cpp
   src/tet_mesh_export.cpp
@@ -382,6 +383,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_surface_envelope)
   phx_mc_add_test(test_surface_mesh)
   phx_mc_add_test(test_surface_certify)
+  phx_mc_add_test(test_surface_repair)
   phx_mc_add_test(test_mesh_source)
   phx_mc_add_test(test_zero_set_admission)
   phx_mc_add_test(test_elementary)

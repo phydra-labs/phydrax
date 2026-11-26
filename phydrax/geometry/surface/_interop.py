@@ -49,6 +49,11 @@ from ._contracts import (
     SurfaceValidityCertificate,
 )
 from ._model import _surface_connectivity, SurfaceModel
+from ._repair import (
+    repair_surface_mesh,
+    SurfaceRepairEvidence,
+    SurfaceRepairPolicy,
+)
 
 
 class SurfaceFileFormat(str, Enum):
@@ -200,6 +205,7 @@ class SurfaceImportPolicy:
     cad_linear_deflection_in_source_units: float = 1.0e-3
     cad_angular_deflection: float = 0.1
     cad_trim_samples_per_edge: int = 33
+    repair_policy: SurfaceRepairPolicy | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -207,6 +213,10 @@ class SurfaceImportPolicy:
         )
         if not isinstance(self.orientation, SurfaceOrientationPolicy):
             raise TypeError("orientation must be SurfaceOrientationPolicy.")
+        if self.repair_policy is not None and not isinstance(
+            self.repair_policy, SurfaceRepairPolicy
+        ):
+            raise TypeError("repair_policy must be SurfaceRepairPolicy or None.")
         object.__setattr__(
             self,
             "maximum_file_bytes",
@@ -372,6 +382,7 @@ class SurfaceImportResult:
     fields: tuple[PortableSurfaceField, ...]
     report: SurfaceInteropReport
     cad_model: Any | None = None
+    repair_evidence: SurfaceRepairEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -738,20 +749,34 @@ def _import_meshio_surface(
         ),
         cell_tags=tags,
     )
-    model = SurfaceModel.from_triangles(
-        np.asarray(points, dtype=np.float64) * scale,
-        faces,
-        metadata,
-        vertex_global_ids=vertex_ids,
-        cell_global_ids=cell_ids,
-        numeric_version=f"import-{artifact_digest[:16]}",
-        repair_orientation=(
-            policy.orientation is SurfaceOrientationPolicy.REPAIR_WITH_EVIDENCE
-        ),
-    )
-    orientation_changed = model.orientation_repair is not None and bool(
-        np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
-    )
+    repair_evidence: SurfaceRepairEvidence | None = None
+    if policy.repair_policy is not None:
+        repaired = repair_surface_mesh(
+            (np.asarray(points, dtype=np.float64) * scale, faces),
+            policy=policy.repair_policy,
+            metadata=metadata,
+        )
+        model = repaired.surface
+        repair_evidence = repaired.evidence
+        orientation_changed = repair_evidence.flipped_face_count > 0
+        point_count = repair_evidence.output_vertex_count
+        cell_count = repair_evidence.output_triangle_count
+        fields = ()
+    else:
+        model = SurfaceModel.from_triangles(
+            np.asarray(points, dtype=np.float64) * scale,
+            faces,
+            metadata,
+            vertex_global_ids=vertex_ids,
+            cell_global_ids=cell_ids,
+            numeric_version=f"import-{artifact_digest[:16]}",
+            repair_orientation=(
+                policy.orientation is SurfaceOrientationPolicy.REPAIR_WITH_EVIDENCE
+            ),
+        )
+        orientation_changed = model.orientation_repair is not None and bool(
+            np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
+        )
     report = SurfaceInteropReport(
         operation="import",
         file_format=file_format,
@@ -764,16 +789,18 @@ def _import_meshio_surface(
         artifact_digest=artifact_digest,
         vertex_count=point_count,
         cell_count=cell_count,
-        source_ids_preserved=vertex_data is not None and cell_data is not None,
-        tags_preserved=tags_preserved,
+        source_ids_preserved=(
+            repair_evidence is None and vertex_data is not None and cell_data is not None
+        ),
+        tags_preserved=repair_evidence is None and tags_preserved,
         source_metadata_preserved=metadata_preserved,
         orientation_changed=orientation_changed,
-        lossy=bool(losses_),
+        lossy=bool(losses_) or repair_evidence is not None,
         losses=losses_,
         fields=_field_records(fields),
         source_path=source_path,
     )
-    return SurfaceImportResult(model, fields, report)
+    return SurfaceImportResult(model, fields, report, None, repair_evidence)
 
 
 def _import_cad_surface(
@@ -850,18 +877,33 @@ def _import_cad_surface(
         ),
         cell_tags=tags,
     )
-    model = SurfaceModel.from_triangles(
-        points * scale,
-        faces,
-        metadata,
-        numeric_version=f"cad-{artifact_digest[:16]}",
-        repair_orientation=(
-            policy.orientation is SurfaceOrientationPolicy.REPAIR_WITH_EVIDENCE
-        ),
-    )
-    orientation_changed = model.orientation_repair is not None and bool(
-        np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
-    )
+    repair_evidence: SurfaceRepairEvidence | None = None
+    if policy.repair_policy is not None:
+        repaired = repair_surface_mesh(
+            (points * scale, faces),
+            policy=policy.repair_policy,
+            metadata=metadata,
+        )
+        model = repaired.surface
+        repair_evidence = repaired.evidence
+        orientation_changed = repair_evidence.flipped_face_count > 0
+        out_vertices = repair_evidence.output_vertex_count
+        out_cells = repair_evidence.output_triangle_count
+    else:
+        model = SurfaceModel.from_triangles(
+            points * scale,
+            faces,
+            metadata,
+            numeric_version=f"cad-{artifact_digest[:16]}",
+            repair_orientation=(
+                policy.orientation is SurfaceOrientationPolicy.REPAIR_WITH_EVIDENCE
+            ),
+        )
+        orientation_changed = model.orientation_repair is not None and bool(
+            np.any(np.asarray(model.orientation_repair.orientation_signs) < 0)
+        )
+        out_vertices = points.shape[0]
+        out_cells = faces.shape[0]
     report = SurfaceInteropReport(
         operation="import",
         file_format=file_format,
@@ -872,8 +914,8 @@ def _import_cad_surface(
         source_id=source_id,
         source_revision=source_revision,
         artifact_digest=artifact_digest,
-        vertex_count=points.shape[0],
-        cell_count=faces.shape[0],
+        vertex_count=out_vertices,
+        cell_count=out_cells,
         source_ids_preserved=False,
         tags_preserved=False,
         source_metadata_preserved=False,
@@ -883,7 +925,7 @@ def _import_cad_surface(
         fields=(),
         source_path=str(source),
     )
-    return SurfaceImportResult(model, (), report, cad_model)
+    return SurfaceImportResult(model, (), report, cad_model, repair_evidence)
 
 
 def import_surface(

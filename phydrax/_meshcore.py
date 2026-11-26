@@ -756,6 +756,97 @@ class _MeshCertifyRequest(ctypes.Structure):
     )
 
 
+class _SolidExtractionReport(ctypes.Structure):
+    _fields_ = (
+        ("patch_count", _I64),
+        ("cell_count", _I64),
+        ("canceled_coplanar_fragments", _I64),
+        ("boundary_edge_count", _I64),
+        ("nonmanifold_edge_count", _I64),
+        ("nonmanifold_vertex_count", _I64),
+        ("split_pinch_vertices", _I64),
+        ("used_generalized_winding", _I32),
+        ("closed", _I32),
+    )
+
+
+class _SurfaceCleanRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("weld_tolerance", _F64),
+        ("t_junction_tolerance", _F64),
+        ("min_edge_length", _F64),
+        ("min_triangle_area", _F64),
+        ("drop_degenerate", _I32),
+        ("preserve_embedding", _I32),
+    )
+
+
+class _SurfaceCleanReport(ctypes.Structure):
+    _fields_ = (
+        ("welded_vertices", _I64),
+        ("t_junction_splits", _I64),
+        ("collapsed_edges", _I64),
+        ("flipped_caps", _I64),
+        ("dropped_degenerate_faces", _I64),
+        ("dropped_duplicate_faces", _I64),
+        ("rejected_fold_welds", _I64),
+        ("max_vertex_displacement", _F64),
+    )
+
+
+class _SurfaceHoleFillRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("max_hole_edges", _I64),
+        ("max_hole_diameter", _F64),
+        ("fair_caps", _I32),
+        ("refine_caps", _I32),
+        ("check_embedding", _I32),
+    )
+
+
+class _SurfaceHoleFillReport(ctypes.Structure):
+    _fields_ = (
+        ("filled_hole_count", _I64),
+        ("skipped_large_holes", _I64),
+        ("added_cap_triangles", _I64),
+        ("colliding_cap_triangles", _I64),
+        ("remaining_boundary_edges", _I64),
+        ("filled_hole_area", _F64),
+    )
+
+
+class _SurfaceOrientRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("orient_shells", _I32),
+        ("prune_small", _I32),
+        ("min_component_faces", _I64),
+        ("min_component_area_fraction", _F64),
+        ("min_component_volume_fraction", _F64),
+    )
+
+
+class _SurfaceOrientReport(ctypes.Structure):
+    _fields_ = (
+        ("component_count", _I64),
+        ("flipped_face_count", _I64),
+        ("cavity_component_count", _I64),
+        ("pruned_component_count", _I64),
+        ("pruned_face_count", _I64),
+    )
+
+
 class _LevelSetSplit3DRequest(ctypes.Structure):
     _fields_ = (
         ("point_count", _I64),
@@ -1648,6 +1739,35 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _I64, _I64, _P, _P),
     ),
     "phx_mc_arrangement_free": (None, (_P,)),
+    "phx_mc_arrange_soup": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_arrangement_extract_solid": (
+        _I32,
+        (_P, _I32, _I32, ctypes.POINTER(_SolidExtractionReport), _P),
+    ),
+    "phx_mc_surface_weld_and_clean": (
+        _I32,
+        (
+            ctypes.POINTER(_SurfaceCleanRequest),
+            ctypes.POINTER(_SurfaceCleanReport),
+            _P,
+        ),
+    ),
+    "phx_mc_surface_fill_holes": (
+        _I32,
+        (
+            ctypes.POINTER(_SurfaceHoleFillRequest),
+            ctypes.POINTER(_SurfaceHoleFillReport),
+            _P,
+        ),
+    ),
+    "phx_mc_surface_orient_and_prune": (
+        _I32,
+        (
+            ctypes.POINTER(_SurfaceOrientRequest),
+            ctypes.POINTER(_SurfaceOrientReport),
+            _P,
+        ),
+    ),
     "phx_mc_clip_reference_triangle_exact": (
         _I32,
         (_P, _I64, _P, _P, _I32, _P, _P, _P),
@@ -9001,6 +9121,431 @@ def arrange_triangles(
         return result._replace(classification=classification)
     finally:
         library["phx_mc_arrangement_free"](handle)
+
+
+class SolidWindingCode(IntEnum):
+    """Native solid extraction winding rule selector."""
+
+    NONZERO = 0
+    POSITIVE = 1
+    EVEN_ODD = 2
+    GENERALIZED_HALF = 3
+
+
+class NativeSolidExtraction(NamedTuple):
+    """Watertight or audited solid boundary extracted from a single-soup arrangement."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    fragment_count: int
+    patch_count: int
+    cell_count: int
+    canceled_coplanar_fragments: int
+    boundary_edge_count: int
+    nonmanifold_edge_count: int
+    nonmanifold_vertex_count: int
+    split_pinch_vertices: int
+    used_generalized_winding: bool
+    closed: bool
+
+
+class NativeSurfaceClean(NamedTuple):
+    """Output surface and evidence from native welding, T-junction split, and cleanup."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    welded_vertices: int
+    t_junction_splits: int
+    collapsed_edges: int
+    flipped_caps: int
+    dropped_degenerate_faces: int
+    dropped_duplicate_faces: int
+    rejected_fold_welds: int
+    max_vertex_displacement: float
+
+
+class NativeHoleFill(NamedTuple):
+    """Output surface and evidence from Liepa DP hole filling and embedding check."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    filled_hole_count: int
+    skipped_large_holes: int
+    added_cap_triangles: int
+    colliding_cap_triangles: int
+    remaining_boundary_edges: int
+    filled_hole_area: float
+
+
+class NativeSurfaceOrient(NamedTuple):
+    """Output surface and evidence from shell orientation and debris pruning."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    component_count: int
+    flipped_face_count: int
+    cavity_component_count: int
+    pruned_component_count: int
+    pruned_face_count: int
+
+
+def arrange_soup(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    pairs: object | None = None,
+) -> NativeArrangement:
+    """Arrange one potentially self-intersecting triangle soup over implicit points."""
+
+    points = _points(vertices, "vertices", 3)
+    faces = _native_integer_array(triangles, "triangles", np.dtype(np.int64))
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or np.any(faces < 0)
+        or np.any(faces >= points.shape[0])
+    ):
+        raise ValueError("triangle array is misaligned with vertices.")
+    pair_count = 0
+    pair_ptr = 0
+    candidates: np.ndarray | None = None
+    if pairs is not None:
+        candidates = _native_integer_array(pairs, "pairs", np.dtype(np.int64))
+        if (
+            candidates.ndim != 2
+            or candidates.shape[1] != 2
+            or np.any(candidates < 0)
+            or np.any(candidates >= faces.shape[0])
+        ):
+            raise ValueError("candidate pair array is misaligned with triangles.")
+        pair_count = candidates.shape[0]
+        pair_ptr = candidates.ctypes.data if pair_count > 0 else 0
+    library = load_meshcore()
+    handle = ctypes.c_void_p()
+    failed_face = np.full((1,), -1, dtype=np.int64)
+    status = MeshcoreStatus(
+        library["phx_mc_arrange_soup"](
+            points.shape[0],
+            points.ctypes.data,
+            faces.shape[0],
+            faces.ctypes.data,
+            pair_count,
+            pair_ptr,
+            failed_face.ctypes.data,
+            ctypes.addressof(handle),
+        )
+    )
+    if not handle.value:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "arrange_soup: missing result")
+    try:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        sizes = np.empty((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_arrangement_sizes"](handle, sizes.ctypes.data),
+            "arrangement_sizes",
+        )
+        vertex_count, fragment_count, edge_count, coplanar_count, location_count = sizes
+        result = NativeArrangement(
+            np.empty((vertex_count, 3), dtype=np.float64),
+            np.empty((vertex_count,), dtype=np.float64),
+            np.empty((vertex_count,), dtype=np.int8),
+            np.empty((vertex_count,), dtype=np.int64),
+            np.empty((fragment_count, 3), dtype=np.int64),
+            np.empty((fragment_count,), dtype=np.int64),
+            np.empty((edge_count, 2), dtype=np.int64),
+            np.empty((coplanar_count, 3), dtype=np.int64),
+            np.empty((location_count, 3), dtype=np.int64),
+            None,
+        )
+        _raise_for_call(
+            library["phx_mc_arrangement_export"](
+                handle,
+                vertex_count,
+                fragment_count,
+                edge_count,
+                coplanar_count,
+                location_count,
+                result.vertices.ctypes.data,
+                result.bounds.ctypes.data,
+                result.constructions.ctypes.data,
+                result.origins.ctypes.data,
+                result.fragments.ctypes.data,
+                result.fragment_faces.ctypes.data,
+                result.contact_edges.ctypes.data,
+                result.coplanar.ctypes.data,
+                result.locations.ctypes.data,
+            ),
+            "arrangement_export",
+        )
+        return result
+    finally:
+        library["phx_mc_arrangement_free"](handle)
+
+
+def arrange_soup_extract_solid(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    winding_rule: SolidWindingCode = SolidWindingCode.NONZERO,
+    split_nonmanifold_pinches: bool = False,
+    pairs: object | None = None,
+) -> NativeSolidExtraction:
+    """Self-arrange a single triangle soup and extract its solid boundary in one pass."""
+
+    points = _points(vertices, "vertices", 3)
+    faces = _native_integer_array(triangles, "triangles", np.dtype(np.int64))
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or np.any(faces < 0)
+        or np.any(faces >= points.shape[0])
+    ):
+        raise ValueError("triangle array is misaligned with vertices.")
+    pair_count = 0
+    pair_ptr = 0
+    if pairs is not None:
+        candidates = _native_integer_array(pairs, "pairs", np.dtype(np.int64))
+        if (
+            candidates.ndim != 2
+            or candidates.shape[1] != 2
+            or np.any(candidates < 0)
+            or np.any(candidates >= faces.shape[0])
+        ):
+            raise ValueError("candidate pair array is misaligned with triangles.")
+        pair_count = candidates.shape[0]
+        pair_ptr = candidates.ctypes.data if pair_count > 0 else 0
+    library = load_meshcore()
+    arr_handle = ctypes.c_void_p()
+    failed_face = np.full((1,), -1, dtype=np.int64)
+    status = MeshcoreStatus(
+        library["phx_mc_arrange_soup"](
+            points.shape[0],
+            points.ctypes.data,
+            faces.shape[0],
+            faces.ctypes.data,
+            pair_count,
+            pair_ptr,
+            failed_face.ctypes.data,
+            ctypes.addressof(arr_handle),
+        )
+    )
+    if not arr_handle.value:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "arrange_soup_extract_solid: missing arrangement",
+        )
+    try:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        sizes = np.empty((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_arrangement_sizes"](arr_handle, sizes.ctypes.data),
+            "arrangement_sizes",
+        )
+        fragment_count = int(sizes[1])
+        report = _SolidExtractionReport()
+        surface_handle = ctypes.c_void_p()
+        _raise_for_call(
+            library["phx_mc_arrangement_extract_solid"](
+                arr_handle,
+                int(winding_rule),
+                1 if split_nonmanifold_pinches else 0,
+                ctypes.byref(report),
+                ctypes.addressof(surface_handle),
+            ),
+            "arrangement_extract_solid",
+        )
+        out_vertices, out_triangles, _ = _take_surface_result(
+            library, surface_handle, "arrangement_extract_solid"
+        )
+        return NativeSolidExtraction(
+            vertices=out_vertices,
+            triangles=out_triangles,
+            fragment_count=fragment_count,
+            patch_count=int(report.patch_count),
+            cell_count=int(report.cell_count),
+            canceled_coplanar_fragments=int(report.canceled_coplanar_fragments),
+            boundary_edge_count=int(report.boundary_edge_count),
+            nonmanifold_edge_count=int(report.nonmanifold_edge_count),
+            nonmanifold_vertex_count=int(report.nonmanifold_vertex_count),
+            split_pinch_vertices=int(report.split_pinch_vertices),
+            used_generalized_winding=bool(report.used_generalized_winding),
+            closed=bool(report.closed),
+        )
+    finally:
+        library["phx_mc_arrangement_free"](arr_handle)
+
+
+def surface_weld_and_clean(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    weld_tolerance: float = 0.0,
+    t_junction_tolerance: float = 0.0,
+    min_edge_length: float = 0.0,
+    min_triangle_area: float = 0.0,
+    drop_degenerate: bool = False,
+    preserve_embedding: bool = True,
+) -> NativeSurfaceClean:
+    """Weld close vertices with bounded drift, split T-junctions, and clean slivers."""
+
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("triangles must be an (N, 3) integer array.")
+    request = _SurfaceCleanRequest(
+        points.ctypes.data if points.shape[0] > 0 else 0,
+        points.shape[0],
+        faces.ctypes.data if faces.shape[0] > 0 else 0,
+        faces.shape[0],
+        float(weld_tolerance),
+        float(t_junction_tolerance),
+        float(min_edge_length),
+        float(min_triangle_area),
+        1 if drop_degenerate else 0,
+        1 if preserve_embedding else 0,
+    )
+    report = _SurfaceCleanReport()
+    handle = ctypes.c_void_p()
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_surface_weld_and_clean"](
+            ctypes.byref(request), ctypes.byref(report), ctypes.addressof(handle)
+        ),
+        "surface_weld_and_clean",
+    )
+    out_vertices, out_triangles, _ = _take_surface_result(
+        library, handle, "surface_weld_and_clean"
+    )
+    return NativeSurfaceClean(
+        vertices=out_vertices,
+        triangles=out_triangles,
+        welded_vertices=int(report.welded_vertices),
+        t_junction_splits=int(report.t_junction_splits),
+        collapsed_edges=int(report.collapsed_edges),
+        flipped_caps=int(report.flipped_caps),
+        dropped_degenerate_faces=int(report.dropped_degenerate_faces),
+        dropped_duplicate_faces=int(report.dropped_duplicate_faces),
+        rejected_fold_welds=int(report.rejected_fold_welds),
+        max_vertex_displacement=float(report.max_vertex_displacement),
+    )
+
+
+def surface_fill_holes(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    max_hole_edges: int = 0,
+    max_hole_diameter: float = 0.0,
+    fair_caps: bool = False,
+    refine_caps: bool = False,
+    check_embedding: bool = True,
+) -> NativeHoleFill:
+    """Fill eligible boundary loops via Liepa min-dihedral DP and verify cap contacts."""
+
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("triangles must be an (N, 3) integer array.")
+    request = _SurfaceHoleFillRequest(
+        points.ctypes.data if points.shape[0] > 0 else 0,
+        points.shape[0],
+        faces.ctypes.data if faces.shape[0] > 0 else 0,
+        faces.shape[0],
+        int(max_hole_edges),
+        float(max_hole_diameter),
+        1 if fair_caps else 0,
+        1 if refine_caps else 0,
+        1 if check_embedding else 0,
+    )
+    report = _SurfaceHoleFillReport()
+    handle = ctypes.c_void_p()
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_surface_fill_holes"](
+            ctypes.byref(request), ctypes.byref(report), ctypes.addressof(handle)
+        ),
+        "surface_fill_holes",
+    )
+    out_vertices, out_triangles, _ = _take_surface_result(
+        library, handle, "surface_fill_holes"
+    )
+    return NativeHoleFill(
+        vertices=out_vertices,
+        triangles=out_triangles,
+        filled_hole_count=int(report.filled_hole_count),
+        skipped_large_holes=int(report.skipped_large_holes),
+        added_cap_triangles=int(report.added_cap_triangles),
+        colliding_cap_triangles=int(report.colliding_cap_triangles),
+        remaining_boundary_edges=int(report.remaining_boundary_edges),
+        filled_hole_area=float(report.filled_hole_area),
+    )
+
+
+def surface_orient_and_prune(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    orient_shells: bool = True,
+    prune_small: bool = False,
+    min_component_faces: int = 0,
+    min_component_area_fraction: float = 0.0,
+    min_component_volume_fraction: float = 0.0,
+) -> NativeSurfaceOrient:
+    """Orient shells with nested-cavity/generalized-winding rules and prune debris."""
+
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("triangles must be an (N, 3) integer array.")
+    request = _SurfaceOrientRequest(
+        points.ctypes.data if points.shape[0] > 0 else 0,
+        points.shape[0],
+        faces.ctypes.data if faces.shape[0] > 0 else 0,
+        faces.shape[0],
+        1 if orient_shells else 0,
+        1 if prune_small else 0,
+        int(min_component_faces),
+        float(min_component_area_fraction),
+        float(min_component_volume_fraction),
+    )
+    report = _SurfaceOrientReport()
+    handle = ctypes.c_void_p()
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_surface_orient_and_prune"](
+            ctypes.byref(request), ctypes.byref(report), ctypes.addressof(handle)
+        ),
+        "surface_orient_and_prune",
+    )
+    out_vertices, out_triangles, _ = _take_surface_result(
+        library, handle, "surface_orient_and_prune"
+    )
+    return NativeSurfaceOrient(
+        vertices=out_vertices,
+        triangles=out_triangles,
+        component_count=int(report.component_count),
+        flipped_face_count=int(report.flipped_face_count),
+        cavity_component_count=int(report.cavity_component_count),
+        pruned_component_count=int(report.pruned_component_count),
+        pruned_face_count=int(report.pruned_face_count),
+    )
 
 
 def _exact_scalar_bank(

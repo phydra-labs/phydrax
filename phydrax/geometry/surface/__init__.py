@@ -101,6 +101,18 @@ _EXPORT_GROUPS = (
             "import_surface",
         ),
     ),
+    (
+        "._repair",
+        (
+            "repair_surface_mesh",
+            "SolidWindingRule",
+            "SurfaceRepairError",
+            "SurfaceRepairEvidence",
+            "SurfaceRepairPolicy",
+            "SurfaceRepairResult",
+            "SurfaceRepairStatus",
+        ),
+    ),
 )
 from ._intersection import (
     intersect_plane_surface,

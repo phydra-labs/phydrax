@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "070769f97286b751ccc335578c907b4d9b2bf6ebd56538b4c83af89a35b72302",
+  "manifest_id": "915c4ecff522b8798de155a5ce394f73fd524660e6165bb44824048375448026",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23617,6 +23617,7 @@
       "phydrax.geometry.SketchContinuationResult",
       "phydrax.geometry.SketchPreparationEvidence",
       "phydrax.geometry.SketchSolution",
+      "phydrax.geometry.SolidWindingRule",
       "phydrax.geometry.SourceBoundaryFaceImageWitness",
       "phydrax.geometry.SourceBoundaryImagePullback",
       "phydrax.geometry.SourceBoundaryProjectionQuery",
@@ -23665,6 +23666,11 @@
       "phydrax.geometry.SurfacePreparationStatus",
       "phydrax.geometry.SurfaceProviderUnavailableError",
       "phydrax.geometry.SurfaceRealization",
+      "phydrax.geometry.SurfaceRepairError",
+      "phydrax.geometry.SurfaceRepairEvidence",
+      "phydrax.geometry.SurfaceRepairPolicy",
+      "phydrax.geometry.SurfaceRepairResult",
+      "phydrax.geometry.SurfaceRepairStatus",
       "phydrax.geometry.SurfaceResourceLimitError",
       "phydrax.geometry.SurfaceSelection",
       "phydrax.geometry.SurfaceSolidCertificateError",
@@ -23805,6 +23811,7 @@
       "phydrax.geometry.refit_triangle_ray_geometry",
       "phydrax.geometry.regularized_delta_values",
       "phydrax.geometry.regularized_heaviside_values",
+      "phydrax.geometry.repair_surface_mesh",
       "phydrax.geometry.represented_mesh_closest_point",
       "phydrax.geometry.require_polyhedral_carrier_geometry",
       "phydrax.geometry.resolve_host_predicate_mode",
@@ -24367,6 +24374,7 @@
       "phydrax.geometry.surface.PreparedHalfEdgePatchTopology",
       "phydrax.geometry.surface.ProjectedBiquinticCoefficients",
       "phydrax.geometry.surface.SeamContinuityEvidence",
+      "phydrax.geometry.surface.SolidWindingRule",
       "phydrax.geometry.surface.SurfaceArrangement",
       "phydrax.geometry.surface.SurfaceArrangementError",
       "phydrax.geometry.surface.SurfaceArrangementEvidence",
@@ -24399,6 +24407,11 @@
       "phydrax.geometry.surface.SurfacePreparationStatus",
       "phydrax.geometry.surface.SurfaceProviderUnavailableError",
       "phydrax.geometry.surface.SurfaceRealization",
+      "phydrax.geometry.surface.SurfaceRepairError",
+      "phydrax.geometry.surface.SurfaceRepairEvidence",
+      "phydrax.geometry.surface.SurfaceRepairPolicy",
+      "phydrax.geometry.surface.SurfaceRepairResult",
+      "phydrax.geometry.surface.SurfaceRepairStatus",
       "phydrax.geometry.surface.SurfaceResourceLimitError",
       "phydrax.geometry.surface.SurfaceSelection",
       "phydrax.geometry.surface.SurfaceSolidCertificateError",
@@ -24413,6 +24426,7 @@
       "phydrax.geometry.surface.realize_boundary_atlas",
       "phydrax.geometry.surface.realize_bspline_surface",
       "phydrax.geometry.surface.realize_isoparametric_triangles",
+      "phydrax.geometry.surface.repair_surface_mesh",
       "phydrax.geometry.surface.surface_boolean"
     ],
     "phydrax.graph": [

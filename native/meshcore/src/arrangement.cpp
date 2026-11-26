@@ -70,6 +70,8 @@
 #include "exact_scalar.hpp"
 #include "geometry3.hpp"
 #include "facet_coverage.hpp"
+#include "surface_adapt.hpp"
+#include "surface_certify.hpp"
 #include "topology_keys.hpp"
 
 namespace phx::mc {
@@ -401,6 +403,103 @@ class Kernel {
       return normal[0] * lift<T>(x[0]) + normal[1] * lift<T>(x[1]) + normal[2] * lift<T>(x[2]) -
              offset;
     });
+  }
+
+  // Exact sign of the side of any explicit or implicit pool point relative to
+  // an input triangle plane (degree <= 9 in input coordinates).
+  int side_pool(const PlaneDef& plane, std::int64_t pool_id) {
+    if (!pool_[static_cast<std::size_t>(pool_id)].def.implicit) {
+      return side(plane, pool_[static_cast<std::size_t>(pool_id)].def.vertex);
+    }
+    const int sign = decide([&]<class T>() -> T {
+      const T* h = hom<T>(pool_id);
+      T normal[3];
+      T offset;
+      plane_value(coords_, plane, normal, offset);
+      return normal[0] * h[0] + normal[1] * h[1] + normal[2] * h[2] - offset * h[3];
+    });
+    return sign * w(pool_id);
+  }
+
+  // Exact integer winding number of the open half-space strictly ahead of
+  // fragment (p, q, r) along +axis, computed with symbolic (eps, eps^2)
+  // perturbation and skipping faces coplanar with the centroid (side == 0).
+  int winding_ahead(std::int64_t p, std::int64_t q, std::int64_t r, int axis,
+                    const std::int64_t* triangles, std::size_t face_count,
+                    std::vector<std::int8_t>& normal_signs) {
+    const int i = (axis + 1) % 3;
+    const int j = (axis + 2) % 3;
+    Approx approx[4];
+    centroid(p, q, r, approx);
+    std::optional<std::array<Dyadic, 4>> exact;
+    const auto center = [&]<class T>() -> const T* {
+      if constexpr (std::is_same_v<T, Approx>) {
+        return approx;
+      } else {
+        if (!exact) {
+          exact.emplace();
+          centroid(p, q, r, exact->data());
+        }
+        return exact->data();
+      }
+    };
+    const int w_sign = w(p) * w(q) * w(r);
+    double lower[3];
+    double upper[3];
+    for (int k = 0; k < 3; ++k) {
+      lower[k] = std::min({point(p).lower(k), point(q).lower(k), point(r).lower(k)});
+      upper[k] = std::max({point(p).upper(k), point(q).upper(k), point(r).upper(k)});
+    }
+    const auto edge_side = [&](const double* u, const double* v) {
+      const int sign = decide([&]<class T>() -> T {
+        const T* h = center.template operator()<T>();
+        const T ui = lift<T>(u[i]);
+        const T uj = lift<T>(u[j]);
+        return (lift<T>(v[i]) - ui) * (h[j] - uj * h[3]) -
+               (lift<T>(v[j]) - uj) * (h[i] - ui * h[3]);
+      });
+      if (sign != 0) {
+        return sign * w_sign;
+      }
+      if (v[j] != u[j]) {
+        return v[j] > u[j] ? -1 : 1;
+      }
+      return v[i] > u[i] ? 1 : -1;
+    };
+    int value = 0;
+    for (std::size_t face = 0; face < face_count; ++face) {
+      const std::int64_t* v = triangles + 3 * face;
+      const double* corner[3] = {coords_ + 3 * v[0], coords_ + 3 * v[1], coords_ + 3 * v[2]};
+      bool missed = std::max({corner[0][axis], corner[1][axis], corner[2][axis]}) < lower[axis];
+      for (const int t : {i, j}) {
+        missed = missed || std::max({corner[0][t], corner[1][t], corner[2][t]}) < lower[t] ||
+                 std::min({corner[0][t], corner[1][t], corner[2][t]}) > upper[t];
+      }
+      if (missed) continue;
+      const PlaneDef plane{0, 0, v[0], v[1], v[2]};
+      std::int8_t& cached = normal_signs[3 * face + static_cast<std::size_t>(axis)];
+      if (cached == 2) {
+        double magnitude = 0.0;
+        cached = static_cast<std::int8_t>(normal_sign(plane, axis, magnitude));
+      }
+      const int normal = cached;
+      if (normal == 0 || edge_side(corner[0], corner[1]) != normal ||
+          edge_side(corner[1], corner[2]) != normal ||
+          edge_side(corner[2], corner[0]) != normal) {
+        continue;
+      }
+      const int side_val = w_sign * decide([&]<class T>() -> T {
+        const T* h = center.template operator()<T>();
+        T n[3];
+        T offset;
+        plane_value(coords_, plane, n, offset);
+        return n[0] * h[0] + n[1] * h[1] + n[2] * h[2] - offset * h[3];
+      });
+      if (side_val * normal < 0) {
+        value += normal;
+      }
+    }
+    return value;
   }
 
   // Sign and filtered magnitude of one normal component of a triangle plane.
@@ -1907,6 +2006,7 @@ struct phx_mc_arrangement {
   std::vector<std::int64_t> contact_edges;
   std::vector<std::int64_t> coplanar;
   std::vector<std::int64_t> locations;
+  std::vector<std::int64_t> published_pool;
   // Immutable input copies and the exact construction pool, retained so that
   // membership is decided on the implicit points (never on the rounded
   // publication) and never on caller memory the caller may free or mutate.
@@ -2078,6 +2178,7 @@ void publish_point_representatives(Kernel& kernel, ArrangementPublication& state
     result.bounds.push_back(point.bound);
     result.constructions.push_back(construction[index]);
     result.origins.push_back(kernel.is_input(used[index]) ? point.def.vertex : -1);
+    result.published_pool.push_back(used[index]);
   }
 }
 
@@ -2273,6 +2374,718 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count) {
   result.classified_operand_count = operand_count;
 }
 
+// ------------------------------------------------ single-soup self-arrangement
+
+struct SoupBox {
+  double lo[3];
+  double hi[3];
+};
+
+struct SoupMortonItem {
+  std::uint64_t code;
+  std::int64_t face;
+};
+
+struct SoupBvhNode {
+  SoupBox box;
+  std::int64_t begin;
+  std::int64_t end;
+  std::int64_t left;
+  std::int64_t right;
+};
+
+bool soup_boxes_overlap(const SoupBox& a, const SoupBox& b) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if (a.hi[axis] < b.lo[axis] || b.hi[axis] < a.lo[axis]) return false;
+  }
+  return true;
+}
+
+std::uint32_t soup_spread_bits(std::uint32_t v) {
+  v = (v | (v << 16)) & 0x030000ffU;
+  v = (v | (v << 8)) & 0x0300f00fU;
+  v = (v | (v << 4)) & 0x030c30c3U;
+  return (v | (v << 2)) & 0x09249249U;
+}
+
+std::int64_t build_soup_bvh(const std::vector<SoupBox>& boxes,
+                            const std::vector<SoupMortonItem>& items,
+                            std::vector<SoupBvhNode>& nodes, std::int64_t begin,
+                            std::int64_t end) {
+  const std::int64_t index = static_cast<std::int64_t>(nodes.size());
+  nodes.push_back({});
+  SoupBox bounds = boxes[static_cast<std::size_t>(items[static_cast<std::size_t>(begin)].face)];
+  for (std::int64_t i = begin + 1; i < end; ++i) {
+    const SoupBox& b = boxes[static_cast<std::size_t>(items[static_cast<std::size_t>(i)].face)];
+    for (int d = 0; d < 3; ++d) {
+      bounds.lo[d] = std::min(bounds.lo[d], b.lo[d]);
+      bounds.hi[d] = std::max(bounds.hi[d], b.hi[d]);
+    }
+  }
+  nodes[static_cast<std::size_t>(index)] = {bounds, begin, end, -1, -1};
+  if (end - begin <= 8) return index;
+  const std::int64_t mid = begin + (end - begin) / 2;
+  const std::int64_t left = build_soup_bvh(boxes, items, nodes, begin, mid);
+  const std::int64_t right = build_soup_bvh(boxes, items, nodes, mid, end);
+  nodes[static_cast<std::size_t>(index)].left = left;
+  nodes[static_cast<std::size_t>(index)].right = right;
+  return index;
+}
+
+bool soup_pair_needs_split(const double* vertices, const std::int64_t* triangles, std::int64_t a,
+                           std::int64_t b) {
+  const std::int64_t* ta = triangles + 3 * a;
+  const std::int64_t* tb = triangles + 3 * b;
+  const phx::mc::remesh::Triangle ida{ta[0], ta[1], ta[2]};
+  const phx::mc::remesh::Triangle idb{tb[0], tb[1], tb[2]};
+  std::array<phx::mc::remesh::Point, 3> pa{};
+  std::array<phx::mc::remesh::Point, 3> pb{};
+  for (int k = 0; k < 3; ++k) {
+    for (int d = 0; d < 3; ++d) {
+      pa[static_cast<std::size_t>(k)][static_cast<std::size_t>(d)] = vertices[3 * ta[k] + d];
+      pb[static_cast<std::size_t>(k)][static_cast<std::size_t>(d)] = vertices[3 * tb[k] + d];
+    }
+  }
+  return !phx::mc::remesh::legal_triangle_contact(pa, ida, pb, idb);
+}
+
+void collect_self_overlap_partners(const double* vertices, std::int64_t triangle_count,
+                                   const std::int64_t* triangles,
+                                   std::vector<std::vector<std::int64_t>>& partners) {
+  if (triangle_count <= 1) return;
+  const auto n = static_cast<std::size_t>(triangle_count);
+  std::vector<SoupBox> boxes(n);
+  SoupBox global{};
+  for (std::size_t t = 0; t < n; ++t) {
+    SoupBox& box = boxes[t];
+    for (int d = 0; d < 3; ++d) {
+      const double x0 = vertices[3 * triangles[3 * t] + d];
+      const double x1 = vertices[3 * triangles[3 * t + 1] + d];
+      const double x2 = vertices[3 * triangles[3 * t + 2] + d];
+      box.lo[d] = std::min({x0, x1, x2});
+      box.hi[d] = std::max({x0, x1, x2});
+      if (t == 0) {
+        global.lo[d] = box.lo[d];
+        global.hi[d] = box.hi[d];
+      } else {
+        global.lo[d] = std::min(global.lo[d], box.lo[d]);
+        global.hi[d] = std::max(global.hi[d], box.hi[d]);
+      }
+    }
+  }
+  std::vector<SoupMortonItem> items(n);
+  for (std::size_t t = 0; t < n; ++t) {
+    std::uint32_t code = 0;
+    for (int d = 0; d < 3; ++d) {
+      const double span = global.hi[d] - global.lo[d];
+      const double center = 0.5 * (boxes[t].lo[d] + boxes[t].hi[d]);
+      const double unit = span > 0.0 ? (center - global.lo[d]) / span : 0.0;
+      const auto quantized = static_cast<std::uint32_t>(std::clamp(unit * 1023.0, 0.0, 1023.0));
+      code |= soup_spread_bits(quantized) << d;
+    }
+    items[t] = {code, static_cast<std::int64_t>(t)};
+  }
+  std::sort(items.begin(), items.end(), [](const SoupMortonItem& x, const SoupMortonItem& y) {
+    return x.code != y.code ? x.code < y.code : x.face < y.face;
+  });
+  std::vector<SoupBvhNode> nodes;
+  nodes.reserve(n);
+  const std::int64_t root = build_soup_bvh(boxes, items, nodes, 0, triangle_count);
+  std::vector<std::int64_t> stack;
+  stack.reserve(128);
+  for (std::int64_t t = 0; t < triangle_count; ++t) {
+    const SoupBox& query = boxes[static_cast<std::size_t>(t)];
+    stack.clear();
+    stack.push_back(root);
+    while (!stack.empty()) {
+      const SoupBvhNode& node = nodes[static_cast<std::size_t>(stack.back())];
+      stack.pop_back();
+      if (!soup_boxes_overlap(query, node.box)) continue;
+      if (node.left < 0) {
+        for (std::int64_t k = node.begin; k < node.end; ++k) {
+          const std::int64_t other = items[static_cast<std::size_t>(k)].face;
+          if (other <= t) continue;
+          if (!soup_boxes_overlap(query, boxes[static_cast<std::size_t>(other)])) continue;
+          if (soup_pair_needs_split(vertices, triangles, t, other)) {
+            partners[static_cast<std::size_t>(t)].push_back(other);
+            partners[static_cast<std::size_t>(other)].push_back(t);
+          }
+        }
+      } else {
+        stack.push_back(node.right);
+        stack.push_back(node.left);
+      }
+    }
+  }
+}
+
+// --------------------------------------- exact 3D arrangement solid extraction
+
+struct UniquePatch {
+  std::array<std::int64_t, 3> verts{};
+  std::array<std::int64_t, 3> pools{};
+  std::int64_t parent_face = -1;
+  std::int32_t multiplicity = 0;
+  std::int8_t plane_sign = 1;
+};
+
+struct RadialEntry {
+  std::int64_t tri = -1;
+  std::int64_t opp_pool = -1;
+  phx::mc::PlaneDef plane{};
+  std::int8_t dir = 1;
+  std::int8_t edge_normal_sign = 1;
+};
+
+double solid_angle_van_oosterom(const double* p, const double* a, const double* b,
+                                const double* c) {
+  const double ax = a[0] - p[0], ay = a[1] - p[1], az = a[2] - p[2];
+  const double bx = b[0] - p[0], by = b[1] - p[1], bz = b[2] - p[2];
+  const double cx = c[0] - p[0], cy = c[1] - p[1], cz = c[2] - p[2];
+  const double la = std::sqrt(ax * ax + ay * ay + az * az);
+  const double lb = std::sqrt(bx * bx + by * by + bz * bz);
+  const double lc = std::sqrt(cx * cx + cy * cy + cz * cz);
+  if (la == 0.0 || lb == 0.0 || lc == 0.0) return 0.0;
+  const double det =
+      ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+  const double ab = ax * bx + ay * by + az * bz;
+  const double bc = bx * cx + by * cy + bz * cz;
+  const double ca = cx * ax + cy * ay + cz * az;
+  const double denom = la * lb * lc + ab * lc + bc * la + ca * lb;
+  return 2.0 * std::atan2(det, denom);
+}
+
+double generalized_winding_exact_point(const double* query, const std::vector<double>& vertices,
+                                       const std::vector<std::int64_t>& triangles) {
+  const std::size_t count = triangles.size() / 3;
+  double total = 0.0;
+  for (std::size_t f = 0; f < count; ++f) {
+    const double* a = vertices.data() + 3 * triangles[3 * f];
+    const double* b = vertices.data() + 3 * triangles[3 * f + 1];
+    const double* c = vertices.data() + 3 * triangles[3 * f + 2];
+    total += solid_angle_van_oosterom(query, a, b, c);
+  }
+  constexpr double kInvFourPi = 1.0 / (4.0 * 3.14159265358979323846);
+  return total * kInvFourPi;
+}
+
+std::vector<UniquePatch> deduplicate_arrangement_patches(const phx_mc_arrangement& arr,
+                                                         std::int64_t& canceled_fragments) {
+  struct FragKey {
+    std::array<std::int64_t, 3> sorted;
+    std::int64_t fragment;
+    std::int8_t parity;
+  };
+  const std::size_t count = arr.fragment_faces.size();
+  std::vector<FragKey> keys;
+  keys.reserve(count);
+  for (std::size_t f = 0; f < count; ++f) {
+    std::array<std::int64_t, 3> v = {arr.fragments[3 * f], arr.fragments[3 * f + 1],
+                                     arr.fragments[3 * f + 2]};
+    std::int8_t parity = 1;
+    if (v[0] > v[1]) { std::swap(v[0], v[1]); parity = static_cast<std::int8_t>(-parity); }
+    if (v[1] > v[2]) { std::swap(v[1], v[2]); parity = static_cast<std::int8_t>(-parity); }
+    if (v[0] > v[1]) { std::swap(v[0], v[1]); parity = static_cast<std::int8_t>(-parity); }
+    keys.push_back({v, static_cast<std::int64_t>(f), parity});
+  }
+  std::sort(keys.begin(), keys.end(), [](const FragKey& x, const FragKey& y) {
+    return x.sorted != y.sorted ? x.sorted < y.sorted : x.fragment < y.fragment;
+  });
+  std::vector<UniquePatch> patches;
+  canceled_fragments = 0;
+  for (std::size_t i = 0; i < keys.size();) {
+    std::size_t j = i + 1;
+    std::int64_t sum = keys[i].parity;
+    while (j < keys.size() && keys[j].sorted == keys[i].sorted) {
+      sum += keys[j].parity;
+      ++j;
+    }
+    if (sum == 0) {
+      canceled_fragments += static_cast<std::int64_t>(j - i);
+      i = j;
+      continue;
+    }
+    const std::int8_t sign = sum > 0 ? 1 : -1;
+    const std::int64_t rep_frag = keys[i].fragment;
+    const std::int8_t rep_parity = keys[i].parity;
+    UniquePatch patch;
+    patch.verts = keys[i].sorted;
+    if (sign < 0) std::swap(patch.verts[1], patch.verts[2]);
+    for (int k = 0; k < 3; ++k) {
+      patch.pools[static_cast<std::size_t>(k)] =
+          arr.published_pool[static_cast<std::size_t>(patch.verts[static_cast<std::size_t>(k)])];
+    }
+    patch.parent_face = arr.fragment_faces[static_cast<std::size_t>(rep_frag)];
+    patch.multiplicity = static_cast<std::int32_t>(std::abs(sum));
+    patch.plane_sign = static_cast<std::int8_t>(sign * rep_parity);
+    patches.push_back(patch);
+    canceled_fragments += static_cast<std::int64_t>(j - i - 1);
+    i = j;
+  }
+  return patches;
+}
+
+bool winding_is_inside(int value, std::int32_t rule) {
+  switch (rule) {
+    case PHX_MC_WINDING_NONZERO: return value != 0;
+    case PHX_MC_WINDING_POSITIVE: return value > 0;
+    case PHX_MC_WINDING_EVEN_ODD: return (value & 1) != 0;
+    case PHX_MC_WINDING_GENERALIZED_HALF: return value > 0;
+    default: return value != 0;
+  }
+}
+
+bool generalized_is_inside(double value, std::int32_t rule) {
+  switch (rule) {
+    case PHX_MC_WINDING_NONZERO: return std::fabs(value) > 0.5;
+    case PHX_MC_WINDING_POSITIVE:
+    case PHX_MC_WINDING_GENERALIZED_HALF: return value > 0.5;
+    case PHX_MC_WINDING_EVEN_ODD: {
+      const long long rounded = std::llround(value);
+      return (rounded & 1LL) != 0;
+    }
+    default: return value > 0.5;
+  }
+}
+
+struct EdgeFanRecord {
+  std::int64_t u;
+  std::int64_t v;
+  std::vector<RadialEntry> entries;
+};
+
+void sort_radial_fan(Kernel& kernel, std::vector<RadialEntry>& fan) {
+  if (fan.size() <= 2) return;
+  const RadialEntry ref = fan[0];
+  std::vector<RadialEntry> upper;
+  std::vector<RadialEntry> opposite;
+  std::vector<RadialEntry> lower;
+  for (std::size_t i = 1; i < fan.size(); ++i) {
+    const int s = ref.edge_normal_sign * kernel.side_pool(ref.plane, fan[i].opp_pool);
+    if (s > 0) upper.push_back(fan[i]);
+    else if (s == 0) opposite.push_back(fan[i]);
+    else lower.push_back(fan[i]);
+  }
+  const auto cmp = [&](const RadialEntry& a, const RadialEntry& b) {
+    const int s = a.edge_normal_sign * kernel.side_pool(a.plane, b.opp_pool);
+    if (s != 0) return s > 0;
+    return a.tri < b.tri;
+  };
+  std::sort(upper.begin(), upper.end(), cmp);
+  std::sort(lower.begin(), lower.end(), cmp);
+  fan.clear();
+  fan.push_back(ref);
+  fan.insert(fan.end(), upper.begin(), upper.end());
+  fan.insert(fan.end(), opposite.begin(), opposite.end());
+  fan.insert(fan.end(), lower.begin(), lower.end());
+}
+
+void audit_surface_topology(std::size_t vertex_count,
+                            const std::vector<phx::mc::remesh::Triangle>& triangles,
+                            std::int64_t& boundary_edges, std::int64_t& nonmanifold_edges,
+                            std::int64_t& nonmanifold_vertices) {
+  boundary_edges = 0;
+  nonmanifold_edges = 0;
+  nonmanifold_vertices = 0;
+  const std::size_t n = triangles.size();
+  if (n == 0) return;
+  struct DirEdge {
+    std::int64_t u;
+    std::int64_t v;
+    std::int64_t corner;
+    std::int8_t forward;
+  };
+  std::vector<DirEdge> edges;
+  edges.reserve(3 * n);
+  for (std::size_t t = 0; t < n; ++t) {
+    for (int k = 0; k < 3; ++k) {
+      const std::int64_t a = triangles[t][static_cast<std::size_t>(k)];
+      const std::int64_t b = triangles[t][static_cast<std::size_t>((k + 1) % 3)];
+      edges.push_back({std::min(a, b), std::max(a, b), static_cast<std::int64_t>(3 * t + k),
+                       static_cast<std::int8_t>(a < b ? 1 : -1)});
+    }
+  }
+  std::sort(edges.begin(), edges.end(), [](const DirEdge& x, const DirEdge& y) {
+    if (x.u != y.u) return x.u < y.u;
+    if (x.v != y.v) return x.v < y.v;
+    return x.corner < y.corner;
+  });
+  std::vector<std::int64_t> parent(3 * n);
+  std::iota(parent.begin(), parent.end(), 0);
+  const auto unite = [&](std::int64_t a, std::int64_t b) {
+    const std::int64_t ra = phx::mc::topology::find_root(parent, a);
+    const std::int64_t rb = phx::mc::topology::find_root(parent, b);
+    if (ra != rb) parent[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
+  };
+  const auto next_c = [](std::int64_t c) { return (c % 3 == 2) ? (c - 2) : (c + 1); };
+  for (std::size_t i = 0; i < edges.size();) {
+    std::size_t j = i + 1;
+    while (j < edges.size() && edges[j].u == edges[i].u && edges[j].v == edges[i].v) ++j;
+    const std::size_t deg = j - i;
+    if (deg == 1) {
+      ++boundary_edges;
+    } else if (deg == 2) {
+      if (edges[i].forward == edges[i + 1].forward) {
+        ++nonmanifold_edges;
+      } else {
+        const std::int64_t c0 = edges[i].corner, c0n = next_c(c0);
+        const std::int64_t c1 = edges[i + 1].corner, c1n = next_c(c1);
+        const std::int64_t c0u = edges[i].forward > 0 ? c0 : c0n;
+        const std::int64_t c0v = edges[i].forward > 0 ? c0n : c0;
+        const std::int64_t c1u = edges[i + 1].forward > 0 ? c1 : c1n;
+        const std::int64_t c1v = edges[i + 1].forward > 0 ? c1n : c1;
+        unite(c0u, c1u);
+        unite(c0v, c1v);
+      }
+    } else {
+      ++nonmanifold_edges;
+    }
+    i = j;
+  }
+  std::vector<std::int64_t> first_root(vertex_count, -1);
+  for (std::size_t t = 0; t < n; ++t) {
+    for (int k = 0; k < 3; ++k) {
+      const std::size_t v = static_cast<std::size_t>(triangles[t][static_cast<std::size_t>(k)]);
+      const std::int64_t r = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(3 * t + k));
+      if (first_root[v] == -1) first_root[v] = r;
+      else if (first_root[v] >= 0 && first_root[v] != r) {
+        ++nonmanifold_vertices;
+        first_root[v] = -2;
+      }
+    }
+  }
+}
+
+void compact_surface_result(phx::mc::remesh::SurfaceResult& out) {
+  const std::size_t old_v = out.points.size();
+  std::vector<std::int64_t> remap(old_v, -1);
+  std::vector<phx::mc::remesh::Point> kept;
+  kept.reserve(old_v);
+  for (auto& tri : out.triangles) {
+    for (int k = 0; k < 3; ++k) {
+      const auto v = static_cast<std::size_t>(tri[static_cast<std::size_t>(k)]);
+      if (remap[v] < 0) {
+        remap[v] = static_cast<std::int64_t>(kept.size());
+        kept.push_back(out.points[v]);
+      }
+      tri[static_cast<std::size_t>(k)] = remap[v];
+    }
+  }
+  out.points = std::move(kept);
+}
+
+int32_t extract_solid_from_arrangement(const phx_mc_arrangement& arr, std::int32_t winding_rule,
+                                       bool split_pinches,
+                                       phx_mc_solid_extraction_report& report,
+                                       phx::mc::remesh::SurfaceResult& out) {
+  report = {};
+  out.points.clear();
+  out.triangles.clear();
+  out.carried.clear();
+  if (winding_rule < PHX_MC_WINDING_NONZERO || winding_rule > PHX_MC_WINDING_GENERALIZED_HALF) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const std::vector<UniquePatch> patches =
+      deduplicate_arrangement_patches(arr, report.canceled_coplanar_fragments);
+  report.patch_count = static_cast<std::int64_t>(patches.size());
+  if (patches.empty()) {
+    report.closed = 0;
+    return PHX_MC_OK;
+  }
+  Kernel& kernel = arr.arranger->kernel();
+  const std::size_t u_count = patches.size();
+
+  // Build radial edge fans sorted by exact indirect-predicate plane sides.
+  struct RawIncident {
+    std::int64_t u;
+    std::int64_t v;
+    RadialEntry entry;
+  };
+  std::vector<RawIncident> incidents;
+  incidents.reserve(3 * u_count);
+  for (std::size_t t = 0; t < u_count; ++t) {
+    const auto& p = patches[t];
+    const std::int64_t* fv = arr.input_triangles.data() + 3 * p.parent_face;
+    const phx::mc::PlaneDef plane{0, 0, fv[0], fv[1], fv[2]};
+    for (int k = 0; k < 3; ++k) {
+      const std::int64_t a = p.verts[static_cast<std::size_t>(k)];
+      const std::int64_t b = p.verts[static_cast<std::size_t>((k + 1) % 3)];
+      const std::int64_t opp_pool = p.pools[static_cast<std::size_t>((k + 2) % 3)];
+      const std::int8_t dir = a < b ? 1 : -1;
+      const std::int8_t ens = static_cast<std::int8_t>(dir * p.plane_sign);
+      incidents.push_back(
+          {std::min(a, b), std::max(a, b), {static_cast<std::int64_t>(t), opp_pool, plane, dir, ens}});
+    }
+  }
+  std::sort(incidents.begin(), incidents.end(), [](const RawIncident& x, const RawIncident& y) {
+    if (x.u != y.u) return x.u < y.u;
+    if (x.v != y.v) return x.v < y.v;
+    return x.entry.tri < y.entry.tri;
+  });
+
+  std::vector<std::int64_t> hf_parent(2 * u_count);
+  std::iota(hf_parent.begin(), hf_parent.end(), 0);
+  const auto unite_hf = [&](std::int64_t a, std::int64_t b) {
+    const std::int64_t ra = phx::mc::topology::find_root(hf_parent, a);
+    const std::int64_t rb = phx::mc::topology::find_root(hf_parent, b);
+    if (ra != rb) hf_parent[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
+  };
+
+  std::vector<EdgeFanRecord> fans;
+  std::int64_t arrangement_boundary_edges = 0;
+  for (std::size_t i = 0; i < incidents.size();) {
+    std::size_t j = i + 1;
+    while (j < incidents.size() && incidents[j].u == incidents[i].u &&
+           incidents[j].v == incidents[i].v) {
+      ++j;
+    }
+    EdgeFanRecord rec{incidents[i].u, incidents[i].v, {}};
+    rec.entries.reserve(j - i);
+    for (std::size_t k = i; k < j; ++k) rec.entries.push_back(incidents[k].entry);
+    sort_radial_fan(kernel, rec.entries);
+    if (rec.entries.size() == 1) ++arrangement_boundary_edges;
+    const std::size_t d = rec.entries.size();
+    for (std::size_t k = 0; k < d; ++k) {
+      const RadialEntry& cur = rec.entries[k];
+      const RadialEntry& nxt = rec.entries[(k + 1) % d];
+      const std::int64_t ccw_cur = cur.dir > 0 ? (2 * cur.tri) : (2 * cur.tri + 1);
+      const std::int64_t cw_nxt = nxt.dir > 0 ? (2 * nxt.tri + 1) : (2 * nxt.tri);
+      unite_hf(ccw_cur, cw_nxt);
+    }
+    fans.push_back(std::move(rec));
+    i = j;
+  }
+
+  // Renumber half-face cell components deterministically.
+  std::vector<std::int64_t> cell_of(2 * u_count, -1);
+  std::vector<std::int64_t> root_to_cell(2 * u_count, -1);
+  std::int64_t cell_count = 0;
+  for (std::size_t hf = 0; hf < 2 * u_count; ++hf) {
+    const auto r = static_cast<std::size_t>(
+        phx::mc::topology::find_root(hf_parent, static_cast<std::int64_t>(hf)));
+    if (root_to_cell[r] < 0) root_to_cell[r] = cell_count++;
+    cell_of[hf] = root_to_cell[r];
+  }
+  report.cell_count = cell_count;
+
+  // Dual graph adjacency between cells across unique patches.
+  struct DualEdge {
+    std::int64_t to;
+    std::int32_t delta;
+  };
+  std::vector<std::vector<DualEdge>> dual(static_cast<std::size_t>(cell_count));
+  std::vector<std::int64_t> cell_rep_hf(static_cast<std::size_t>(cell_count), -1);
+  for (std::size_t t = 0; t < u_count; ++t) {
+    const std::int64_t cf = cell_of[2 * t];
+    const std::int64_t cb = cell_of[2 * t + 1];
+    if (cell_rep_hf[static_cast<std::size_t>(cf)] < 0)
+      cell_rep_hf[static_cast<std::size_t>(cf)] = static_cast<std::int64_t>(2 * t);
+    if (cell_rep_hf[static_cast<std::size_t>(cb)] < 0)
+      cell_rep_hf[static_cast<std::size_t>(cb)] = static_cast<std::int64_t>(2 * t + 1);
+    dual[static_cast<std::size_t>(cf)].push_back({cb, patches[t].multiplicity});
+    dual[static_cast<std::size_t>(cb)].push_back({cf, -patches[t].multiplicity});
+  }
+
+  std::vector<std::uint8_t> cell_inside(static_cast<std::size_t>(cell_count), 0);
+  bool exact_succeeded = (arrangement_boundary_edges == 0 &&
+                          winding_rule != PHX_MC_WINDING_GENERALIZED_HALF);
+  if (exact_succeeded) {
+    const std::size_t input_face_count = arr.input_triangles.size() / 3;
+    std::vector<std::int8_t> normal_signs(3 * input_face_count, 2);
+    std::vector<std::uint8_t> visited(static_cast<std::size_t>(cell_count), 0);
+    std::vector<int> cell_winding(static_cast<std::size_t>(cell_count), 0);
+    std::deque<std::int64_t> queue;
+    for (std::int64_t c = 0; c < cell_count && exact_succeeded; ++c) {
+      if (visited[static_cast<std::size_t>(c)]) continue;
+      const std::int64_t hf = cell_rep_hf[static_cast<std::size_t>(c)];
+      const std::size_t t = static_cast<std::size_t>(hf / 2);
+      const bool is_front = (hf % 2 == 0);
+      const auto& p = patches[t];
+      const std::int64_t* fv = arr.input_triangles.data() + 3 * p.parent_face;
+      const phx::mc::PlaneDef plane{0, 0, fv[0], fv[1], fv[2]};
+      int best_axis = -1;
+      int best_parent_sign = 0;
+      double best_mag = -1.0;
+      for (int a = 0; a < 3; ++a) {
+        double mag = 0.0;
+        const int s = kernel.normal_sign(plane, a, mag);
+        if (s != 0 && (best_axis < 0 || mag > best_mag)) {
+          best_mag = mag;
+          best_axis = a;
+          best_parent_sign = s;
+        }
+      }
+      if (best_axis < 0) {
+        exact_succeeded = false;
+        break;
+      }
+      const int w_ahead = kernel.winding_ahead(p.pools[0], p.pools[1], p.pools[2], best_axis,
+                                               arr.input_triangles.data(), input_face_count,
+                                               normal_signs);
+      const int front_axis_sign = static_cast<int>(p.plane_sign) * best_parent_sign;
+      const int seed_w = (front_axis_sign > 0)
+                             ? (is_front ? w_ahead : (w_ahead + p.multiplicity))
+                             : (is_front ? (w_ahead - p.multiplicity) : w_ahead);
+      visited[static_cast<std::size_t>(c)] = 1;
+      cell_winding[static_cast<std::size_t>(c)] = seed_w;
+      queue.push_back(c);
+      while (!queue.empty() && exact_succeeded) {
+        const std::int64_t cur = queue.front();
+        queue.pop_front();
+        const int cur_w = cell_winding[static_cast<std::size_t>(cur)];
+        for (const DualEdge& edge : dual[static_cast<std::size_t>(cur)]) {
+          const int expected = cur_w + edge.delta;
+          if (!visited[static_cast<std::size_t>(edge.to)]) {
+            visited[static_cast<std::size_t>(edge.to)] = 1;
+            cell_winding[static_cast<std::size_t>(edge.to)] = expected;
+            queue.push_back(edge.to);
+          } else if (cell_winding[static_cast<std::size_t>(edge.to)] != expected) {
+            exact_succeeded = false;
+            break;
+          }
+        }
+      }
+    }
+    if (exact_succeeded) {
+      for (std::int64_t c = 0; c < cell_count; ++c) {
+        cell_inside[static_cast<std::size_t>(c)] =
+            winding_is_inside(cell_winding[static_cast<std::size_t>(c)], winding_rule) ? 1 : 0;
+      }
+    }
+  }
+
+  if (!exact_succeeded) {
+    report.used_generalized_winding = 1;
+    // Compute global bounding box scale for safe interior offset queries.
+    double lo[3] = {arr.vertices[0], arr.vertices[1], arr.vertices[2]};
+    double hi[3] = {arr.vertices[0], arr.vertices[1], arr.vertices[2]};
+    const std::size_t v_count = arr.vertices.size() / 3;
+    for (std::size_t v = 1; v < v_count; ++v) {
+      for (int d = 0; d < 3; ++d) {
+        lo[d] = std::min(lo[d], arr.vertices[3 * v + static_cast<std::size_t>(d)]);
+        hi[d] = std::max(hi[d], arr.vertices[3 * v + static_cast<std::size_t>(d)]);
+      }
+    }
+    const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) +
+                                  (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                  (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    const double base_eps = std::max(1.0e-7 * diag, 1.0e-12);
+    for (std::int64_t c = 0; c < cell_count; ++c) {
+      const std::int64_t hf = cell_rep_hf[static_cast<std::size_t>(c)];
+      const std::size_t t = static_cast<std::size_t>(hf / 2);
+      const bool is_front = (hf % 2 == 0);
+      const auto& p = patches[t];
+      const double* a = arr.vertices.data() + 3 * p.verts[0];
+      const double* b = arr.vertices.data() + 3 * p.verts[1];
+      const double* cv = arr.vertices.data() + 3 * p.verts[2];
+      const double e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+      const double e2[3] = {cv[0] - a[0], cv[1] - a[1], cv[2] - a[2]};
+      double n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                     e1[0] * e2[1] - e1[1] * e2[0]};
+      const double nlen = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      if (nlen == 0.0) continue;
+      const double dir = is_front ? (base_eps / nlen) : (-base_eps / nlen);
+      const double q[3] = {(a[0] + b[0] + cv[0]) / 3.0 + dir * n[0],
+                           (a[1] + b[1] + cv[1]) / 3.0 + dir * n[1],
+                           (a[2] + b[2] + cv[2]) / 3.0 + dir * n[2]};
+      const double w = generalized_winding_exact_point(q, arr.input_vertices, arr.input_triangles);
+      cell_inside[static_cast<std::size_t>(c)] = generalized_is_inside(w, winding_rule) ? 1 : 0;
+    }
+  }
+
+  // Extract outward-oriented boundary faces separating inside and outside cells.
+  std::vector<std::int64_t> patch_to_out(u_count, -1);
+  std::vector<std::int8_t> out_flipped;
+  const std::size_t pub_v_count = arr.vertices.size() / 3;
+  out.points.resize(pub_v_count);
+  for (std::size_t v = 0; v < pub_v_count; ++v) {
+    out.points[v] = {arr.vertices[3 * v], arr.vertices[3 * v + 1], arr.vertices[3 * v + 2]};
+  }
+  for (std::size_t t = 0; t < u_count; ++t) {
+    const bool in_front = cell_inside[static_cast<std::size_t>(cell_of[2 * t])] != 0;
+    const bool in_back = cell_inside[static_cast<std::size_t>(cell_of[2 * t + 1])] != 0;
+    if (in_front == in_back) continue;
+    patch_to_out[t] = static_cast<std::int64_t>(out.triangles.size());
+    if (in_back && !in_front) {
+      out.triangles.push_back(patches[t].verts);
+      out_flipped.push_back(0);
+    } else {
+      out.triangles.push_back({patches[t].verts[0], patches[t].verts[2], patches[t].verts[1]});
+      out_flipped.push_back(1);
+    }
+  }
+
+  if (split_pinches && !out.triangles.empty()) {
+    // Glue extracted triangle corners across shared radial inside-wedges only,
+    // then duplicate vertices once per distinct umbrella component (0 drift).
+    const std::size_t out_n = out.triangles.size();
+    std::vector<std::int64_t> c_parent(3 * out_n);
+    std::iota(c_parent.begin(), c_parent.end(), 0);
+    const auto unite_c = [&](std::int64_t a, std::int64_t b) {
+      const std::int64_t ra = phx::mc::topology::find_root(c_parent, a);
+      const std::int64_t rb = phx::mc::topology::find_root(c_parent, b);
+      if (ra != rb) c_parent[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
+    };
+    const auto find_corner = [&](std::int64_t out_tri, std::int64_t vertex) -> std::int64_t {
+      const auto& tri = out.triangles[static_cast<std::size_t>(out_tri)];
+      for (int k = 0; k < 3; ++k) {
+        if (tri[static_cast<std::size_t>(k)] == vertex) return 3 * out_tri + k;
+      }
+      return -1;
+    };
+    for (const EdgeFanRecord& fan : fans) {
+      std::vector<std::size_t> active;
+      for (std::size_t k = 0; k < fan.entries.size(); ++k) {
+        if (patch_to_out[static_cast<std::size_t>(fan.entries[k].tri)] >= 0) active.push_back(k);
+      }
+      if (active.size() < 2) continue;
+      for (std::size_t idx = 0; idx < active.size(); ++idx) {
+        const RadialEntry& cur = fan.entries[active[idx]];
+        const RadialEntry& nxt = fan.entries[active[(idx + 1) % active.size()]];
+        const std::int64_t sector_hf = cur.dir > 0 ? (2 * cur.tri) : (2 * cur.tri + 1);
+        if (cell_inside[static_cast<std::size_t>(cell_of[static_cast<std::size_t>(sector_hf)])] == 0)
+          continue;
+        const std::int64_t t1 = patch_to_out[static_cast<std::size_t>(cur.tri)];
+        const std::int64_t t2 = patch_to_out[static_cast<std::size_t>(nxt.tri)];
+        const std::int64_t c1u = find_corner(t1, fan.u), c2u = find_corner(t2, fan.u);
+        const std::int64_t c1v = find_corner(t1, fan.v), c2v = find_corner(t2, fan.v);
+        if (c1u >= 0 && c2u >= 0) unite_c(c1u, c2u);
+        if (c1v >= 0 && c2v >= 0) unite_c(c1v, c2v);
+      }
+    }
+    std::vector<std::int64_t> first_root(out.points.size(), -1);
+    std::map<std::pair<std::int64_t, std::int64_t>, std::int64_t> root_vertex;
+    for (std::size_t t = 0; t < out_n; ++t) {
+      for (int k = 0; k < 3; ++k) {
+        const std::int64_t old_v = out.triangles[t][static_cast<std::size_t>(k)];
+        const std::int64_t r =
+            phx::mc::topology::find_root(c_parent, static_cast<std::int64_t>(3 * t + k));
+        if (first_root[static_cast<std::size_t>(old_v)] == -1) {
+          first_root[static_cast<std::size_t>(old_v)] = r;
+          root_vertex[{old_v, r}] = old_v;
+        } else if (first_root[static_cast<std::size_t>(old_v)] != r) {
+          auto it = root_vertex.find({old_v, r});
+          if (it == root_vertex.end()) {
+            const std::int64_t dup = static_cast<std::int64_t>(out.points.size());
+            out.points.push_back(out.points[static_cast<std::size_t>(old_v)]);
+            root_vertex[{old_v, r}] = dup;
+            out.triangles[t][static_cast<std::size_t>(k)] = dup;
+            ++report.split_pinch_vertices;
+          } else {
+            out.triangles[t][static_cast<std::size_t>(k)] = it->second;
+          }
+        }
+      }
+    }
+  }
+
+  compact_surface_result(out);
+  audit_surface_topology(out.points.size(), out.triangles, report.boundary_edge_count,
+                         report.nonmanifold_edge_count, report.nonmanifold_vertex_count);
+  report.closed = (report.boundary_edge_count == 0 && !out.triangles.empty()) ? 1 : 0;
+  return PHX_MC_OK;
+}
+
 }  // namespace
 
 extern "C" {
@@ -2463,6 +3276,94 @@ int32_t phx_mc_arrangement_export(
 }
 
 void phx_mc_arrangement_free(phx_mc_arrangement* result) { delete result; }
+
+int32_t phx_mc_arrange_soup(int64_t vertex_count, const double* vertices,
+                            int64_t triangle_count, const int64_t* triangles,
+                            int64_t pair_count, const int64_t* pairs, int64_t* failed_face,
+                            phx_mc_arrangement** result) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (result == nullptr || failed_face == nullptr || vertices == nullptr ||
+        triangles == nullptr || pair_count < 0 || (pair_count > 0 && pairs == nullptr) ||
+        !phx::mc::addressable(vertex_count, 3, sizeof(double)) ||
+        !phx::mc::addressable(triangle_count, 3, sizeof(int64_t)) ||
+        !phx::mc::addressable(pair_count, 2, sizeof(int64_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    *result = nullptr;
+    *failed_face = -1;
+    for (int64_t index = 0; index < 3 * vertex_count; ++index) {
+      if (!std::isfinite(vertices[index])) return PHX_MC_NONFINITE_INPUT;
+    }
+    for (int64_t index = 0; index < 3 * triangle_count; ++index) {
+      if (triangles[index] < 0 || triangles[index] >= vertex_count) {
+        *failed_face = index / 3;
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    std::vector<std::vector<int64_t>> partners(static_cast<std::size_t>(triangle_count));
+    if (pair_count == 0 && pairs == nullptr) {
+      collect_self_overlap_partners(vertices, triangle_count, triangles, partners);
+    } else {
+      for (int64_t index = 0; index < pair_count; ++index) {
+        const int64_t a = pairs[2 * index];
+        const int64_t b = pairs[2 * index + 1];
+        if (a < 0 || b < 0 || a >= triangle_count || b >= triangle_count || a == b) {
+          *failed_face = a;
+          return PHX_MC_INVALID_INPUT;
+        }
+        if (soup_pair_needs_split(vertices, triangles, a, b)) {
+          partners[static_cast<std::size_t>(a)].push_back(b);
+          partners[static_cast<std::size_t>(b)].push_back(a);
+        }
+      }
+    }
+    for (auto& list : partners) {
+      std::sort(list.begin(), list.end());
+      list.erase(std::unique(list.begin(), list.end()), list.end());
+    }
+    auto handle = std::make_unique<phx_mc_arrangement>();
+    handle->input_vertices.assign(vertices, vertices + 3 * vertex_count);
+    handle->input_triangles.assign(triangles, triangles + 3 * triangle_count);
+    handle->input_surfaces.assign(static_cast<std::size_t>(triangle_count), 0);
+    handle->arranger = std::make_unique<phx::mc::Arranger>(
+        handle->input_vertices.data(), vertex_count, handle->input_triangles.data());
+    phx::mc::Arranger& arranger = *handle->arranger;
+    try {
+      for (int64_t t = 0; t < triangle_count; ++t) {
+        arranger.face(t, partners[static_cast<std::size_t>(t)]);
+      }
+      publish(arranger.kernel(), arranger.output(), *handle);
+    } catch (const phx::mc::Refusal& refusal) {
+      *failed_face = refusal.face;
+      return refusal.status;
+    }
+    *result = handle.release();
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_arrangement_extract_solid(const phx_mc_arrangement* arrangement,
+                                         int32_t winding_rule, int32_t split_nonmanifold_pinches,
+                                         phx_mc_solid_extraction_report* report,
+                                         void** out_surface) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (arrangement == nullptr || arrangement->arranger == nullptr || report == nullptr ||
+        out_surface == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    *out_surface = nullptr;
+    auto surface = std::make_unique<phx::mc::remesh::SurfaceResult>();
+    const int32_t status = extract_solid_from_arrangement(
+        *arrangement, winding_rule, split_nonmanifold_pinches != 0, *report, *surface);
+    if (status != PHX_MC_OK) return status;
+    *out_surface = surface.release();
+    return PHX_MC_OK;
+  });
+}
 
 int32_t phx_mc_clip_reference_triangle_exact(
     const uint32_t* words, int64_t word_count, const int64_t* offsets, const int8_t* signs,

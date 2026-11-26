@@ -11,6 +11,28 @@
   (74/74 native CTest, zero warnings/notes/errors).
 
 ### Added
+- Native certified surface mesh repair (`phydrax.geometry.surface.repair_surface_mesh`,
+  `SurfaceRepairPolicy`, `SurfaceRepairResult`, `SurfaceRepairEvidence`,
+  `SurfaceRepairError`, `SolidWindingRule`, `SurfaceRepairStatus`) backed by new
+  `native/meshcore` C++20 kernels (`phx_mc_arrange_soup`,
+  `phx_mc_arrangement_extract_solid`, `phx_mc_surface_weld_and_clean`,
+  `phx_mc_surface_fill_holes`, `phx_mc_surface_orient_and_prune`) and an opt-in
+  `SurfaceImportPolicy.repair_policy` hook on `import_surface`:
+  - Single-soup exact self-arrangement over Attene/Cherchi indirect predicates
+    with exact 3D arrangement cell decomposition (degree-≤-9 indirect-predicate
+    radial edge sorting), signed-multiplicity coplanar cancellation, exact
+    symbolic-ray + Kirchhoff integer winding propagation (with automatic
+    Van Oosterom–Strackee generalized winding fallback on non-cycle/open soups),
+    and optional zero-displacement radial-wedge pinch splitting.
+  - Opt-in displacement-bounded spatial vertex welding (strict `max_vertex_displacement <= weld_tolerance`
+    with optional fold-over guard), T-junction edge splitting, exact collinearity
+    and link-condition sliver/cap cleanup, pinch-safe Liepa `O(k^3)` minimum-dihedral
+    DP hole filling with optional refinement/harmonic fairing and exact
+    `refuse_illegal_contacts` cap-collision verification, nested-cavity /
+    generalized-winding shell orientation, debris pruning, and optional certified
+    `mesh_remesh`/`mesh_certify` polish with bounded Hausdorff deviation. All
+    geometry-changing switches default to disabled; use
+    `SurfaceRepairPolicy.watertight_solid(...)` for the canonical solid preset.
 - Restricted-Delaunay implicit volume candidates defer local map validity
   and global embedding to acceptance instead of proving them during
   construction. Facet refinement and source checks that steer it remain.
