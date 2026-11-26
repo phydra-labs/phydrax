@@ -1079,12 +1079,14 @@ under `artifacts/MAC/native-redesign/acceptance/final-4ffad9ea2-*`.
 
 ### Follow-up optimization, curving closure, and surface repair landing (Tier 1 + Tier 2A + `surface-repair`)
 
-Unified Release build (AppleClang 17, macOS arm64, `-Werror`, zero warnings):
+Unified Release build on code commit `ee62dc1e5895618ee3a9a3566798d16aa8d0a313`
+(AppleClang 17, macOS arm64, `-Werror`, zero warnings):
 meshcore identity `phydrax-meshcore 0.2.2 44aaf044154ecfde22644159ae7bb411218a4dbb4be816dacd4e1f6d14458895`,
 dylib SHA-256 `72a05c6035ae9bf14b5f565426b6d8a938ce75595cf73ceb23836f6ede772442`.
 Includes native certified surface mesh repair (`a3d48707a`, `20da8cfde`) plus
 Tier 1 timing/curving fixes and Tier 2A transfer/certification speedups on
-`wip/native-meshing-mac/diagnostics-clean`.
+`wip/native-meshing-mac/diagnostics-clean`, fast-forwarded to
+`origin/wip/native-meshing-mac/kernels` (MAC-only per user directive).
 
 #### 1. Compiler, sanitizer, portability, and Python gates
 
@@ -1113,9 +1115,13 @@ Tier 1 timing/curving fixes and Tier 2A transfer/certification speedups on
   `tools/audit_contract_candidates.py --signatures` (`0` redundant guards),
   `tools/check_capability_consistency.py`, and
   `python -m tools.check_public_api_manifest` all passed.
-- **Linux & Windows gates:** pending `MAC -> LIN/WIN · GATE` on the exact pushed
-  commit SHA; `origin/wip/native-meshing-mac/kernels` fast-forwards only after
-  both LIN and WIN post green full-suite native receipts.
+- **Linux & Windows gates:** deferred by user directive (MAC-only landing;
+  no open Linux/Windows assignment on the coordination board). Portability
+  pre-flight audit (`-DPHX_MC_DISABLE_NEON`, `-Wshorten-64-to-32`,
+  `-Wfloat-conversion`, portable inline/noinline macros) passed cleanly on
+  macOS before landing.
+- **Archived receipts:** `artifacts/MAC/native-redesign/acceptance/final-ee62dc1e5/`
+  on `comm-board`.
 
 #### 2. Closed timing and live-curving misses (on `72a05c60...`)
 
