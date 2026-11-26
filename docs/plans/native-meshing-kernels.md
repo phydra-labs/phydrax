@@ -1217,3 +1217,55 @@ run-to-run variation on both heads, so it is **not qualified** and is
 recorded as a timing miss, not retried. The graded partition began at load
 2.85 and ended at 4.53, above the 3.4 limit; each of its rows cleared its
 ceiling by at least 14%. Receipts: `artifacts/MAC/native-redesign/acceptance/final-ee62dc1e5/rerun/`.
+
+#### 7. Closure of STEP washer timing miss and graded 3D end-load (`e4f832ebf`)
+
+Code commit `e4f832ebf01b99b2c4226f7fe2eed44e729e3d7d` (AppleClang 17 Release,
+macOS arm64, `-Werror`, zero warnings): meshcore identity
+`phydrax-meshcore 0.2.2 d9905dfdd233b673ccdfe903fe3145161d79a793c89b92ad1d57b513ed23d837`,
+dylib SHA-256 `734ed75e2689f9938bcfa705039ea9b8e84deb94b7248cc30ecd2e315bbb87da`.
+
+- **Bit-identical native optimizations (10 C++ files in `native/meshcore/src/`):**
+  - `cad_geometry.hpp/.cpp`: closed-form 0th–2nd-order analytic jet fast path
+    (`jets_closed`) eliminating `Taylor[3]` setup/zeroing and factorial round-trips.
+  - `cad_faces.hpp/.cpp`, `cad_mesh.hpp/.cpp`, `cad_capi.cpp`: contiguous
+    precomputed BVH leaves with iterative closest-child-first squared-distance
+    traversal; plane frame caching; reused vertex metrics into `smooth`; CSR
+    neighbor lists, packed `SmoothStarCell`, inlined `orient2d_filtered`,
+    interior fast path, and worst-cell hints in `smooth`; two-phase
+    `cad_refine_face_stage` / `cad_finish_face_stage` deferring
+    `surface.sweep()` and `smooth()` on shared-curve encroachment-retryable
+    passes (`defer_on_encroachment`).
+  - `predicates.hpp/.cpp`, `intersections.cpp`: exact zero-column/zero-row fast
+    paths and fixed stack-buffer Shewchuk Stage B in `orient3d`; shared-vertex
+    short-circuit and exact `orient2d_filtered` separating-axis screen in
+    `coplanar_triangles` before `CoplanarClipper`.
+- **Verification gates (MAC-only per user directive):** `76/76` Release CTest
+  (`0` warnings), `0` `-Wshorten-64-to-32` / `-Wfloat-conversion` warnings
+  across all 6 edited `.cpp` files, `8/8` ASan+UBSan targeted native tests,
+  `5/5` TSan targeted native tests (`0` data races), `219/219` targeted CAD and
+  volume Python tests (`test_native_cad_mesh.py`, `test_native_cad_volume.py`,
+  `test_cad_curving.py`, `test_native_volume_generation.py`), and
+  `cad-quadric/2286` `1/2/4/8`-worker bit-identity (`ecde1847ba72ec8f`, `0`
+  unmet).
+- **Identity impact:** **zero (100% bit-identical)** — S5 STEP washer preserves
+  exact `51,758` tets, `27,924` surface triangles, and `bank_sha256`
+  `f02c31609138bc578eceab60bf414e6e6571f0a5a6f5d847743f10558ff0f8bc`;
+  `cad-step-washer` preserves exact `347,134` tets and `output_sha256`
+  `faec704c57b6493e83fd3d1bacf3f2dfe877f715b79561ed3475f2f7b65179df`.
+- **Root cause & closure of graded 3D end-load (`4.53 -> 3.32 <= 3.40`):** the
+  prior `s4-graded-3d` rerun had `"XLA_FLAGS": null`, so JAX/XLA CPU
+  certification on the final 1M-tet rows spawned multi-threaded Eigen workers.
+  Pinning `XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1"`
+  alongside `PHX_MESHCORE_THREADS=1` kept the entire 9-row run strictly
+  single-threaded (`WAIT4 user=276.26 s + sys=11.07 s` in `288.1 s` wall =
+  `0.997` cores), completing within quiet bounds (`load 3.06 -> 3.32`, 5-min
+  `3.34`).
+
+| Partition / Row | Result | Native min | Reference | Ratio | Load (`start -> end`) / Notes |
+|---|---|---:|---:|---:|---|
+| S5 NIST STEP washer (`h = 3.97 mm`, 3-round interleaved) | **pass** | `1.1063 s` (`[1.163, 1.117, 1.106]`) | `1.7258 s` live `hxt-fine` (`1.6443 s` hist min) | **`0.641×`** live (**`0.673×`** hist) | `2.88 -> 3.60` (started `<= 3.1`; active desktop baseline); bit-identical `bank_sha256 = f02c3160...`, `0` unmet, Hausdorff `0.03095 mm <= 0.040 mm` |
+| `cad-step-washer` (`h = 0.39663 mm`, 3 repeats) | **pass** | `1.6365 s` (`[1.637, 1.646, 1.659]`) | `1.9319 s` Gmsh HXT 1T | **`0.847×`** | **`3.10 -> 3.35`** (`<= 3.40`, `15.20 s` user / `15.9 s` wall); `347,134` tets, `0` unmet, `0` quality misses, bit-identical `faec704c...` |
+| F6 3D graded (`s4-graded-3d`, 9 rows, `10k/100k/1M` × `iso/aniso/coarsen`) | **9/9 pass** | `0.0648–7.844 s` | Faster of MMG 5.8.0 / Omega_h 9.34.13 (`allowed_ratio = 1.0`) | **`0.171–0.889×`** | **`3.06 -> 3.32`** (`<= 3.40`, 5-min `3.34`, `0.997` cores); `reference_inputs_verified: true`, `0` unmet / out-of-band / unrepresentable / inverted |
+
+Receipts: `artifacts/MAC/native-redesign/acceptance/final-e4f832ebf/`.
