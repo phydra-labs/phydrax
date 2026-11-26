@@ -914,3 +914,165 @@ on newly retessellated scalar boxes while preserving exact local-only and no-op
 evidence identities (`retriangulations == 0` is omitted from `evidence_id`).
 End-to-end runtime including certification and transfer remains separate and
 slower than uncertified construction.
+
+### Final integrated qualification and publication (`4ffad9ea2`)
+
+Integrated code head: `4ffad9ea2af9a71051718ba83b3ddc8af4bbe65b`
+(`origin/wip/native-meshing-mac/kernels`, meshcore build identity
+`353adea5f0936a5e1fcd7c54f09aff305cc80e0e045bb62501bc7eb497ee6dbf`).
+
+#### 1. Compiler, sanitizer, and static/Python gates on `4ffad9ea2`
+
+- **Apple Clang 17 (macOS arm64, Release):** `74/74` CTest passed (`0` warnings,
+  `0` errors, `0` notes; dylib SHA-256
+  `54cea5d0556e4fcf3127f40a97b62b363a021be185e9b73f3882f6498bd41209`).
+- **Apple Clang ThreadSanitizer (`RelWithDebInfo`, `-DPHX_MC_THREAD_SANITIZE=ON`):**
+  `9/9` passed (`test_parallel`, `test_cad_mesh`, `test_cad_volume`,
+  `test_cdt2d`, `test_delaunay2d`, `test_mesh_source`, `test_metric_gradation`,
+  `test_metric_adapt3d`, `test_metric_scalar2d`; `0` data races).
+- **GCC 13.3 (Linux aarch64, Release, board `4a063585`):** `74/74` CTest passed
+  (`0` warnings, `0` errors, `0` GCC 10.1 `psabi` notes across all 262 targets;
+  SHA-256 `5cd4c0d801d6f97fbb24dac38d4360fda66c251ff2ed498e1ce431ec97c37118`).
+- **MSVC 19.51 (Windows x86-64, Release, board `201783a4`):** `74/74` CTest
+  passed (`0` warnings, `0` errors, `0` notes — both C4805 warnings resolved;
+  DLL SHA-256 `4bb1596cd05f5544845a8e2f402cf437ab618910be2d8015b449c822035811d8`).
+- **Bitwise diagnostic parity (`5d1765951` vs `4ffad9ea2`):** exact match on CAD
+  quadric (`22930`), planar Ruppert (`10000/square`), and all four small 2D/3D
+  graded metric rows.
+- **Python & static gates:** `503/503` targeted meshing unit tests across the 16
+  directly affected modules passed against the pinned Release library (user
+  directed targeted affected tests instead of the full global suite);
+  `ruff check`, `ruff format --check` on touched files,
+  `tools/check_typing.py check` (`0` diagnostics),
+  `tools.check_installed_typing` (Python 3.13 wheel; package declares
+  `Requires-Python >=3.13,<3.14`), `tools/check_capability_consistency.py`,
+  `tools.check_public_api_manifest`, `tools/audit_selectors.py` (`0` findings),
+  and `tools/audit_contract_candidates.py --signatures` all passed.
+
+#### 2. Reviewed certificate scope
+
+- **Reviewed native certifiers (separate from timed construction):**
+  `mesh_certify`, `zero_set_certify` (two-way tube plus possible-zero cover),
+  `verify_volume` (`phx_mc_verify_tetrahedra` / `phx_mc_verify_volume` /
+  `phx_mc_tetrahedra_validity`), `verify_surface_embedding`,
+  `verify_chart_partition`, the quadratic validity screen, and the
+  mapped-locator root discharge.
+- **Separate / untimed scope:** construction benchmarks time construction and
+  sampled quality only (`prove=False` or construction phase); exact
+  certification, `.prove()`, and field transfer run on separate clocks and are
+  slower than uncertified external references. `verify_cad_fidelity` (V3)
+  remains under independent re-read; CAD rows are reported as construction plus
+  sampled quality.
+
+#### 3. Final quiet interleaved macOS acceptance summary (`4ffad9ea2`)
+
+All raw manifests, outputs, and verdicts are archived on the coordination board
+under `artifacts/MAC/native-redesign/acceptance/final-4ffad9ea2-*`.
+
+| Family / Partition | Owner | Result on `4ffad9ea2` | Timing ratio (ours / ref) | Separate quality / proof / limitation notes |
+|---|---|---|---|---|
+| S0-B Point sets (`DT2/DT3/Regular/Periodic` 1k–1M vs CGAL) | MAC | 15/16 batch; 16/16 with fresh-process `DT2/1k` | `0.430–0.924×` (fresh `DT2/1k` `0.913×`; batched `DT2/1k` `1.145×`) | Exact input SHA & element-count parity across all 16 rows |
+| S2-C Planar CDT / q20 (`12` rows) & q30 (`8` rows) vs Triangle `20250106` | LIN (on Mac) | `12/12` + `8/8` passed | CDT/q20 `0.157–0.924×`; q30 `0.28–0.92×` | `0` unmet/nonpositive/above-max-area; formerly missed `square/1k` (`0.818×`) & `ring-slit/10k` (`0.549×`) pass |
+| S1 Implicit F4 (`4` rows vs CGAL) | MAC | `4/4` `.prove()` certified; `3/4` clock | `0.135–0.769×` on 3 rows; coarse `sphere/0.02` (487 tets) `1.142×` | Timing miss on coarse `sphere/0.02` (`1.817` vs `1.592 ms`) recorded separately from exact `.prove()` pass |
+| S3 Recovery & Volume (`12` rows vs CGAL CDT3 / HXT) | MAC | `12/12` passed | Recovery `0.191–0.371×`; volume `0.291–0.686×` | `0` unmet constraints / quality misses |
+| S3 Live Improvement (`3` rows vs `mmg3d_O3 -optim -nosurf`) | MAC | `3/3` passed | `0.028–0.056×` (`17k`, `143k`, `1.16M`) | `6/6` input files byte-identical SHA-256 to `8055` manifest |
+| F2 CAD Quadric 1T (`4` rows vs Gmsh HXT) | LIN (on Mac) | `4/4` passed | `0.615–0.689×` (`2286` at `0.664×`) | `0` unmet / quality misses |
+| S5 NIST STEP Washer (`a5abfea4...`) | LIN (on Mac) | Passed vs `hxt-fine` | `1.715 s` (`51,758` tets, Hausdorff `0.0309 mm`) vs `hxt-fine` `1.747 s` (`354,556` tets, `0.0247 mm`) | `hxt-same-h` (`0.0332 s`, `1,342` tets) fails fidelity (`1.291 mm`) |
+| F5 P2/P3 Curved (`12` rows vs Netgen `6.2.2608` / Gmsh `4.15.2`) | LIN (on Mac) | `12/12` clock + registered quality + exact local det; `10/12` all live thresholds | Beats both references on all `12/12` rows | Reproduces the `2` documented live micro-misses (coarse quadric P2 `scaled_jacobian`, fine sphere P2 `determinant_ratio`), not proof failures |
+| F7 Surface Remesh (`13` rows vs MMGS / CGAL) | WIN (on Mac) | `13/13` passed | `0.137–0.755×` (`certified = 1.0`, `0` unmet) | Justified sequential; all `13/13` byte-identical across `1/2/4/8` workers |
+| S4 Graded F6 (`10` rows vs MMG 5.8.0 / Omega_h 9.34.13) | WIN (on Mac) | `10/10` passed (`allowed_ratio = 1.0`) | `0.172–0.879×` (`ALL_REF_VERIFIED: True`) | `0` unmet / out-of-band / unrepresentable / inverted; sequential box routes invariant across `1/2/4/8` workers |
+| S4 F6b No-op Box-12/25/55 vs serial Omega_h | WIN (on Mac) | `3/3` passed | `0.279–0.356×` (`4.06/11.41`, `29.02/100.99`, `292.1/1047.1 ms`) | Unchanged source and evidence IDs |
+| F10 Prepared Queries (`32` rows: 4 queries × `1e5/1e6` × `1/2/4/8`W vs libigl `2.6.3` / `igl_signed`) | MAC | `32/32` passed (`load_start = 2.11`) | `0.363–0.926×` (8W `1M`: closest `0.418×`, signed `0.363×`, winding `0.540×`, locate `0.680×`) | Bit-identical across `1/2/4/8` workers; `0` quality errors; signed uses prepared C++ `igl_signed` (excludes index build) |
+| F13 Overset (`3` hex + `2` authenticated tet rows vs TIOGA) | MAC | `5/5` authenticated rows passed | Hex `0.026–0.188×`; tet `10k` `0.124×`, `1M` `0.195×` | Middle tet bank `f13-tet1e5s.bin` (`4d3ab98e...`) unavailable; unmeasured, not substituted |
+| F9 Prism Layers (`sphere/100` vs Gmsh) | MAC | `1/1` eligible row passed | `0.2515 s` vs `0.2836 s` (`0.887×`, `15,900` certified prisms) | `cfMesh` references on `sphere/50`, `quadric/100`, `quadric/50` fail own `checkMesh` (ineligible) |
+| F14 Conforming Voronoi (`8` rows vs VoroCrust) | MAC | `8/8` passed | `0.246–0.669×`, `100%` closed convex cells | Fastest serial VoroCrust output has 2 independent convexity findings (strict serial comparison unqualified) |
+| F8 Hex-dominant 1T (`4` rows vs cfMesh `cartesianMesh`) | MAC | `4/4` passed | `0.592–0.929×` (`sphere/quadric` L0 & L2) | `0` unmet / bad cells |
+
+#### 4. Final S7 thread matrix and sequential justifications (`4ffad9ea2`)
+
+- **F10 Queries (`32/32` quiet pass):** every query family (`closest`, `signed`,
+  `winding`, `locate`) beats libigl `2.6.3` / prepared `igl_signed` at `1/2/4/8`
+  workers across `1e5` and `1e6` with bit-identical outputs (`load_start = 2.11`).
+- **F2 CAD Quadric (`16` rows, quiet `load 3.06 -> 2.93`):** `16/16` native
+  output digests bit-identical across `1/2/4/8` workers (`status == OK`,
+  `unmet == 0`, zero registered quality misses). `15/16` clocks beat Gmsh HXT
+  (`0.686–0.979×`); `h = 0.02286` at `8` workers measured `1.207949 s` vs
+  `1.202034 s` (`1.0049×`, `+5.9 ms`), recorded alongside the retained quiet
+  targeted win on `7e00f7048c` (`1.125606 s` vs `1.132836 s`, board `93155cbf`).
+- **Graded F6 3D/2D box routes & gradation (justified sequential):**
+  `metric_layer_transaction.cpp`, `metric_scalar2d.cpp`, and
+  `metric_gradation.cpp` execute sequentially because each retessellation,
+  relaxation, and label-setting gradation wave depends on prior topology/metric
+  state (`rg parallel_for` confirms no parallel teams in those files). On
+  `4ffad9ea2`, all four small graded rows (`10,452`-cell 3D iso/aniso/coarsen
+  and `99,954`-tri 2D circle) produced bit-identical 9-tuple outcome IDs across
+  worker requests `1/2/4/8` (`retriangulations == 1`, `out_of_range_edges == 0`).
+- **F7 Remesh (justified sequential):** all `13/13` cases (7 generated, 6
+  imported) produced byte-identical outputs with `unmet == 0` at `1/2/4/8`
+  workers on `4ffad9ea2`.
+- **F8 Two-layer sphere at 8 ranks (`f8-quiet-eight.py`):** started at load
+  `2.254`; Pair 1 beat both ceilings (`4.994578 s` native vs `5.810123 s` live
+  `snappyHexMesh` and `5.066336 s` historical ceiling, exact
+  `mesh_id = 48f48fed...`), then aborted before Pair 2 because the 8-rank
+  MPI + native burst itself lifted 1-minute load to `3.766 > 3.4`. Remains a
+  partial single-pair beat rather than a 3-pair quiet-admitted series; layered
+  quadric at 8 ranks remains ineligible (`24,008 / 24,800` layer cells and 8
+  nonpositive cells in `snappyHexMesh`).
+- **Retained unchanged S7 routes:** F6b no-op `12/12` vs OpenMP Omega_h,
+  F8 unlayered `4/4` vs `snappyHexMesh`, F9 `sphere/100` vs Gmsh, F13 overset
+  vs TIOGA (sequential), and F14 conforming Voronoi (sequential) remain valid
+  from their archived receipts (no kernel changes in those paths since `199cb7ad95`).
+
+#### 5. Complete identity-change inventory
+
+1. **Graded 3D & 2D box retessellation routes:** newly retessellated scalar 3D
+   coarsening/refinement boxes, aligned anisotropic boxes, and 2D scalar
+   rectangles produce new adapted mesh and evidence IDs; local-only and no-op
+   routes preserve exact historical IDs (`retriangulations == 0` omitted from
+   `TetraMetricEvidence.evidence_id` and `LocalMetricEvidence.evidence_id`).
+2. **Planar CDT interior lattice seeding:** seeded interior sites can change
+   mesh identity while retaining authored vertices, hole domains, and ancestry.
+3. **CAD solid hard whole-wall protection, upper dihedral cap, and P2/P3 shape
+   targets:** newly admitted / active-cap / shaped requests can change plan and
+   mesh identities; defaults leave optional caps disabled.
+4. **Tetrahedral metric shape reconnection, relocation polishing, and shallow
+   wall-ring proposals:** newly accepted edits can change adapted cell and
+   evidence IDs without relaxing the strict `[1/sqrt(2), sqrt(2)]` band.
+5. **Octree hex-dominant unlayered free-wall repair and layered rigid column
+   tilt (`layer_minimum_thickness_fraction`):** can change hex-dominant meshes
+   and evidence IDs.
+6. **Conforming Voronoi centered interior lattice:** changes newly constructed
+   Voronoi mesh and evidence IDs while preserving spacing, clearance, and exact
+   certification.
+7. **Native model archives & layer-core carrier inventories:** compact JSON
+   manifests, batched column storage, and minimal source-edge carrier
+   inventories intentionally change archive/carrier identities as documented in
+   `CHANGELOG.md` and `docs/guides_meshing.md`.
+
+#### 6. Remaining limitations
+
+- **Coarse implicit `sphere/0.02` (`487` tets):** `1.817 ms` vs `1.592 ms` live
+  CGAL (`1.142×`); exact `.prove()` passes.
+- **Batched `delaunay-2d/1000`:** `1.145×` inside the multi-size harness
+  (`0.913×` in isolated fresh-process comparison).
+- **F2 CAD `h = 0.02286` at `8` workers:** `1.207949 s` vs `1.202034 s`
+  (`1.0049×`) in the 16-row quiet sweep (won `1.125606` vs `1.132836 s` in the
+  targeted quiet check on `7e00f7048c`).
+- **F5 live P2 micro-misses:** `2/12` live thresholds (coarse quadric P2
+  `scaled_jacobian`, fine sphere P2 `determinant_ratio`); all `12/12` pass
+  registered quality, exact local determinant checks, and curving clocks.
+- **F8 two-layer sphere 8-rank:** Pair 1 beat both ceilings (`4.9946 s` vs
+  `5.8101 s` live / `5.0663 s` historical), stopped before Pair 2 by 8-rank
+  self-load (`3.766 > 3.4`); layered quadric `snappyHexMesh` reference
+  ineligible.
+- **F9 cfMesh rows (`sphere/50`, `quadric/100`, `quadric/50`):** `cfMesh`
+  outputs fail own `checkMesh` (provider ineligibility).
+- **F13 middle tet bank (`f13-tet1e5s.bin`, SHA `4d3ab98e...`):** original
+  bank unavailable across all three machines; reported unmeasured without
+  substitution.
+- **F14 strict fastest serial VoroCrust:** fastest serial output fails
+  independent convexity (2 findings); strict fastest-output comparison stays
+  unqualified.
+- **Certification / transfer latency:** exact `.prove()`, certification, and
+  field transfer run separately from construction and remain slower than
+  uncertified external construction tools.

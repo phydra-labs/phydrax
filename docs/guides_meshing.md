@@ -2617,6 +2617,8 @@ bound to the source vertices). Routes:
   operations. `LocalMetricEvidence.retriangulations` records committed
   transactions (zero on local-only and no-op runs) and enters `evidence_id`
   only when positive, preserving existing local-only and no-op fingerprints.
+  This native box route executes sequentially and returns bit-identical mesh
+  and evidence identities across worker requests (`PHX_MESHCORE_THREADS`).
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
@@ -3103,7 +3105,9 @@ separately when they disagree. A refusal leaves the original mesh available for
 local adaptation. The `retriangulations` evidence counter counts committed
 transactions, not cells. Its stored value is zero on local-only and no-op
 routes. Only a positive count enters the fingerprint; unchanged local evidence
-retains its ID.
+retains its ID. Both box retessellation routes and native physical gradation
+execute sequentially and produce bit-identical mesh and evidence identities
+across worker requests (`PHX_MESHCORE_THREADS`).
 
 On CPU, physical gradation of an exactly diagonal binary64 tensor can fold
 its candidates in the coordinate basis. The ordered square-root products

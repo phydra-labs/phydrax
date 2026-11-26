@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+- Eliminated MSVC `C4805` warnings in `native/meshcore/src/metric_gradation.cpp`
+  and all GCC 10.1 `aarch64` `std::pair<double, double>` psABI notes across
+  `native/meshcore` (`cdt2d.cpp`, `cad_faces.cpp`, `metric_layer_grid.cpp`,
+  `metric_layer_transaction.cpp`, `metric_scalar_field.cpp`, and native tests)
+  with bitwise-identical outputs across Apple Clang 17, GCC 13.3, and MSVC 19.51
+  (74/74 native CTest, zero warnings/notes/errors).
+
 ### Added
 - Restricted-Delaunay implicit volume candidates defer local map validity
   and global embedding to acceptance instead of proving them during
