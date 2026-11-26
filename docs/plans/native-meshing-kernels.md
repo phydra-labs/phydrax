@@ -1186,3 +1186,34 @@ Tier 1 timing/curving fixes and Tier 2A transfer/certification speedups on
 - **Dense polyhedral / high-order certification (Tier 2B, out of scope here):**
   F8 `prove=True` and F9 dense rational polyhedral cell certification remain
   separate from construction and slower than uncertified references.
+
+#### 6. Final-head reruns of partitions changed by `ee62dc1e5`
+
+`ee62dc1e5` changed `plc3d.cpp`, `hex_dominant.cpp`, and Python providers
+whose rows the landing receipts above did not cover. Each such partition was
+rerun on a pinned `b416ea9c6` worktree whose fresh Release build reproduced
+the landed library byte for byte (`72a05c60...`, zero warnings). Partitions
+ran one at a time, three interleaved rounds each, every one starting at
+one-minute load at most 3.1.
+
+| Partition | Result | Time vs reference | vs `4ffad9ea2` |
+|---|---|---:|---|
+| S3 recovery / volume (CGAL CDT3, HXT) | 12/12 | 0.19–0.73× | level |
+| F8 hex-dominant, one thread (cfMesh) | 4/4 | 0.36–0.59× | faster (was 0.59–0.93×) |
+| F14 Voronoi (VoroCrust) | 8/8 | 0.14–0.70× | level |
+| F9 prism layers, sphere (live Gmsh) | pass | 0.854× | faster (was 0.887×); identical mesh |
+| F7 surface and mesh remesh (MMGS, CGAL) | 13/13 | 0.15–0.75× | level |
+| F6 3D graded, 9 rows (faster of MMG, Omega_h) | 9/9 | 0.17–0.86× | level or faster |
+| F13 overset hex (TIOGA) | 3/3 | 0.02–0.20× | level |
+| F13 overset tet (TIOGA; middle bank unavailable) | 2/2 | 0.13–0.18× | level |
+| S5 NIST STEP washer (`hxt-fine`) | **miss** | 1.016× | was 0.982× |
+
+Every row had zero unmet results and zero quality misses. The washer native
+output is byte-identical to the `4ffad9ea2` receipt (51,758 tetrahedra, bank
+`f02c3160...`). All three native samples (1.677, 1.671, 1.691 s) were faster
+than two of the three `hxt-fine` samples (1.709, 1.700 s), but one faster
+reference sample (1.644 s) sets the minimum. The row's margin is within
+run-to-run variation on both heads, so it is **not qualified** and is
+recorded as a timing miss, not retried. The graded partition began at load
+2.85 and ended at 4.53, above the 3.4 limit; each of its rows cleared its
+ceiling by at least 14%. Receipts: `artifacts/MAC/native-redesign/acceptance/final-ee62dc1e5/rerun/`.
