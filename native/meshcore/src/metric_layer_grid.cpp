@@ -215,9 +215,12 @@ class LocationBins {
 std::pair<Point, Point> bounds(const std::array<Point, 4>& corners) {
   Point low, high;
   for (int k = 0; k < 3; ++k) {
-    const auto [lo, hi] = std::minmax({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
-    low[k] = lo;
-    high[k] = hi;
+    const double a = corners[0][k];
+    const double b = corners[1][k];
+    const double c = corners[2][k];
+    const double d = corners[3][k];
+    low[k] = std::min(std::min(a, b), std::min(c, d));
+    high[k] = std::max(std::max(a, b), std::max(c, d));
   }
   return {low, high};
 }
@@ -364,13 +367,17 @@ bool Columns::prepare(const AdaptInput& input, const Field& field, std::size_t n
   // tetrahedra even where no column will ever sample them.
   std::size_t candidates = 0;
   if (!source.prepare(input, field, [&](Row row, const std::array<Point, 4>& corners) {
-    const auto [lo_x, hi_x] = std::minmax({corners[0][0], corners[1][0],
-                                         corners[2][0], corners[3][0]});
+    const double lo_x = std::min(std::min(corners[0][0], corners[1][0]),
+                                 std::min(corners[2][0], corners[3][0]));
+    const double hi_x = std::max(std::max(corners[0][0], corners[1][0]),
+                                 std::max(corners[2][0], corners[3][0]));
     const auto i0 = std::lower_bound(x.begin(), x.end(), lo_x) - x.begin();
     const auto i1 = std::upper_bound(x.begin() + i0, x.end(), hi_x) - x.begin();
     if (i0 == i1) return true;
-    const auto [lo_y, hi_y] = std::minmax({corners[0][1], corners[1][1],
-                                         corners[2][1], corners[3][1]});
+    const double lo_y = std::min(std::min(corners[0][1], corners[1][1]),
+                                 std::min(corners[2][1], corners[3][1]));
+    const double hi_y = std::max(std::max(corners[0][1], corners[1][1]),
+                                 std::max(corners[2][1], corners[3][1]));
     const auto j0 = std::lower_bound(y.begin(), y.end(), lo_y) - y.begin();
     const auto j1 = std::upper_bound(y.begin() + j0, y.end(), hi_y) - y.begin();
     const auto size = static_cast<std::size_t>((i1 - i0) * (j1 - j0));

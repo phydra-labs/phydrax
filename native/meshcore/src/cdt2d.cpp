@@ -105,15 +105,23 @@ std::optional<SeedGrid> seed_grid(const cdt2d_detail::AreaEstimate& estimate, do
                   static_cast<int32_t>(cols), static_cast<int32_t>(rows), 2.5 * step / 0.99};
 }
 
+struct ForbiddenSpan {
+  double first;
+  double second;
+  bool operator<(const ForbiddenSpan& other) const noexcept {
+    return first < other.first || (first == other.first && second < other.second);
+  }
+};
+
 void seed_row(const std::vector<SeedEdge>& edges, double y, double clearance,
-              std::vector<double>& crossings, std::vector<std::pair<double, double>>& forbidden) {
+              std::vector<double>& crossings, std::vector<ForbiddenSpan>& forbidden) {
   crossings.clear();
   forbidden.clear();
   for (const SeedEdge& edge : edges) {
     if (edge.first[1] > y + clearance || edge.last[1] < y - clearance) continue;
     if (edge.first[1] == edge.last[1]) {
-      forbidden.emplace_back(std::min(edge.first[0], edge.last[0]) - clearance,
-                             std::max(edge.first[0], edge.last[0]) + clearance);
+      forbidden.push_back({std::min(edge.first[0], edge.last[0]) - clearance,
+                           std::max(edge.first[0], edge.last[0]) + clearance});
       continue;
     }
     const auto x = [&](double at) {
@@ -125,7 +133,7 @@ void seed_row(const std::vector<SeedEdge>& edges, double y, double clearance,
     const double b = x(std::min(y + clearance, edge.last[1]));
     // The clipped slab's x extent expanded by the same clearance encloses
     // every point on the row that could be within clearance of this edge.
-    forbidden.emplace_back(std::min(a, b) - clearance, std::max(a, b) + clearance);
+    forbidden.push_back({std::min(a, b) - clearance, std::max(a, b) + clearance});
   }
   std::sort(crossings.begin(), crossings.end());
   std::sort(forbidden.begin(), forbidden.end());
@@ -177,7 +185,7 @@ std::vector<double> interior_seed_bank(Triangulation2D& coarse, const SeedGrid& 
   sites.reserve(authored_size + 2 * std::min(max_sites, grid_sites));
   sites.insert(sites.end(), coarse.coordinates.begin(), coarse.coordinates.end());
   std::vector<double> crossings;
-  std::vector<std::pair<double, double>> forbidden;
+  std::vector<ForbiddenSpan> forbidden;
   int32_t hint = coarse.hint;
   for (int32_t row = 0; row < grid.rows; ++row) {
     const double y = grid.y + (row + 0.5) * grid.rise;

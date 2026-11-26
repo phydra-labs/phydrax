@@ -1140,7 +1140,9 @@ def _realize_mean_sizes(
                 - np.sum(sorted_caps[:, :saturated], axis=1)
                 - np.sum(sorted_logarithms[:, saturated:], axis=1)
             ) / (dimension - saturated)
-            lower_threshold = 0.0 if saturated == 0 else sorted_thresholds[:, saturated - 1]
+            lower_threshold = (
+                0.0 if saturated == 0 else sorted_thresholds[:, saturated - 1]
+            )
             accept = (
                 ~solved
                 & (candidate >= lower_threshold)

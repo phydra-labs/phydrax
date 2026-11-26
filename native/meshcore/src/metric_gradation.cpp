@@ -183,7 +183,7 @@ void grade_diagonal(Graph& graph, int32_t axes, const double* initial, const dou
   for (Row row = 0; row < graph.rows; ++row) {
     const int64_t index = static_cast<int64_t>(row) * axes;
     stats[2] += !std::equal(graded + index, graded + index + axes, initial + index);
-    stats[3] &= within_bounds(graded + index, axes, bounds);
+    stats[3] &= static_cast<int64_t>(within_bounds(graded + index, axes, bounds));
   }
 }
 
@@ -244,7 +244,7 @@ extern "C" int32_t phx_mc_metric_grade_physical(
         for (int64_t row = 0; row < row_count; ++row) stats[2] += graded[row] < initial[row];
       } else {
         for (int64_t row = 0; row < row_count; ++row) {
-          stats[3] &= within_bounds(graded + row * axes, axes, bounds);
+          stats[3] &= static_cast<int64_t>(within_bounds(graded + row * axes, axes, bounds));
         }
       }
     }

@@ -157,12 +157,17 @@ void spread_source_binds_a_bounded_grid() {
   }
 }
 
+struct BoundSample {
+  double bound;
+  double sampled;
+};
+
 // Bound of triangle (a, b, c) and its largest sampled distance to the mesh.
-std::pair<double, double> bound_and_sample(const MeshSource& source, const Point& a,
-                                           const Point& b, const Point& c,
-                                           const std::vector<Point>& points,
-                                           const std::vector<Triangle>& triangles,
-                                           phx::mc::remesh::Projection projection) {
+BoundSample bound_and_sample(const MeshSource& source, const Point& a,
+                             const Point& b, const Point& c,
+                             const std::vector<Point>& points,
+                             const std::vector<Triangle>& triangles,
+                             phx::mc::remesh::Projection projection) {
   const double bound = source.triangle_bound(a, b, c, projection);
   double sampled = 0;
   constexpr int kSteps = 12;

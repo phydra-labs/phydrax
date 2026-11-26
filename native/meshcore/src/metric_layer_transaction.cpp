@@ -694,10 +694,12 @@ std::optional<TetEditStatus> bind_grid_cells(const MetricBoxGrid& grid, const Ad
 Bounds tet_bounds(const TetPoints& points) {
   Bounds result;
   for (int axis = 0; axis < 3; ++axis) {
-    const auto [low, high] = std::minmax({points[0][axis], points[1][axis],
-                                        points[2][axis], points[3][axis]});
-    result.low[axis] = low;
-    result.high[axis] = high;
+    const double a = points[0][axis];
+    const double b = points[1][axis];
+    const double c = points[2][axis];
+    const double d = points[3][axis];
+    result.low[axis] = std::min(std::min(a, b), std::min(c, d));
+    result.high[axis] = std::max(std::max(a, b), std::max(c, d));
   }
   return result;
 }

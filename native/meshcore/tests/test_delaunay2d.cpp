@@ -76,18 +76,26 @@ Result regular(const std::vector<double>& points, const std::vector<double>& wei
 
 const double* at(const std::vector<double>& points, int32_t v) { return points.data() + 2 * v; }
 
+struct HullPoint {
+  double first;
+  double second;
+  bool operator<(const HullPoint& other) const noexcept {
+    return first < other.first || (first == other.first && second < other.second);
+  }
+  bool operator==(const HullPoint& other) const noexcept = default;
+};
+
 // Twice the area of the convex hull (Andrew's monotone chain, exact turns).
 double hull_twice_area(const std::vector<double>& points) {
-  std::vector<std::pair<double, double>> p;
+  std::vector<HullPoint> p;
   for (std::size_t k = 0; k < points.size() / 2; ++k) {
-    p.emplace_back(points[2 * k], points[2 * k + 1]);
+    p.push_back({points[2 * k], points[2 * k + 1]});
   }
   std::sort(p.begin(), p.end());
   p.erase(std::unique(p.begin(), p.end()), p.end());
-  std::vector<std::pair<double, double>> hull(2 * p.size());
+  std::vector<HullPoint> hull(2 * p.size());
   std::size_t count = 0;
-  auto turn = [](const std::pair<double, double>& a, const std::pair<double, double>& b,
-                 const std::pair<double, double>& c) {
+  auto turn = [](const HullPoint& a, const HullPoint& b, const HullPoint& c) {
     const double pa[2] = {a.first, a.second}, pb[2] = {b.first, b.second},
                  pc[2] = {c.first, c.second};
     return orient2d(pa, pb, pc);

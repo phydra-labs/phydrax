@@ -71,7 +71,10 @@ bool ScalarBoxField::prepare(const AdaptInput& input, const BoxPoint& minimum,
     const double scale = geometry::length(a) * geometry::length(b) * geometry::length(c);
     if (!(std::abs(det) > 64 * std::numeric_limits<double>::epsilon() * scale)) return false;
     for (int k = 0; k < 3; ++k) {
-      const auto [lo, hi] = std::minmax({corners[0][k], corners[1][k], corners[2][k], corners[3][k]});
+      const double lo = std::min(std::min(corners[0][k], corners[1][k]),
+                                 std::min(corners[2][k], corners[3][k]));
+      const double hi = std::max(std::max(corners[0][k], corners[1][k]),
+                                 std::max(corners[2][k], corners[3][k]));
       if (lo < low[k] || hi > high[k]) return false;
       if (build_grid) {
         lower[3 * row + k] = lo;

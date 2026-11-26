@@ -236,7 +236,9 @@ def test_diagonal_physical_gradation_reaches_fixed_point_and_preserves_bits() ->
     field = meshing.MeshMetricField(
         _scope(5), values, minimum_size=0.125, maximum_size=2.0
     )
-    policy = meshing.MetricGradationPolicy(1.25, anisotropic=True, relative_tolerance=0.01)
+    policy = meshing.MetricGradationPolicy(
+        1.25, anisotropic=True, relative_tolerance=0.01
+    )
     graded, evidence = meshing.grade_mesh_metric(
         field, policy=policy, adjacency=edges, coordinates=points
     )
@@ -247,11 +249,15 @@ def test_diagonal_physical_gradation_reaches_fixed_point_and_preserves_bits() ->
     np.testing.assert_array_equal(
         np.asarray(graded.values).view(np.uint64), expected.view(np.uint64)
     )
-    assert evidence.converged and evidence.maximum_violation <= 4 * np.finfo(np.float64).eps
+    assert (
+        evidence.converged and evidence.maximum_violation <= 4 * np.finfo(np.float64).eps
+    )
     assert (evidence.iterations, evidence.updates, evidence.modified_count) == (15, 3, 3)
 
 
-def test_diagonal_physical_gradation_uses_bounded_sweep_if_fixed_point_is_refused() -> None:
+def test_diagonal_physical_gradation_uses_bounded_sweep_if_fixed_point_is_refused() -> (
+    None
+):
     if jax.default_backend() != "cpu" or not meshcore_available():
         pytest.skip("Requires native CPU gradation.")
     # This input is admitted with the field's spectral roundoff allowance but

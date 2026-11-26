@@ -444,7 +444,12 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // A proximity control scoping the face lowers the request to its size at the
 // point first (cad_proximity.hpp); grading and the chord floor then apply to
 // that local request.
-std::pair<double, double> graded_size(const FaceMetric& context, const double* jet) {
+struct GradedSize {
+  double size;
+  double ungraded;
+};
+
+GradedSize graded_size(const FaceMetric& context, const double* jet) {
   double h = context.size;
   if (context.proximity) h = std::min(h, context.proximity->size(context.face, jet));
   const double ungraded = h;
@@ -536,8 +541,13 @@ double local_theta(const FaceMetric& context, double kappa, double outer,
   return size >= outer ? context.theta : context.theta * (size * size) / (outer * outer);
 }
 
-std::pair<double, double> metric_sizes(const FaceMetric& context, const double* jet,
-                                      const cad::SurfaceDifferential& differential) {
+struct MetricSizes {
+  double size;
+  double theta;
+};
+
+MetricSizes metric_sizes(const FaceMetric& context, const double* jet,
+                         const cad::SurfaceDifferential& differential) {
   const auto [h, ungraded] = graded_size(context, jet);
   if (context.chord_tree.empty()) return {h, context.theta};
   const double length = context.chord_tree[0].spacing;
