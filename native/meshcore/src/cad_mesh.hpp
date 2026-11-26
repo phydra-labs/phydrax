@@ -53,6 +53,9 @@ struct CadSurfaceMesh {
   // Time spent in the per-face chart meshing (cad_mesh_face) and in the rest
   // of the assembly, nanoseconds.
   int64_t face_ns = 0, assembly_ns = 0;
+  // Set when a retryable pass stopped after Phase-1 chart refinement because
+  // at least one face reported a curve-segment encroachment refusal.
+  bool deferred_encroachment = false;
 };
 
 // Volume stage controls: affine and sampled curved shape targets, geometry
@@ -117,22 +120,31 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
 
 // Retained chart-local results for one native surface call and its retries.
 // The caller keeps geometry and face controls fixed across the passes.
+// An entry holds either a completed `mesh` or a Phase-1 `stage` (when a prior
+// retryable pass deferred smoothing on curve encroachment).
 struct CadFaceRetryWindow {
   static constexpr std::size_t capacity = 8;
   struct Entry {
     CadFaceMesh mesh;
+    CadFaceStagePtr stage;
     std::size_t retained_bytes = 0;
   };
-  std::array<Entry, capacity> faces;
+  std::vector<Entry> faces;
   std::size_t retained_bytes = 0;
 };
 
 // graded_pole_rings and proximity (null: none): solid route (cad_mesh_face).
+// When `defer_on_encroachment` is true, Phase-1 2D chart refinement runs on
+// all faces first; if any face reports a curve-segment encroachment refusal,
+// 3D flip sweeps and smoothing are skipped, resolved Phase-1 stages are
+// retained in `retry`, `result.face_failures` receives the Phase-1 failures,
+// and `result.deferred_encroachment` is set to true.
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& result, bool graded_pole_rings = false,
                          const cad::ProximityField* proximity = nullptr,
                          int32_t parallelism = 1, CadFaceRetryWindow* retry = nullptr,
-                         const CadCurveDiscretization* previous_curves = nullptr);
+                         const CadCurveDiscretization* previous_curves = nullptr,
+                         bool defer_on_encroachment = false);
 
 }  // namespace phx::mc

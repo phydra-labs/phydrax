@@ -65,23 +65,23 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
   if (candidate.curves.offsets.size() != static_cast<std::size_t>(model.curve_count) + 1)
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
   phx::mc::CadFaceRetryWindow window;
-  auto* retry = refine_shared_curves &&
-      model.surface_count <= static_cast<int64_t>(phx::mc::CadFaceRetryWindow::capacity)
-      ? &window : nullptr;
+  auto* retry = refine_shared_curves ? &window : nullptr;
   const auto build_faces = [&](const phx::mc::cad::CurveDiscretization& curves,
-                               const phx::mc::CadCurveDiscretization* previous = nullptr) {
+                               const phx::mc::CadCurveDiscretization* previous = nullptr,
+                               bool defer_on_encroachment = false) {
     return phx::mc::cad_mesh_surface(
         geometry, curves.view(), face_sizes, controls.face_tolerances,
         controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity,
-        parallelism, retry, previous);
+        parallelism, retry, previous, defer_on_encroachment);
   };
-  int32_t surface_status = build_faces(candidate.curves);
+  int32_t surface_status =
+      build_faces(candidate.curves, nullptr, refine_shared_curves && curve_status == PHX_MC_OK);
   stats.face_ns = candidate.mesh.face_ns;
   stats.assembly_ns = candidate.mesh.assembly_ns;
   if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
   if (curve_status == PHX_MC_UNRESOLVED) return curve_status;
   if (!refine_shared_curves || surface_status != PHX_MC_UNRESOLVED ||
-      candidate.mesh.triangles.empty())
+      (candidate.mesh.triangles.empty() && !candidate.mesh.deferred_encroachment))
     return surface_status;
 
   using phx::mc::cad::CurveDiscretization;
@@ -93,7 +93,18 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
         failure.curve >= 0 && failure.curve_segment >= 0)
       intervals.push_back({failure.curve, failure.curve_segment});
   }
-  if (intervals.empty()) return surface_status;
+  if (intervals.empty()) {
+    if (candidate.mesh.deferred_encroachment) {
+      const auto current = candidate.curves.view();
+      candidate.mesh = phx::mc::CadSurfaceMesh{};
+      surface_status = build_faces(candidate.curves, &current, false);
+      if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED)
+        return surface_status;
+      stats.face_ns += candidate.mesh.face_ns;
+      stats.assembly_ns += candidate.mesh.assembly_ns;
+    }
+    return surface_status;
+  }
   const auto key = [](const CurveInterval& i) { return std::pair{i.curve, i.segment}; };
   std::sort(intervals.begin(), intervals.end(),
             [&](const CurveInterval& a, const CurveInterval& b) { return key(a) < key(b); });
@@ -125,12 +136,13 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     candidate.mesh = phx::mc::CadSurfaceMesh{};
     const auto face_start = Clock::now();
     const auto previous = (candidate.refinement_retries == 0 ? initial : candidate.curves).view();
-    surface_status = build_faces(refined, &previous);
+    surface_status = build_faces(refined, &previous, !whole_curves);
     if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED)
       return surface_status;
     ++candidate.refinement_retries;
     candidate.curves = std::move(refined);
-    if (surface_status == PHX_MC_UNRESOLVED && candidate.mesh.triangles.empty()) {
+    if (surface_status == PHX_MC_UNRESOLVED && candidate.mesh.triangles.empty() &&
+        !candidate.mesh.deferred_encroachment) {
       // An early trim refusal publishes findings, but no stage clocks.
       stats.face_ns += elapsed_ns(face_start);
       break;
@@ -138,6 +150,15 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     stats.face_ns += candidate.mesh.face_ns;
     stats.assembly_ns += candidate.mesh.assembly_ns;
     if (surface_status == PHX_MC_OK) break;
+  }
+  if (candidate.mesh.deferred_encroachment) {
+    const auto current = candidate.curves.view();
+    candidate.mesh = phx::mc::CadSurfaceMesh{};
+    surface_status = build_faces(candidate.curves, &current, false);
+    if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED)
+      return surface_status;
+    stats.face_ns += candidate.mesh.face_ns;
+    stats.assembly_ns += candidate.mesh.assembly_ns;
   }
   return surface_status;
 }

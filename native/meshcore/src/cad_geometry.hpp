@@ -164,6 +164,7 @@ class CadGeometry {
   bool expand_template(const Node& node, const double* point, int order, Taylor* out,
                        EvaluationWorkspace& workspace) const;
   bool expand_closed(const Node& node, const double* point, int order, Taylor* out) const;
+  bool jets_closed(const Node& node, const double* point, int order, double* result) const;
   void bind_closed_form(Node& node) const;
   bool expand_bspline_curve(const Node& node, double t, int order, int span_override,
                             Taylor* out) const;

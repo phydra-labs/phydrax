@@ -2747,9 +2747,140 @@ bool CadGeometry::jets_in_span(int32_t index, double parameter, double span_inte
   return ok;
 }
 
+bool CadGeometry::jets_closed(const Node& node, const double* point, int order,
+                              double* result) const {
+  const double u = point[0], v = point[1];
+  if (!std::isfinite(u) || !std::isfinite(v)) return false;
+  const double* data = node.closed_data;
+  const double *origin = data, *e1 = data + 3, *e2 = data + 6, *axis = data + 9;
+  switch (node.closed) {
+    case ClosedForm::kPlane:
+      for (int i = 0; i < 3; ++i) result[i] = origin[i] + u * e1[i] + v * e2[i];
+      if (order >= 1) {
+        for (int i = 0; i < 3; ++i) {
+          result[3 + i] = e1[i];
+          result[6 + i] = e2[i];
+        }
+      }
+      if (order >= 2) {
+        for (int i = 9; i < 18; ++i) result[i] = 0.0;
+      }
+      return true;
+    case ClosedForm::kCylinder: {
+      const double radius = data[12];
+      const double c = std::cos(u), s = std::sin(u);
+      for (int i = 0; i < 3; ++i)
+        result[i] = origin[i] + radius * (c * e1[i] + s * e2[i]) + v * axis[i];
+      if (order >= 1) {
+        for (int i = 0; i < 3; ++i) {
+          result[3 + i] = radius * ((-s) * e1[i] + c * e2[i]);
+          result[6 + i] = axis[i];
+        }
+      }
+      if (order >= 2) {
+        for (int i = 0; i < 3; ++i) {
+          result[9 + i] = 2.0 * (radius * (((-c) * 0.5) * e1[i] + ((-s) * 0.5) * e2[i]));
+          result[12 + i] = 0.0;
+          result[15 + i] = 0.0;
+        }
+      }
+      return true;
+    }
+    case ClosedForm::kCone: {
+      const double slope = data[13], radius = data[12] + v * slope;
+      const double c = std::cos(u), s = std::sin(u);
+      for (int i = 0; i < 3; ++i) {
+        const double radial = c * e1[i] + s * e2[i];
+        result[i] = origin[i] + v * axis[i] + radius * radial;
+        if (order >= 1) {
+          const double d1 = (-s) * e1[i] + c * e2[i];
+          result[3 + i] = radius * d1;
+          result[6 + i] = axis[i] + slope * radial;
+          if (order >= 2) {
+            const double d2 = ((-c) * 0.5) * e1[i] + ((-s) * 0.5) * e2[i];
+            result[9 + i] = 2.0 * (radius * d2);
+            result[12 + i] = slope * d1;
+            result[15 + i] = 0.0;
+          }
+        }
+      }
+      return true;
+    }
+    case ClosedForm::kSphere: {
+      const double radius = data[12];
+      const double cu = std::cos(u), su = std::sin(u);
+      const double cv = std::cos(v), sv = std::sin(v);
+      for (int i = 0; i < 3; ++i) {
+        const double eq0 = cu * e1[i] + su * e2[i];
+        result[i] = origin[i] + radius * (cv * eq0 + sv * axis[i]);
+        if (order >= 1) {
+          const double eq1 = (-su) * e1[i] + cu * e2[i];
+          result[3 + i] = radius * (cv * eq1);
+          result[6 + i] = radius * ((-sv) * eq0 + cv * axis[i]);
+          if (order >= 2) {
+            const double eq2 = ((-cu) * 0.5) * e1[i] + ((-su) * 0.5) * e2[i];
+            result[9 + i] = 2.0 * (radius * (cv * eq2));
+            result[12 + i] = radius * ((-sv) * eq1);
+            result[15 + i] = 2.0 * (radius * (((-cv) * 0.5) * eq0 + ((-sv) * 0.5) * axis[i]));
+          }
+        }
+      }
+      return true;
+    }
+    case ClosedForm::kTorus: {
+      const double major = data[12], minor = data[13];
+      const double cu = std::cos(u), su = std::sin(u);
+      const double cv = std::cos(v), sv = std::sin(v);
+      const double ring = major + minor * cv;
+      for (int i = 0; i < 3; ++i) {
+        const double r0 = cu * e1[i] + su * e2[i];
+        result[i] = origin[i] + ring * r0 + minor * sv * axis[i];
+        if (order >= 1) {
+          const double r1 = (-su) * e1[i] + cu * e2[i];
+          result[3 + i] = ring * r1;
+          result[6 + i] = (minor * (-sv)) * r0 + minor * cv * axis[i];
+          if (order >= 2) {
+            const double r2 = ((-cu) * 0.5) * e1[i] + ((-su) * 0.5) * e2[i];
+            result[9 + i] = 2.0 * (ring * r2);
+            result[12 + i] = (minor * (-sv)) * r1;
+            result[15 + i] =
+                2.0 * ((minor * ((-cv) * 0.5)) * r0 + minor * ((-sv) * 0.5) * axis[i]);
+          }
+        }
+      }
+      return true;
+    }
+    case ClosedForm::kLineRevolution: {
+      const double *p1 = data + 3, *r0 = data + 6, *r1 = data + 9, *c0 = data + 12,
+                   *c1 = data + 15;
+      const double c = std::cos(u), s = std::sin(u);
+      for (int i = 0; i < 3; ++i) {
+        const double radial = r0[i] + v * r1[i], cross = c0[i] + v * c1[i];
+        result[i] = origin[i] + v * p1[i] + radial * c + cross * s;
+        if (order >= 1) {
+          result[3 + i] = radial * (-s) + cross * c;
+          result[6 + i] = p1[i] + r1[i] * c + c1[i] * s;
+          if (order >= 2) {
+            result[9 + i] = 2.0 * (radial * ((-c) * 0.5) + cross * ((-s) * 0.5));
+            result[12 + i] = r1[i] * (-s) + c1[i] * c;
+            result[15 + i] = 0.0;
+          }
+        }
+      }
+      return true;
+    }
+    case ClosedForm::kNone:
+      return false;
+  }
+  return false;
+}
+
 bool CadGeometry::jets(int32_t index, const double* point, int order, double* result,
                        EvaluationWorkspace& workspace) const {
   const Node& node = this->node(index);
+  if (node.closed != ClosedForm::kNone && order >= 0 && order <= 2) {
+    return jets_closed(node, point, order, result);
+  }
   Taylor local[3];
   if (!expand(index, point, order, local, workspace)) return false;
   int64_t slot = 0;

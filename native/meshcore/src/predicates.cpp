@@ -94,6 +94,14 @@ int orient2d_adapt(const double* a, const double* b, const double* c, double det
   return (ex * fy - ey * fx).sign();
 }
 
+// Exact p q - r s as a four-component expansion (zeros allowed).
+inline void product_difference_4(double p, double q, double r, double s, double* h) {
+  double pq1, pq0, rs1, rs0;
+  two_product(p, q, pq1, pq0);
+  two_product(r, s, rs1, rs0);
+  two_two_diff(pq1, pq0, rs1, rs0, h);
+}
+
 // Stages B and C of orient3d_shewchuk (out of line: the expansions would
 // otherwise enlarge the stack frame of every filtered call).
 [[gnu::noinline, gnu::cold]] int orient3d_adapt(const double* a, const double* b,
@@ -102,11 +110,25 @@ int orient2d_adapt(const double* a, const double* b, const double* c, double det
   const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
   const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
   const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
-  const Expansion rx[3] = {Expansion(adx), Expansion(bdx), Expansion(cdx)};
-  const Expansion ry[3] = {Expansion(ady), Expansion(bdy), Expansion(cdy)};
-  const Expansion rz[3] = {Expansion(adz), Expansion(bdz), Expansion(cdz)};
-  const Expansion stage_b = orient3d_rows(rx, ry, rz);
-  const double estimate = stage_b.estimate();
+  if ((adx == 0.0 && ady == 0.0 && adz == 0.0) ||
+      (bdx == 0.0 && bdy == 0.0 && bdz == 0.0) ||
+      (cdx == 0.0 && cdy == 0.0 && cdz == 0.0)) {
+    return 0;
+  }
+  // Stage B on fixed stack buffers (exact on rounded differences).
+  double bc[4], ca[4], ab[4];
+  product_difference_4(bdx, cdy, cdx, bdy, bc);
+  product_difference_4(cdx, ady, adx, cdy, ca);
+  product_difference_4(adx, bdy, bdx, ady, ab);
+  double adet[8], bdet[8], cdet[8];
+  const int alen = scale_expansion_zeroelim(4, bc, adz, adet);
+  const int blen = scale_expansion_zeroelim(4, ca, bdz, bdet);
+  const int clen = scale_expansion_zeroelim(4, ab, cdz, cdet);
+  double abdet[16], fin[24];
+  const int ablen = fast_expansion_sum_zeroelim(alen, adet, blen, bdet, abdet);
+  const int finlen = fast_expansion_sum_zeroelim(ablen, abdet, clen, cdet, fin);
+  double estimate = 0.0;
+  for (int i = 0; i < finlen; ++i) estimate += fin[i];
   const double errbound_b = kO3dErrBoundB * permanent;
   if (estimate >= errbound_b || -estimate >= errbound_b) {
     return sign_of(estimate);
@@ -118,7 +140,7 @@ int orient2d_adapt(const double* a, const double* b, const double* c, double det
       two_diff_tail(a[2], d[2], adz) == 0.0 && two_diff_tail(b[2], d[2], bdz) == 0.0 &&
       two_diff_tail(c[2], d[2], cdz) == 0.0;
   if (exact_differences) {
-    return stage_b.sign();
+    return sign_of(fin[finlen - 1]);
   }
   const Expansion fx[3] = {Expansion::difference(a[0], d[0]), Expansion::difference(b[0], d[0]),
                            Expansion::difference(c[0], d[0])};
@@ -145,6 +167,11 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
   const double errbound_a = kO3dErrBoundA * permanent;
   if (det > errbound_a || -det > errbound_a) {
     return sign_of(det);
+  }
+  if (det == 0.0 && ((adz == 0.0 && bdz == 0.0 && cdz == 0.0) ||
+                     (ady == 0.0 && bdy == 0.0 && cdy == 0.0) ||
+                     (adx == 0.0 && bdx == 0.0 && cdx == 0.0))) {
+    return 0;
   }
   return orient3d_adapt(a, b, c, d, permanent);
 }

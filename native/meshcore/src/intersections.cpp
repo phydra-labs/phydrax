@@ -562,7 +562,92 @@ void coplanar_points(const CoplanarClipper& clipper, const double* const subject
 
 void coplanar_triangles(const double* const first[3], const double* const second[3],
                         const int64_t* first_ids, const int64_t* second_ids, Contact& contact) {
-  CoplanarClipper clipper(first, 3, second, projection_axis(first));
+  const int axis = projection_axis(first);
+  const int ax0 = (axis + 1) % 3;
+  const int ax1 = (axis + 2) % 3;
+  double a2[3][2], b2[3][2];
+  for (int k = 0; k < 3; ++k) {
+    a2[k][0] = first[k][ax0];
+    a2[k][1] = first[k][ax1];
+    b2[k][0] = second[k][ax0];
+    b2[k][1] = second[k][ax1];
+  }
+  const int oa = orient2d_filtered(a2[0], a2[1], a2[2]);
+  const int ob = orient2d_filtered(b2[0], b2[1], b2[2]);
+  // Exact 2D separating-axis screen before symbolic clipping: every disjoint
+  // pair and every single-vertex non-overlapping contact separates along an
+  // edge of one triangle using only orient2d (zero Expansion arithmetic).
+  for (int q = 0; q < 3; ++q) {
+    const double* e0 = b2[(q + 1) % 3];
+    const double* e1 = b2[(q + 2) % 3];
+    const int s0 = ob * orient2d_filtered(e0, e1, a2[0]);
+    const int s1 = ob * orient2d_filtered(e0, e1, a2[1]);
+    const int s2 = ob * orient2d_filtered(e0, e1, a2[2]);
+    if (s0 < 0 && s1 < 0 && s2 < 0) {
+      contact.kind = PHX_MC_DISJOINT;
+      contact.count = 0;
+      return;
+    }
+    if (s0 <= 0 && s1 <= 0 && s2 <= 0) {
+      const int zeros = (s0 == 0) + (s1 == 0) + (s2 == 0);
+      if (zeros == 1) {
+        const int k0 = s0 == 0 ? 0 : (s1 == 0 ? 1 : 2);
+        int sides[3];
+        sides[q] = 0;
+        for (int m = 0; m < 3; ++m) {
+          if (m == q) continue;
+          sides[m] = ob * orient2d_filtered(b2[(m + 1) % 3], b2[(m + 2) % 3], a2[k0]);
+          if (sides[m] < 0) {
+            contact.kind = PHX_MC_DISJOINT;
+            contact.count = 0;
+            return;
+          }
+        }
+        contact.count = 1;
+        contact.points[0] =
+            exact_point(first[k0], static_cast<int8_t>(k0), feature_from_sides(sides));
+        contact.kind = shared(contact.points[0], first_ids, second_ids) ? PHX_MC_SHARED_VERTEX
+                                                                        : PHX_MC_TOUCHING;
+        return;
+      }
+    }
+  }
+  for (int e = 0; e < 3; ++e) {
+    const double* e0 = a2[(e + 1) % 3];
+    const double* e1 = a2[(e + 2) % 3];
+    const int r0 = oa * orient2d_filtered(e0, e1, b2[0]);
+    const int r1 = oa * orient2d_filtered(e0, e1, b2[1]);
+    const int r2 = oa * orient2d_filtered(e0, e1, b2[2]);
+    if (r0 < 0 && r1 < 0 && r2 < 0) {
+      contact.kind = PHX_MC_DISJOINT;
+      contact.count = 0;
+      return;
+    }
+    if (r0 <= 0 && r1 <= 0 && r2 <= 0) {
+      const int zeros = (r0 == 0) + (r1 == 0) + (r2 == 0);
+      if (zeros == 1) {
+        const int k0 = r0 == 0 ? 0 : (r1 == 0 ? 1 : 2);
+        int sides[3];
+        sides[e] = 0;
+        for (int m = 0; m < 3; ++m) {
+          if (m == e) continue;
+          sides[m] = oa * orient2d_filtered(a2[(m + 1) % 3], a2[(m + 2) % 3], b2[k0]);
+          if (sides[m] < 0) {
+            contact.kind = PHX_MC_DISJOINT;
+            contact.count = 0;
+            return;
+          }
+        }
+        contact.count = 1;
+        contact.points[0] =
+            exact_point(second[k0], feature_from_sides(sides), static_cast<int8_t>(k0));
+        contact.kind = shared(contact.points[0], first_ids, second_ids) ? PHX_MC_SHARED_VERTEX
+                                                                        : PHX_MC_TOUCHING;
+        return;
+      }
+    }
+  }
+  CoplanarClipper clipper(first, 3, second, axis);
   clipper.run();
   int on_line[kMaxContactPoints];
   coplanar_points(clipper, first, 3, second, contact, on_line);
@@ -639,8 +724,14 @@ int32_t intersect_triangles(const double* const first[3], const double* const se
   }
   int s[3];
   int r[3];
+  const bool have_ids = first_ids != nullptr && second_ids != nullptr;
   for (int k = 0; k < 3; ++k) {
-    s[k] = orient3d(second[0], second[1], second[2], first[k]);
+    if (have_ids && (first_ids[k] == second_ids[0] || first_ids[k] == second_ids[1] ||
+                     first_ids[k] == second_ids[2])) {
+      s[k] = 0;
+    } else {
+      s[k] = orient3d_filtered(second[0], second[1], second[2], first[k]);
+    }
   }
   if (s[0] == 0 && s[1] == 0 && s[2] == 0) {
     coplanar_triangles(first, second, first_ids, second_ids, contact);
@@ -650,7 +741,12 @@ int32_t intersect_triangles(const double* const first[3], const double* const se
     return PHX_MC_OK;
   }
   for (int k = 0; k < 3; ++k) {
-    r[k] = orient3d(first[0], first[1], first[2], second[k]);
+    if (have_ids && (second_ids[k] == first_ids[0] || second_ids[k] == first_ids[1] ||
+                     second_ids[k] == first_ids[2])) {
+      r[k] = 0;
+    } else {
+      r[k] = orient3d_filtered(first[0], first[1], first[2], second[k]);
+    }
   }
   if ((r[0] > 0 && r[1] > 0 && r[2] > 0) || (r[0] < 0 && r[1] < 0 && r[2] < 0)) {
     return PHX_MC_OK;

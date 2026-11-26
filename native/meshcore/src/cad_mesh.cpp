@@ -136,21 +136,23 @@ std::size_t face_storage(const CadFaceMesh& mesh) {
          bytes(mesh.protected_pole_edges) + bytes(mesh.refinement_failures);
 }
 
-std::array<bool, CadFaceRetryWindow::capacity> changed_faces(
-    const phx_mc_cad_model& model, const CadCurveDiscretization& before,
-    const CadCurveDiscretization& after) {
-  std::array<bool, CadFaceRetryWindow::capacity> changed{};
+std::vector<uint8_t> changed_faces(const phx_mc_cad_model& model,
+                                   const CadCurveDiscretization& before,
+                                   const CadCurveDiscretization& after) {
+  std::vector<uint8_t> changed(static_cast<std::size_t>(model.surface_count), 0U);
   for (int64_t loop = 0; loop < model.loop_count; ++loop) {
-    auto& dirty = changed[model.loop_surfaces[loop]];
+    uint8_t& dirty = changed[static_cast<std::size_t>(model.loop_surfaces[loop])];
     for (int64_t use = model.loop_use_offsets[loop];
          !dirty && use < model.loop_use_offsets[loop + 1]; ++use) {
       if (model.use_kinds[use] != 0) continue;
       const int32_t curve = model.use_entities[use];
       const int64_t left = before.offsets[curve], right = after.offsets[curve];
       const int64_t length = after.offsets[curve + 1] - right;
-      dirty = before.offsets[curve + 1] - left != length ||
-              std::memcmp(before.parameters + left, after.parameters + right,
-                          static_cast<std::size_t>(length) * sizeof(double)) != 0;
+      dirty = (before.offsets[curve + 1] - left != length ||
+               std::memcmp(before.parameters + left, after.parameters + right,
+                           static_cast<std::size_t>(length) * sizeof(double)) != 0)
+                  ? 1U
+                  : 0U;
     }
   }
   return changed;
@@ -162,7 +164,8 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& output, bool graded_pole_rings,
                          const cad::ProximityField* proximity, int32_t parallelism,
-                         CadFaceRetryWindow* retry, const CadCurveDiscretization* previous_curves) {
+                         CadFaceRetryWindow* retry, const CadCurveDiscretization* previous_curves,
+                         bool defer_on_encroachment) {
   const auto& model = geometry.model();
   if (parallelism < 1 || (model.surface_count && (!sizes || !tolerances)) ||
       !(theta > 0.0) || !std::isfinite(theta))
@@ -171,9 +174,12 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
       model.curve_count > std::numeric_limits<int32_t>::max() ||
       model.corner_count > std::numeric_limits<int32_t>::max()) return PHX_MC_INDEX_RANGE_ERROR;
   const int32_t valid = validate_cad_curve_discretization(model, curves);
-  if (retry && model.surface_count > static_cast<int64_t>(CadFaceRetryWindow::capacity))
-    return PHX_MC_INVALID_ARGUMENT;
   if (valid != PHX_MC_OK) return valid;
+  if (retry && retry->faces.size() != static_cast<std::size_t>(model.surface_count)) {
+    retry->faces.clear();
+    retry->faces.resize(static_cast<std::size_t>(model.surface_count));
+    retry->retained_bytes = 0;
+  }
   for (int64_t face = 0; face < model.surface_count; ++face)
     if (!(sizes[face] > 0.0) || !(tolerances[face] > 0.0) ||
         !std::isfinite(sizes[face]) || !std::isfinite(tolerances[face])) return PHX_MC_INVALID_INPUT;
@@ -320,35 +326,184 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
 
   // A face reads only its incident curves, by curve-local sample index.
   // Always assemble against the new global bank, even for a reused chart.
-  const auto changed = retry && previous_curves
+  const auto face_count = static_cast<std::size_t>(model.surface_count);
+  const std::vector<uint8_t> changed = retry && previous_curves
       ? changed_faces(model, *previous_curves, curves)
-      : std::array<bool, CadFaceRetryWindow::capacity>{};
-  const auto reusable = [&](std::size_t face) {
-    return retry && previous_curves && retry->faces[face].retained_bytes != 0 && !changed[face];
+      : std::vector<uint8_t>(face_count, 0U);
+  const auto has_reusable_mesh = [&](std::size_t face) {
+    return retry && previous_curves && retry->faces[face].retained_bytes != 0 &&
+           !retry->faces[face].stage && !changed[face];
+  };
+  const auto has_reusable_stage = [&](std::size_t face) {
+    return retry && previous_curves && retry->faces[face].stage != nullptr && !changed[face];
   };
   constexpr std::size_t kRetainedByteLimit = 8 * 1024 * 1024;
 
   int32_t overall = PHX_MC_OK;
+  if (defer_on_encroachment && face_count > 0) {
+    // Phase 1: run 2D chart refinement across all faces first. If any face
+    // reports a curve-segment encroachment refusal, skip 3D flip sweeps and
+    // smoothing on this pass so the shared-curve retry only smooths once.
+    std::vector<CadFaceStagePtr> stages(face_count);
+    std::vector<CadFaceMesh> early_results(face_count);
+    std::vector<int32_t> outcomes(face_count, PHX_MC_OK);
+    std::vector<uint8_t> encroached(face_count, 0U);
+    const auto run_phase1 = [&](std::size_t face) {
+      if (has_reusable_mesh(face) || has_reusable_stage(face)) {
+        outcomes[face] = PHX_MC_OK;
+        return;
+      }
+      outcomes[face] = guarded([&]() -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        bool face_encroached = false;
+        const int32_t st = cad_refine_face_stage(
+            geometry, curves, static_cast<int32_t>(face), sizes[face], tolerances[face], theta,
+            stages[face], early_results[face], face_encroached, graded_pole_rings, proximity);
+        encroached[face] = face_encroached ? 1U : 0U;
+        return st;
+      });
+    };
+    const auto p1_start = std::chrono::steady_clock::now();
+    if (parallelism == 1 || face_count == 1) {
+      for (std::size_t face = 0; face < face_count; ++face) run_phase1(face);
+    } else {
+      const auto dispatched = parallel_for(
+          face_count, {1, static_cast<uint32_t>(parallelism)},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) {
+            for (std::size_t face = begin; face < end; ++face) run_phase1(face);
+          });
+      if (dispatched != PHX_MC_OK) return dispatched;
+    }
+    mesh.face_ns += elapsed_ns(p1_start);
+
+    bool any_encroachment = false;
+    for (std::size_t face = 0; face < face_count; ++face) {
+      const int32_t outcome = outcomes[face];
+      if (outcome != PHX_MC_OK && outcome != PHX_MC_UNRESOLVED) return outcome;
+      if (early_results[face].failure.reason != 0) {
+        output = CadSurfaceMesh{};
+        output.face_failures.push_back(early_results[face].failure);
+        return PHX_MC_UNRESOLVED;
+      }
+      if (encroached[face] != 0U) any_encroachment = true;
+    }
+
+    if (any_encroachment) {
+      output = CadSurfaceMesh{};
+      output.deferred_encroachment = true;
+      output.face_ns = mesh.face_ns;
+      for (std::size_t face = 0; face < face_count; ++face) {
+        if (stages[face]) {
+          const auto& failures = cad_face_stage_failures(*stages[face]);
+          output.face_failures.insert(output.face_failures.end(), failures.begin(), failures.end());
+        }
+        if (retry) {
+          auto& entry = retry->faces[face];
+          if (has_reusable_mesh(face) || has_reusable_stage(face)) continue;
+          retry->retained_bytes -= entry.retained_bytes;
+          entry = {};
+          if (outcomes[face] == PHX_MC_OK && stages[face]) {
+            const auto bytes = cad_face_stage_bytes(*stages[face]);
+            if (bytes <= kRetainedByteLimit - retry->retained_bytes) {
+              entry.stage = std::move(stages[face]);
+              entry.retained_bytes = bytes;
+              retry->retained_bytes += bytes;
+            }
+          }
+        }
+      }
+      output.assembly_ns = elapsed_ns(surface_start) - output.face_ns;
+      return PHX_MC_UNRESOLVED;
+    }
+
+    // No face reported curve encroachment: run Phase 2 (flip sweep + smooth)
+    // on every face not already retained as a finished mesh.
+    std::vector<CadFaceMesh> finished(face_count);
+    const auto run_phase2 = [&](std::size_t face) {
+      if (has_reusable_mesh(face)) {
+        outcomes[face] = PHX_MC_OK;
+        return;
+      }
+      CadFaceStage* stage_ptr =
+          has_reusable_stage(face) ? retry->faces[face].stage.get() : stages[face].get();
+      outcomes[face] = guarded([&]() -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        return cad_finish_face_stage(*stage_ptr, curves, finished[face]);
+      });
+    };
+    const auto p2_start = std::chrono::steady_clock::now();
+    if (parallelism == 1 || face_count == 1) {
+      for (std::size_t face = 0; face < face_count; ++face) run_phase2(face);
+    } else {
+      const auto dispatched = parallel_for(
+          face_count, {1, static_cast<uint32_t>(parallelism)},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) {
+            for (std::size_t face = begin; face < end; ++face) run_phase2(face);
+          });
+      if (dispatched != PHX_MC_OK) return dispatched;
+    }
+    mesh.face_ns += elapsed_ns(p2_start);
+
+    for (std::size_t face = 0; face < face_count; ++face) {
+      const int32_t outcome = outcomes[face];
+      const bool reused_mesh = has_reusable_mesh(face);
+      const auto& local = reused_mesh ? retry->faces[face].mesh : finished[face];
+      if (outcome != PHX_MC_OK && outcome != PHX_MC_UNRESOLVED) return outcome;
+      if (outcome == PHX_MC_UNRESOLVED) overall = outcome;
+      const int32_t appended = append_face(static_cast<int32_t>(face), local);
+      if (appended != PHX_MC_OK) return appended;
+      if (retry && !reused_mesh) {
+        auto& entry = retry->faces[face];
+        retry->retained_bytes -= entry.retained_bytes;
+        entry = {};
+        if (outcome == PHX_MC_OK) {
+          const auto bytes = face_storage(local);
+          if (bytes <= kRetainedByteLimit - retry->retained_bytes) {
+            entry.mesh = std::move(finished[face]);
+            entry.retained_bytes = bytes;
+            retry->retained_bytes += bytes;
+          }
+        }
+      }
+      stages[face].reset();
+      finished[face] = CadFaceMesh{};
+    }
+    morton_reorder(mesh);
+    mesh.assembly_ns = elapsed_ns(surface_start) - mesh.face_ns;
+    output = std::move(mesh);
+    return overall;
+  }
+
   // Curves are fixed before any face is prepared. Bound the unassembled
   // work, and consume its statuses and records in the original face order.
   constexpr std::size_t kFaceWindow = CadFaceRetryWindow::capacity;
   const std::size_t window = parallelism == 1 ? 1 : kFaceWindow;
-  const auto face_count = static_cast<std::size_t>(model.surface_count);
   for (std::size_t first = 0; first < face_count; first += window) {
     const auto count = std::min(window, face_count - first);
     std::array<CadFaceMesh, kFaceWindow> staged;
     std::array<int32_t, kFaceWindow> outcomes;
     const auto prepare = [&](std::size_t lane) {
-      const auto face = static_cast<int32_t>(first + lane);
-      if (reusable(static_cast<std::size_t>(face))) {
+      const auto face = first + lane;
+      if (has_reusable_mesh(face)) {
         outcomes[lane] = PHX_MC_OK;
+        return;
+      }
+      if (has_reusable_stage(face)) {
+        outcomes[lane] = guarded([&]() -> int32_t {
+          const GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          return cad_finish_face_stage(*retry->faces[face].stage, curves, staged[lane]);
+        });
         return;
       }
       outcomes[lane] = guarded([&]() -> int32_t {
         const GradualNearestScope mode;
         if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-        return cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta,
-                             staged[lane], nullptr, nullptr, graded_pole_rings, proximity);
+        return cad_mesh_face(geometry, curves, static_cast<int32_t>(face), sizes[face],
+                             tolerances[face], theta, staged[lane], nullptr, nullptr,
+                             graded_pole_rings, proximity);
       });
     };
     const auto face_start = std::chrono::steady_clock::now();
@@ -366,7 +521,7 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     for (std::size_t lane = 0; lane < count; ++lane) {
       const int32_t outcome = outcomes[lane];
       const auto face = first + lane;
-      const bool reused = reusable(face);
+      const bool reused = has_reusable_mesh(face);
       const auto& local = reused ? retry->faces[face].mesh : staged[lane];
       if (outcome != PHX_MC_OK && outcome != PHX_MC_UNRESOLVED) return outcome;
       if (local.failure.reason != 0) {
@@ -385,7 +540,8 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
         if (outcome == PHX_MC_OK) {
           const auto bytes = face_storage(local);
           if (bytes <= kRetainedByteLimit - retry->retained_bytes) {
-            entry = {std::move(staged[lane]), bytes};
+            entry.mesh = std::move(staged[lane]);
+            entry.retained_bytes = bytes;
             retry->retained_bytes += bytes;
           }
         }

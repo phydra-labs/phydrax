@@ -257,6 +257,15 @@ struct BoundaryChord {
   double lens;
 };
 
+// Precomputed chord leaf stored contiguously in BVH leaf order.
+struct ChordLeaf {
+  std::array<double, 3> a;
+  std::array<double, 3> ab;
+  double norm;
+  double length;
+  double lens;
+};
+
 struct BoundaryNode {
   std::array<double, 3> low;
   std::array<double, 3> high;
@@ -313,6 +322,15 @@ struct FaceMetric {
   // The moves keep pole_boundary_overruns (smooth); set for a face meshed
   // again with the kernel's pole-boundary splits.
   bool pole_guard = false;
+  // Contiguous BVH leaves, chord-lens summary, and constant planar frame.
+  std::vector<BoundarySample> boundary_sorted = {};
+  std::vector<ChordLeaf> chords_sorted = {};
+  double max_chord_lens = 0.0;
+  bool is_plane = false;
+  std::array<double, 3> plane_origin = {};
+  std::array<double, 3> plane_e1 = {};
+  std::array<double, 3> plane_e2 = {};
+  cad::SurfaceDifferential plane_differential = {};
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -352,39 +370,84 @@ int32_t build_boundary_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
-double boundary_grade_bound(const BoundaryNode& node, const double* point) {
-  double box_distance2 = 0.0;
-  for (int k = 0; k < 3; ++k) {
-    const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
-    box_distance2 += delta * delta;
-  }
-  return node.spacing + kBoundaryGrading * std::sqrt(box_distance2);
+void finalize_boundary_tree(FaceMetric& context) {
+  context.boundary_tree.clear();
+  context.boundary_sorted.clear();
+  if (context.boundary_order.empty()) return;
+  build_boundary_tree(context, 0, static_cast<int32_t>(context.boundary_order.size()));
+  context.boundary_sorted.resize(context.boundary_order.size());
+  for (std::size_t i = 0; i < context.boundary_order.size(); ++i)
+    context.boundary_sorted[i] = context.boundary[static_cast<std::size_t>(context.boundary_order[i])];
 }
 
-void grade_boundary(const FaceMetric& context, int32_t index, const double* point,
-                    double bound, double& h) {
-  if (bound >= h) return;
-  const BoundaryNode& node = context.boundary_tree[index];
-  if (node.left >= 0) {
-    const double left = boundary_grade_bound(context.boundary_tree[node.left], point);
-    const double right = boundary_grade_bound(context.boundary_tree[node.right], point);
-    // A visited sample only lowers h. Visit the child with the tighter
-    // lower bound first so its result can prune the other child.
-    if (left <= right) {
-      grade_boundary(context, node.left, point, left, h);
-      grade_boundary(context, node.right, point, right, h);
-    } else {
-      grade_boundary(context, node.right, point, right, h);
-      grade_boundary(context, node.left, point, left, h);
+inline double box_distance_squared(const BoundaryNode& node, const double* point) noexcept {
+  const double dx = std::max({node.low[0] - point[0], 0.0, point[0] - node.high[0]});
+  const double dy = std::max({node.low[1] - point[1], 0.0, point[1] - node.high[1]});
+  const double dz = std::max({node.low[2] - point[2], 0.0, point[2] - node.high[2]});
+  return dx * dx + dy * dy + dz * dz;
+}
+
+void grade_boundary(const FaceMetric& context, const double* point, double& h) {
+  const BoundaryNode* nodes = context.boundary_tree.data();
+  const BoundarySample* samples = context.boundary_sorted.data();
+  constexpr double kInvGrading = 1.0 / kBoundaryGrading;
+  constexpr double kSafeUpper = 1.0 + 1e-13;
+  struct Frame {
+    int32_t index;
+    double bound;
+  };
+  if (nodes[0].spacing >= h) return;
+  const double root_d2 = box_distance_squared(nodes[0], point);
+  const double root_slack = (h - nodes[0].spacing) * kInvGrading;
+  if (root_d2 >= root_slack * root_slack * kSafeUpper) return;
+  const double root_bound = nodes[0].spacing + kBoundaryGrading * std::sqrt(root_d2);
+  if (root_bound >= h) return;
+
+  Frame stack[64];
+  int top = 0;
+  stack[top++] = {0, root_bound};
+  while (top > 0) {
+    const Frame frame = stack[--top];
+    if (frame.bound >= h) continue;
+    const BoundaryNode& node = nodes[frame.index];
+    if (node.left >= 0) {
+      const BoundaryNode& left_node = nodes[node.left];
+      const BoundaryNode& right_node = nodes[node.right];
+      double left_bound = std::numeric_limits<double>::infinity();
+      if (left_node.spacing < h) {
+        const double d2 = box_distance_squared(left_node, point);
+        const double slack = (h - left_node.spacing) * kInvGrading;
+        if (d2 < slack * slack * kSafeUpper)
+          left_bound = left_node.spacing + kBoundaryGrading * std::sqrt(d2);
+      }
+      double right_bound = std::numeric_limits<double>::infinity();
+      if (right_node.spacing < h) {
+        const double d2 = box_distance_squared(right_node, point);
+        const double slack = (h - right_node.spacing) * kInvGrading;
+        if (d2 < slack * slack * kSafeUpper)
+          right_bound = right_node.spacing + kBoundaryGrading * std::sqrt(d2);
+      }
+      // Push farther child first so the tighter lower bound pops and prunes it.
+      if (left_bound <= right_bound) {
+        if (right_bound < h) stack[top++] = {node.right, right_bound};
+        if (left_bound < h) stack[top++] = {node.left, left_bound};
+      } else {
+        if (left_bound < h) stack[top++] = {node.left, left_bound};
+        if (right_bound < h) stack[top++] = {node.right, right_bound};
+      }
+      continue;
     }
-    return;
-  }
-  for (int32_t i = node.begin; i < node.end; ++i) {
-    const BoundarySample& sample = context.boundary[context.boundary_order[i]];
-    const double dx = point[0] - sample.xyz[0], dy = point[1] - sample.xyz[1];
-    const double dz = point[2] - sample.xyz[2];
-    h = std::min(h, sample.spacing +
-                        kBoundaryGrading * std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int32_t i = node.begin; i < node.end; ++i) {
+      const BoundarySample& sample = samples[i];
+      if (sample.spacing >= h) continue;
+      const double dx = point[0] - sample.xyz[0];
+      const double dy = point[1] - sample.xyz[1];
+      const double dz = point[2] - sample.xyz[2];
+      const double d2 = dx * dx + dy * dy + dz * dz;
+      const double slack = (h - sample.spacing) * kInvGrading;
+      if (d2 >= slack * slack * kSafeUpper) continue;
+      h = std::min(h, sample.spacing + kBoundaryGrading * std::sqrt(d2));
+    }
   }
 }
 
@@ -421,14 +484,87 @@ int32_t build_chord_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
+void finalize_chord_tree(FaceMetric& context) {
+  context.chord_tree.clear();
+  context.chords_sorted.clear();
+  context.max_chord_lens = 0.0;
+  if (context.chord_order.empty()) return;
+  build_chord_tree(context, 0, static_cast<int32_t>(context.chord_order.size()));
+  context.chords_sorted.resize(context.chord_order.size());
+  for (std::size_t i = 0; i < context.chord_order.size(); ++i) {
+    const BoundaryChord& chord = context.chords[static_cast<std::size_t>(context.chord_order[i])];
+    const std::array<double, 3> ab{chord.b[0] - chord.a[0], chord.b[1] - chord.a[1],
+                                   chord.b[2] - chord.a[2]};
+    const double norm = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    context.chords_sorted[i] = {chord.a, ab, norm, chord.length, chord.lens};
+    context.max_chord_lens = std::max(context.max_chord_lens, chord.lens);
+  }
+}
+
 struct ChordSearch {
   double distance;
-  const BoundaryChord* nearest = nullptr;
+  const ChordLeaf* nearest = nullptr;
 };
 
-template <std::size_t N>
-void chord_distance(const FaceMetric& context, int32_t index, const double* point,
-                    std::array<ChordSearch, N>& searches, unsigned active);
+// Finds the nearest fixed chord within initial `search.distance` (strict),
+// breaking equal-distance ties toward the longer chord. Visits the closer BVH
+// child first and avoids sqrt on chords outside the current squared radius.
+void chord_distance_single(const FaceMetric& context, const double* point, ChordSearch& search) {
+  const BoundaryNode* nodes = context.chord_tree.data();
+  const ChordLeaf* chords = context.chords_sorted.data();
+  constexpr double kSafeUpper = 1.0 + 1e-13;
+  double best = search.distance;
+  double best2 = best * best * kSafeUpper;
+  const double root_d2 = box_distance_squared(nodes[0], point);
+  if (root_d2 > best2) return;
+
+  struct Frame {
+    int32_t index;
+    double d2;
+  };
+  Frame stack[64];
+  int top = 0;
+  stack[top++] = {0, root_d2};
+  while (top > 0) {
+    const Frame frame = stack[--top];
+    if (frame.d2 > best2) continue;
+    const BoundaryNode& node = nodes[frame.index];
+    if (node.left >= 0) {
+      const double ld2 = box_distance_squared(nodes[node.left], point);
+      const double rd2 = box_distance_squared(nodes[node.right], point);
+      if (ld2 <= rd2) {
+        if (rd2 <= best2) stack[top++] = {node.right, rd2};
+        if (ld2 <= best2) stack[top++] = {node.left, ld2};
+      } else {
+        if (ld2 <= best2) stack[top++] = {node.left, ld2};
+        if (rd2 <= best2) stack[top++] = {node.right, rd2};
+      }
+      continue;
+    }
+    for (int32_t i = node.begin; i < node.end; ++i) {
+      const ChordLeaf& chord = chords[i];
+      const double ap0 = point[0] - chord.a[0];
+      const double ap1 = point[1] - chord.a[1];
+      const double ap2 = point[2] - chord.a[2];
+      const double dot = chord.ab[0] * ap0 + chord.ab[1] * ap1 + chord.ab[2] * ap2;
+      const double t = std::clamp(dot / chord.norm, 0.0, 1.0);
+      const double e0 = ap0 - t * chord.ab[0];
+      const double e1 = ap1 - t * chord.ab[1];
+      const double e2 = ap2 - t * chord.ab[2];
+      const double distance2 = e0 * e0 + e1 * e1 + e2 * e2;
+      if (distance2 > best2) continue;
+      const double distance = std::sqrt(distance2);
+      if (distance < best) {
+        best = distance;
+        best2 = best * best * kSafeUpper;
+        search.nearest = &chord;
+        search.distance = distance;
+      } else if (distance == best && search.nearest && chord.length > search.nearest->length) {
+        search.nearest = &chord;
+      }
+    }
+  }
+}
 
 // Isotropic base size at a face point: the request h, graded from the
 // boundary samples and floored on the nearest fixed chord. Grading from the
@@ -453,8 +589,7 @@ GradedSize graded_size(const FaceMetric& context, const double* jet) {
   double h = context.size;
   if (context.proximity) h = std::min(h, context.proximity->size(context.face, jet));
   const double ungraded = h;
-  if (!context.boundary_tree.empty())
-    grade_boundary(context, 0, jet, boundary_grade_bound(context.boundary_tree[0], jet), h);
+  if (!context.boundary_tree.empty()) grade_boundary(context, jet, h);
   return {h, ungraded};
 }
 
@@ -469,56 +604,9 @@ double base_size(const FaceMetric& context, const double* jet) {
   const auto [h, ungraded] = graded_size(context, jet);
   if (context.chord_tree.empty() || !(context.chord_tree[0].spacing > h)) return h;
   // A chord farther than (L_max - h) / g cannot raise h.
-  std::array<ChordSearch, 1> search{{{(context.chord_tree[0].spacing - h) / kBoundaryGrading}}};
-  chord_distance(context, 0, jet, search, 1U);
-  return chord_floor(h, ungraded, search[0]);
-}
-
-// Each search uses its own cutoff and longest-at-equal-distance tie rule.
-// The queries share arithmetic, not pruning decisions or traversal order.
-template <std::size_t N>
-void chord_distance(const FaceMetric& context, int32_t index, const double* point,
-                    std::array<ChordSearch, N>& searches, unsigned active) {
-  const BoundaryNode& node = context.chord_tree[index];
-  double box_distance2 = 0.0;
-  for (int k = 0; k < 3; ++k) {
-    const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
-    box_distance2 += delta * delta;
-  }
-  for (std::size_t lane = 0; lane < N; ++lane) {
-    const double best = searches[lane].distance;
-    if (box_distance2 > best * best) active &= ~(1U << lane);
-  }
-  if (active == 0U) return;
-  if (node.left >= 0) {
-    chord_distance(context, node.left, point, searches, active);
-    chord_distance(context, node.right, point, searches, active);
-    return;
-  }
-  for (int32_t i = node.begin; i < node.end; ++i) {
-    const BoundaryChord& chord = context.chords[context.chord_order[i]];
-    double t = 0.0, norm = 0.0, ab[3], ap[3];
-    for (int k = 0; k < 3; ++k) {
-      ab[k] = chord.b[k] - chord.a[k];
-      ap[k] = point[k] - chord.a[k];
-      t += ab[k] * ap[k];
-      norm += ab[k] * ab[k];
-    }
-    t = std::clamp(t / norm, 0.0, 1.0);
-    double distance2 = 0.0;
-    for (int k = 0; k < 3; ++k) {
-      const double e = ap[k] - t * ab[k];
-      distance2 += e * e;
-    }
-    const double distance = std::sqrt(distance2);
-    for (std::size_t lane = 0; lane < N; ++lane) {
-      if ((active & (1U << lane)) == 0U) continue;
-      auto& [best, nearest] = searches[lane];
-      if (distance < best || (distance == best && nearest && chord.length > nearest->length))
-        nearest = &chord;
-      best = std::min(best, distance);
-    }
-  }
+  ChordSearch search{(context.chord_tree[0].spacing - h) / kBoundaryGrading, nullptr};
+  chord_distance_single(context, jet, search);
+  return chord_floor(h, ungraded, search);
 }
 
 // The fraction of tol a face point's triangles get: the boundary layer's
@@ -532,7 +620,7 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // at h = 0.04925). The search stops at the smallest layer's reach.
 double local_theta(const FaceMetric& context, double kappa, double outer,
                    const ChordSearch& search) {
-  const BoundaryChord* nearest = search.nearest;
+  const ChordLeaf* nearest = search.nearest;
   if (!nearest || !(nearest->lens > 0.0)) return context.theta;
   const double layer = context.theta -
       std::min(nearest->lens / context.tolerance, kLensShare * context.theta);
@@ -554,41 +642,56 @@ MetricSizes metric_sizes(const FaceMetric& context, const double* jet,
   const double kappa = std::max(std::abs(differential.curvatures[0]),
                                 std::abs(differential.curvatures[1]));
   const bool needs_floor = length > h;
-  if (!(kappa > 0.0)) {
+  const bool needs_theta = kappa > 0.0 && context.max_chord_lens > 0.0;
+  if (!needs_theta) {
     if (!needs_floor) return {h, context.theta};
-    std::array<ChordSearch, 1> search{{{(length - h) / kBoundaryGrading}}};
-    chord_distance(context, 0, jet, search, 1U);
-    return {chord_floor(h, ungraded, search[0]), context.theta};
+    ChordSearch search{(length - h) / kBoundaryGrading, nullptr};
+    chord_distance_single(context, jet, search);
+    return {chord_floor(h, ungraded, search), context.theta};
   }
   const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
   const double smallest = std::sqrt(1.0 - kLensShare) * outer;
   const double reach = smallest + (outer - smallest) / kBoundaryGrading;
   if (!needs_floor) {
-    std::array<ChordSearch, 1> search{{{reach}}};
-    chord_distance(context, 0, jet, search, 1U);
-    return {h, local_theta(context, kappa, outer, search[0])};
+    ChordSearch search{reach, nullptr};
+    chord_distance_single(context, jet, search);
+    return {h, local_theta(context, kappa, outer, search)};
   }
-  std::array<ChordSearch, 2> searches{{{(length - h) / kBoundaryGrading}, {reach}}};
-  chord_distance(context, 0, jet, searches, 3U);
-  return {chord_floor(h, ungraded, searches[0]), local_theta(context, kappa, outer, searches[1])};
+  const double floor_reach = (length - h) / kBoundaryGrading;
+  ChordSearch search{std::max(floor_reach, reach), nullptr};
+  chord_distance_single(context, jet, search);
+  const ChordSearch floor_result =
+      search.nearest && search.distance < floor_reach ? search : ChordSearch{floor_reach, nullptr};
+  const ChordSearch theta_result =
+      search.nearest && search.distance < reach ? search : ChordSearch{reach, nullptr};
+  return {chord_floor(h, ungraded, floor_result), local_theta(context, kappa, outer, theta_result)};
 }
 
 CadMetric2D face_metric(const double chart[2], void* opaque) {
   auto& context = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
   if (context.metric_points) context.metric_points->push_back({uv[0], uv[1]});
-  double jet[18];
-  cad::SurfaceDifferential differential;
-  if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) {
-    const double invalid = std::numeric_limits<double>::quiet_NaN();
-    return {invalid, invalid, invalid};
-  }
-  // Fidelity: the isotropic size intersected with the request's curvature
-  // tensor (cad::fidelity_metric), at the boundary layer's share near a
-  // curve.
   double m[3];
-  const auto [h, theta] = metric_sizes(context, jet, differential);
-  cad::fidelity_metric(differential, h, theta, context.tolerance, m, nullptr);
+  if (context.is_plane && std::isfinite(uv[0]) && std::isfinite(uv[1])) {
+    const double xyz[3] = {
+        context.plane_origin[0] + uv[0] * context.plane_e1[0] + uv[1] * context.plane_e2[0],
+        context.plane_origin[1] + uv[0] * context.plane_e1[1] + uv[1] * context.plane_e2[1],
+        context.plane_origin[2] + uv[0] * context.plane_e1[2] + uv[1] * context.plane_e2[2]};
+    const auto [h, theta] = metric_sizes(context, xyz, context.plane_differential);
+    cad::fidelity_metric(context.plane_differential, h, theta, context.tolerance, m, nullptr);
+  } else {
+    double jet[18];
+    cad::SurfaceDifferential differential;
+    if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) {
+      const double invalid = std::numeric_limits<double>::quiet_NaN();
+      return {invalid, invalid, invalid};
+    }
+    // Fidelity: the isotropic size intersected with the request's curvature
+    // tensor (cad::fidelity_metric), at the boundary layer's share near a
+    // curve.
+    const auto [h, theta] = metric_sizes(context, jet, differential);
+    cad::fidelity_metric(differential, h, theta, context.tolerance, m, nullptr);
+  }
   return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
           m[2] / (context.scale_v * context.scale_v)};
 }
@@ -654,6 +757,24 @@ int32_t face_position(void* opaque, const double chart[2], double xyz[3]) {
   if (context.position_calls)
     context.position_calls->push_back({uv[0], uv[1], xyz[0], xyz[1], xyz[2]});
   return 1;
+}
+
+// Fast position evaluation for strictly interior vertices during smoothing
+// (never equal to a classified boundary chart point).
+int32_t interior_position(FaceMetric& context, const double chart[2], double xyz[3]) {
+  if (context.position_calls) return face_position(&context, chart, xyz);
+  const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
+  if (context.is_plane) {
+    if (!std::isfinite(uv[0]) || !std::isfinite(uv[1])) return 0;
+    xyz[0] = context.plane_origin[0] + uv[0] * context.plane_e1[0] + uv[1] * context.plane_e2[0];
+    xyz[1] = context.plane_origin[1] + uv[0] * context.plane_e1[1] + uv[1] * context.plane_e2[1];
+    xyz[2] = context.plane_origin[2] + uv[0] * context.plane_e1[2] + uv[1] * context.plane_e2[2];
+    return 1;
+  }
+  return context.geometry->jets(context.geometry->surface_node(context.face), uv, 0, xyz,
+                                context.workspace)
+      ? 1
+      : 0;
 }
 
 int loop_orientation(const FaceBoundary& boundary, const std::vector<int32_t>& loop) {
@@ -811,19 +932,25 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
         std::find(polar_lines.begin(), polar_lines.end(), boundary.vertices[i].uv[1]) ==
             polar_lines.end())
       metric.boundary_order.push_back(static_cast<int32_t>(i));
-  if (!metric.boundary_order.empty())
-    build_boundary_tree(metric, 0, static_cast<int32_t>(metric.boundary_order.size()));
+  finalize_boundary_tree(metric);
   metric.chord_order.resize(metric.chords.size());
   for (std::size_t i = 0; i < metric.chords.size(); ++i)
     metric.chord_order[i] = static_cast<int32_t>(i);
-  if (!metric.chords.empty())
-    build_chord_tree(metric, 0, static_cast<int32_t>(metric.chord_order.size()));
+  finalize_chord_tree(metric);
   const double center[2] = {low[0] + 0.5 * (high[0] - low[0]),
                             low[1] + 0.5 * (high[1] - low[1])};
   double jet[18];
   cad::SurfaceDifferential differential;
   if (!surface_jet(metric, center, jet) || !cad::surface_differential(jet, differential))
     return PHX_MC_INVALID_INPUT;
+  const cad::Node& surface_node = geometry.node(geometry.surface_node(face));
+  if (surface_node.closed == cad::ClosedForm::kPlane) {
+    metric.is_plane = true;
+    std::copy_n(surface_node.closed_data, 3, metric.plane_origin.begin());
+    std::copy_n(surface_node.closed_data + 3, 3, metric.plane_e1.begin());
+    std::copy_n(surface_node.closed_data + 6, 3, metric.plane_e2.begin());
+    metric.plane_differential = differential;
+  }
   const double ratio = std::sqrt(differential.first_form[0] / differential.first_form[2]);
   const int exponent = static_cast<int>(std::nearbyint(std::log2(ratio)));
   if (exponent < -512 || exponent > 512) return PHX_MC_INVALID_INPUT;
@@ -1767,27 +1894,87 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       }
     }
   }
-  if (graded) {
-    metric.boundary_tree.clear();
-    build_boundary_tree(metric, 0, static_cast<int32_t>(metric.boundary_order.size()));
-  }
+  if (graded) finalize_boundary_tree(metric);
   for (std::size_t i = 0; i < boundary.vertices.size(); ++i)
     if (in_pole_zone(metric, boundary.vertices[i].uv.data())) fixed[i] = 1;
   return PHX_MC_OK;
 }
 
-double maximum_cosine(const SurfaceTriangulation& surface,
-                      const std::vector<int32_t>& cells) {
+// Pre-packed incident triangle for a single moving interior vertex v in
+// `smooth`: cyclic ordering (v, u, w) preserves orient2d sign and keeps the
+// opposite edge uw = w - u constant across all probes of v.
+struct SmoothStarCell {
+  int32_t cell;
+  double chart_u[2];
+  double chart_w[2];
+  double pt_u[3];
+  double pt_w[3];
+  double uw[3];
+  double len2_uw;
+};
+
+// Largest cosine over a vertex's star when it is <= `limit`, or infinity as
+// soon as any corner exceeds `limit` or degenerates. Tests `star[hint]` first
+// so repeated compass probes fail on the worst cell without evaluating the
+// rest of the star; skips sqrt/division outside a narrow guard band around
+// `limit` and `maximum` while returning the exact same binary64 value whenever
+// the star passes.
+double maximum_cosine_star(const std::vector<SmoothStarCell>& star, const double p[3],
+                           double limit, std::size_t& hint) {
+  const std::size_t count = star.size();
+  if (count == 0) return -1.0;
+  const double inf = std::numeric_limits<double>::infinity();
+  const bool finite_limit = std::isfinite(limit);
+  const double limit2_hi = finite_limit && limit > 0.0 ? limit * limit * (1.0 + 1e-13) : 0.0;
   double maximum = -1.0;
-  for (const int32_t cell : cells) {
-    const auto& t = surface.cells[cell];
-    for (int i = 0; i < 3; ++i) {
-      const auto p = surface.point(t[i]);
-      const auto a = surface.point(t[(i + 1) % 3]) - p;
-      const auto b = surface.point(t[(i + 2) % 3]) - p;
-      const double denominator = std::sqrt(geometry::dot(a, a) * geometry::dot(b, b));
-      if (!(denominator > 0.0)) return std::numeric_limits<double>::infinity();
-      maximum = std::max(maximum, geometry::dot(a, b) / denominator);
+  double max2_lo = 0.0;
+  const std::size_t start = hint < count ? hint : 0;
+
+  const auto eval_corner = [&](double ab, double den2) noexcept -> int {
+    // Returns: 1 = reject (> limit or degenerate), 0 = ok.
+    if (!(den2 > 0.0)) return 1;
+    if (ab <= 0.0 && maximum >= 0.0) {
+      if (finite_limit && limit < 0.0) return 1;
+      return 0;
+    }
+    if (ab > 0.0) {
+      const double ab2 = ab * ab;
+      if (finite_limit) {
+        if (limit <= 0.0) return 1;
+        if (ab2 > limit2_hi * den2) return 1;
+      }
+      if (maximum > 0.0 && ab2 < max2_lo * den2) return 0;
+    }
+    const double c = ab / std::sqrt(den2);
+    if (!(c <= limit)) return 1;
+    if (c > maximum) {
+      maximum = c;
+      max2_lo = maximum > 0.0 ? maximum * maximum * (1.0 - 1e-13) : 0.0;
+    }
+    return 0;
+  };
+
+  for (std::size_t step = 0; step < count; ++step) {
+    const std::size_t idx = (start + step) < count ? (start + step) : (start + step - count);
+    const SmoothStarCell& sc = star[idx];
+    const double vu0 = sc.pt_u[0] - p[0], vu1 = sc.pt_u[1] - p[1], vu2 = sc.pt_u[2] - p[2];
+    const double vw0 = sc.pt_w[0] - p[0], vw1 = sc.pt_w[1] - p[1], vw2 = sc.pt_w[2] - p[2];
+    const double len2_vu = vu0 * vu0 + vu1 * vu1 + vu2 * vu2;
+    const double len2_vw = vw0 * vw0 + vw1 * vw1 + vw2 * vw2;
+    // Corner at v: a = u - v = vu, b = w - v = vw.
+    if (eval_corner(vu0 * vw0 + vu1 * vw1 + vu2 * vw2, len2_vu * len2_vw)) {
+      hint = idx;
+      return inf;
+    }
+    // Corner at u: a = w - u = uw, b = v - u = -vu -> dot(a, b) = -dot(uw, vu).
+    if (eval_corner(-(sc.uw[0] * vu0 + sc.uw[1] * vu1 + sc.uw[2] * vu2), sc.len2_uw * len2_vu)) {
+      hint = idx;
+      return inf;
+    }
+    // Corner at w: a = v - w = -vw, b = u - w = -uw -> dot(a, b) = dot(vw, uw).
+    if (eval_corner(vw0 * sc.uw[0] + vw1 * sc.uw[1] + vw2 * sc.uw[2], len2_vw * sc.len2_uw)) {
+      hint = idx;
+      return inf;
     }
   }
   return maximum;
@@ -1822,9 +2009,17 @@ int32_t stored_size_failures(const SurfaceTriangulation& surface,
 // kernel's size test); infinity on a degenerate or invalid cell. Stops at the
 // first cell past `bound`, returning that cell's radius.
 double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& surface,
-                             const std::vector<int32_t>& cells, double bound) {
+                             const std::vector<int32_t>& cells, double bound,
+                             std::size_t& hint) {
+  const std::size_t count = cells.size();
+  if (count == 0) return 0.0;
+  const bool bounded = std::isfinite(bound);
+  const double bound2_lo = bounded ? bound * bound * (1.0 - 1e-13) : 0.0;
+  const std::size_t start = bounded && hint < count ? hint : 0;
   double maximum = 0.0;
-  for (const int32_t cell : cells) {
+  for (std::size_t step = 0; step < count; ++step) {
+    const std::size_t idx = (start + step) < count ? (start + step) : (start + step - count);
+    const int32_t cell = cells[idx];
     const auto& t = surface.cells[cell];
     const double* a = surface.chart(t[0]);
     const double* b = surface.chart(t[1]);
@@ -1839,9 +2034,15 @@ double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& sur
     const double dx = (bb * cy - cc * by) / (2 * determinant);
     const double dy = (bx * cc - cx * bb) / (2 * determinant);
     const double radius2 = dx * (m.uu * dx + m.uv * dy) + dy * (m.uv * dx + m.vv * dy);
-    if (!std::isfinite(radius2)) return std::numeric_limits<double>::infinity();
+    if (!std::isfinite(radius2)) {
+      hint = idx;
+      return std::numeric_limits<double>::infinity();
+    }
     maximum = std::max(maximum, radius2);
-    if (std::sqrt(radius2) > bound) break;
+    if (bounded && radius2 >= bound2_lo && std::sqrt(radius2) > bound) {
+      hint = idx;
+      break;
+    }
   }
   return std::sqrt(maximum);
 }
@@ -1865,10 +2066,29 @@ double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& sur
 // Passes revisit the vertices that moved or neighbor a move, until none
 // moves (at most eight).
 void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_angle_degrees,
-            std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
+            std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface,
+            std::vector<double>& tensors) {
   std::vector<std::vector<int32_t>> incident(vertices.size());
   for (std::size_t cell = 0; cell < surface.cells.size(); ++cell) {
     for (const int32_t v : surface.cells[cell]) incident[v].push_back(static_cast<int32_t>(cell));
+  }
+  // Precompute sorted unique neighbors once (topology never changes in smooth).
+  std::vector<uint32_t> neighbor_offsets(vertices.size() + 1, 0U);
+  std::vector<int32_t> neighbor_ids;
+  {
+    std::vector<int32_t> scratch;
+    for (std::size_t v = 0; v < vertices.size(); ++v) {
+      neighbor_offsets[v] = static_cast<uint32_t>(neighbor_ids.size());
+      if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty()) continue;
+      scratch.clear();
+      for (const int32_t cell : incident[v])
+        for (const int32_t u : surface.cells[cell])
+          if (u != static_cast<int32_t>(v)) scratch.push_back(u);
+      std::sort(scratch.begin(), scratch.end());
+      scratch.erase(std::unique(scratch.begin(), scratch.end()), scratch.end());
+      neighbor_ids.insert(neighbor_ids.end(), scratch.begin(), scratch.end());
+    }
+    neighbor_offsets[vertices.size()] = static_cast<uint32_t>(neighbor_ids.size());
   }
   const double target_cos =
       std::cos((min_angle_degrees + 60.0) * 3.14159265358979323846 / 360.0);
@@ -1877,6 +2097,9 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
   // The visited star's pole_boundary_overruns at the visit's start (-1: not
   // computed yet).
   int32_t star_overruns = -1;
+  std::vector<SmoothStarCell> star;
+  std::size_t cosine_hint = 0;
+  std::size_t radius_hint = 0;
   // The size guard for v at its current chart: false when the star's radius
   // exceeds both the kernel's bound and the star's radius at the visit start.
   // `previous_radius` (that start radius) < 0 is computed on first need;
@@ -1888,7 +2111,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     // the start radius is evaluated only past it.
     double radius = maximum_metric_radius(
         metric, surface, incident[v],
-        previous_radius < 0.0 ? bound : std::max(bound, previous_radius));
+        previous_radius < 0.0 ? bound : std::max(bound, previous_radius), radius_hint);
     if (!(radius > bound)) return true;
     if (previous_radius < 0.0) {
       // The star's radius at the visit's start (no move is kept before the
@@ -1896,11 +2119,11 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       const std::array<double, 2> chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
       std::copy(visit_start.begin(), visit_start.end(), surface.charts.begin() + 2 * v);
       previous_radius = maximum_metric_radius(metric, surface, incident[v],
-                                              std::numeric_limits<double>::infinity());
+                                              std::numeric_limits<double>::infinity(), radius_hint);
       std::copy(chart.begin(), chart.end(), surface.charts.begin() + 2 * v);
       if (!std::isfinite(previous_radius)) return true;
       if (previous_radius > bound)
-        radius = maximum_metric_radius(metric, surface, incident[v], previous_radius);
+        radius = maximum_metric_radius(metric, surface, incident[v], previous_radius, radius_hint);
     }
     return !(radius > std::max(bound, previous_radius));
   };
@@ -1909,6 +2132,16 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
   // new worst cosine, or infinity (v unchanged).
   const auto attempt = [&](std::size_t v, const double chart[2], double limit,
                            double& previous_radius, bool sized) {
+    // The chart orientation needs no surface evaluation or state write: checked first.
+    for (const SmoothStarCell& sc : star) {
+      if (orient2d_filtered(chart, sc.chart_u, sc.chart_w) <= 0)
+        return std::numeric_limits<double>::infinity();
+    }
+    std::array<double, 3> xyz;
+    if (!interior_position(metric, chart, xyz.data()))
+      return std::numeric_limits<double>::infinity();
+    const double quality = maximum_cosine_star(star, xyz.data(), limit, cosine_hint);
+    if (!(quality <= limit)) return std::numeric_limits<double>::infinity();
     const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
     const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
                                           surface.points[3 * v + 2]};
@@ -1917,18 +2150,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
       return std::numeric_limits<double>::infinity();
     };
-    // The chart orientation needs no surface evaluation: checked first.
     std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
-    for (const int32_t cell : incident[v]) {
-      const auto& t = surface.cells[cell];
-      if (orient2d(surface.chart(t[0]), surface.chart(t[1]), surface.chart(t[2])) <= 0)
-        return reject();
-    }
-    std::array<double, 3> xyz;
-    if (!face_position(&metric, chart, xyz.data())) return reject();
     std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
-    const double quality = maximum_cosine(surface, incident[v]);
-    if (!(quality <= limit)) return reject();
     if (sized && !fits(v, previous_radius)) return reject();
     // The stored size test may not fail on more star cells than before.
     const int32_t failures = stored_size_failures(surface, incident[v], metric.size);
@@ -1955,16 +2178,13 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     return quality;
   };
   // Face metric at each vertex as a 3D tensor (vertex_metric) for the edge
-  // lengths of the long-edge step; refreshed when the vertex moves.
-  std::vector<double> tensors(9 * vertices.size(), 0.0);
+  // lengths of the long-edge step; initialized by caller and refreshed when moved.
   const auto refresh = [&](std::size_t v) {
     double* tensor = tensors.data() + 9 * v;
     const double isotropic = 1.0 / (metric.size * metric.size);
     for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
     vertex_metric(metric, surface.chart(static_cast<int32_t>(v)), tensor);
   };
-  for (std::size_t v = 0; v < vertices.size(); ++v) refresh(v);
-  std::vector<int32_t> neighbors;
   // A vertex is visited while it or a neighbor moved in the previous pass.
   std::vector<uint8_t> active(vertices.size(), 1), next(vertices.size(), 0);
   for (int pass = 0; pass < 8; ++pass) {
@@ -1972,20 +2192,42 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     std::fill(next.begin(), next.end(), 0);
     for (std::size_t v = 0; v < vertices.size(); ++v) {
       if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty() || !active[v]) continue;
+      const uint32_t nb_begin = neighbor_offsets[v];
+      const uint32_t nb_end = neighbor_offsets[v + 1];
       const std::array<double, 2> start{surface.charts[2 * v], surface.charts[2 * v + 1]};
       visit_start = start;
       star_overruns = -1;
+      cosine_hint = 0;
+      radius_hint = 0;
+      star.clear();
+      star.reserve(incident[v].size());
+      const int32_t vi = static_cast<int32_t>(v);
+      for (const int32_t cell : incident[v]) {
+        const auto& t = surface.cells[cell];
+        int slot = 0;
+        if (t[1] == vi) slot = 1;
+        else if (t[2] == vi) slot = 2;
+        const int32_t u = t[(slot + 1) % 3];
+        const int32_t w = t[(slot + 2) % 3];
+        const double* cu = surface.chart(u);
+        const double* cw = surface.chart(w);
+        const double* pu = surface.points.data() + 3 * static_cast<std::size_t>(u);
+        const double* pw = surface.points.data() + 3 * static_cast<std::size_t>(w);
+        const double uw0 = pw[0] - pu[0], uw1 = pw[1] - pu[1], uw2 = pw[2] - pu[2];
+        star.push_back({cell,
+                        {cu[0], cu[1]},
+                        {cw[0], cw[1]},
+                        {pu[0], pu[1], pu[2]},
+                        {pw[0], pw[1], pw[2]},
+                        {uw0, uw1, uw2},
+                        uw0 * uw0 + uw1 * uw1 + uw2 * uw2});
+      }
       [&] {
-      neighbors.clear();
-      for (const int32_t cell : incident[v])
-        for (const int32_t u : surface.cells[cell])
-          if (u != static_cast<int32_t>(v)) neighbors.push_back(u);
-      std::sort(neighbors.begin(), neighbors.end());
-      neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
-      const auto p = surface.point(static_cast<int32_t>(v));
+      const auto p = surface.point(vi);
       double sum = 0.0, chart[2] = {}, step = std::numeric_limits<double>::infinity();
-      const double* own = surface.chart(static_cast<int32_t>(v));
-      for (const int32_t u : neighbors) {
+      const double* own = surface.chart(vi);
+      for (uint32_t ni = nb_begin; ni < nb_end; ++ni) {
+        const int32_t u = neighbor_ids[ni];
         const auto d = surface.point(u) - p;
         const double length = std::sqrt(geometry::dot(d, d));
         const double* q = surface.chart(u);
@@ -1999,7 +2241,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       if (!(sum > 0.0)) return;
       chart[0] /= sum;
       chart[1] /= sum;
-      double quality = maximum_cosine(surface, incident[v]);
+      double quality = maximum_cosine_star(
+          star, surface.points.data() + 3 * v, std::numeric_limits<double>::infinity(), cosine_hint);
       double previous_radius = -1.0;
       // The first two passes smooth every vertex; later passes only search.
       if (pass < 2) {
@@ -2034,6 +2277,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
           for (;;) {
             save();
             double best = current;
+            double best_limit =
+                std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity()));
             std::array<double, 2> best_chart{}, best_uv{};
             std::array<double, 3> best_point{};
             int best_x = 0, best_y = 0;
@@ -2044,12 +2289,11 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
                 const double probe[2] = {saved_chart[0] + dx * width, saved_chart[1] + dy * width};
                 // Only a strictly better probe can be kept, so the costlier
                 // size guard runs only for those.
-                const double after = attempt(
-                    v, probe,
-                    std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity())),
-                    previous_radius, true);
+                const double after = attempt(v, probe, best_limit, previous_radius, true);
                 if (!std::isfinite(after)) continue;
                 best = after;
+                best_limit =
+                    std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity()));
                 best_chart = {probe[0], probe[1]};
                 best_point = {surface.points[3 * v], surface.points[3 * v + 1],
                               surface.points[3 * v + 2]};
@@ -2078,9 +2322,10 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       int32_t far = -1;
       const auto longest = [&] {
         double maximum = 0.0;
-        const auto here = surface.point(static_cast<int32_t>(v));
+        const auto here = surface.point(vi);
         const double* s = tensors.data() + 9 * v;
-        for (const int32_t u : neighbors) {
+        for (uint32_t ni = nb_begin; ni < nb_end; ++ni) {
+          const int32_t u = neighbor_ids[ni];
           const auto e = surface.point(u) - here;
           const double d[3] = {e.x, e.y, e.z};
           const double* t = tensors.data() + 9 * static_cast<std::size_t>(u);
@@ -2112,7 +2357,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       moved = true;
       refresh(v);
       next[v] = 1;
-      for (const int32_t u : neighbors) next[static_cast<std::size_t>(u)] = 1;
+      for (uint32_t ni = nb_begin; ni < nb_end; ++ni)
+        next[static_cast<std::size_t>(neighbor_ids[ni])] = 1;
     }
     if (!moved && pass >= 1) break;
     // The second pass smooths every vertex again.
@@ -2326,32 +2572,221 @@ bool polar_trim_line(const cad::CadGeometry& geometry, int32_t face, double line
   return su < 0.5 * sv;
 }
 
-int32_t cad_mesh_face(const cad::CadGeometry& geometry,
-                      const CadCurveDiscretization& curves, int32_t face,
-                      double size, double tolerance, double theta,
-                      CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
-                      std::vector<std::array<double, 5>>* position_calls,
-                      bool graded_pole_rings, const cad::ProximityField* proximity) {
+struct CadFaceStage {
+  const cad::CadGeometry* geometry = nullptr;
+  int32_t face = -1;
+  double size = 0.0;
+  FaceBoundary boundary;
+  FaceMetric metric;
+  std::vector<double> points;
+  std::vector<double> holes;
+  std::vector<uint8_t> fixed;
+  std::vector<int32_t> segments;
+  int64_t omitted_pole_points = 0;
+  std::vector<CadPoleSectors> pole_sectors;
+  std::vector<std::array<int32_t, 2>> protected_pole_edges;
+  int64_t periodic_corner_gaps = 0;
+  uint64_t max_periodic_corner_gap_ulps = 0;
+  CadRefine2DResult refined;
+  int32_t refined_status = PHX_MC_OK;
+  std::vector<phx_mc_cad_face_failure> refinement_failures;
+};
+
+void CadFaceStageDeleter::operator()(CadFaceStage* stage) const noexcept { delete stage; }
+
+namespace {
+
+int32_t collect_refinement_failures(const cad::CadGeometry& geometry,
+                                    const CadCurveDiscretization& curves, int32_t face,
+                                    const FaceBoundary& boundary, const FaceMetric& metric,
+                                    const CadRefine2DResult& refined,
+                                    std::vector<phx_mc_cad_face_failure>& out,
+                                    bool& has_curve_encroachment) {
+  out.clear();
+  has_curve_encroachment = false;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const auto& model = geometry.model();
+  const auto& tri = refined.triangulation;
+  out.reserve(refined.unresolved.size());
+  for (const auto& failure : refined.unresolved) {
+    phx_mc_cad_face_failure record{};
+    record.face = face;
+    record.loop = record.use = record.axis = -1;
+    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
+    record.triangle = failure.triangle;
+    record.bad_size = failure.bad_size;
+    record.bad_angle = failure.bad_angle;
+    record.refusal_kind = static_cast<int32_t>(failure.refusal);
+    record.curve = record.curve_segment = -1;
+    record.candidate_uv[0] = record.candidate_uv[1] = nan;
+    record.segment_parameters[0] = record.segment_parameters[1] = nan;
+    if (failure.refusal != CadRefine2DRefusal::none) {
+      record.candidate_uv[0] = failure.candidate[0] / metric.scale_u;
+      record.candidate_uv[1] = failure.candidate[1] / metric.scale_v;
+    }
+    const auto& cell = tri.triangles[static_cast<std::size_t>(failure.triangle)];
+    for (int k = 0; k < 3; ++k) {
+      const double* point = tri.point(cell.v[k]);
+      record.triangle_uv[2 * k] = point[0] / metric.scale_u;
+      record.triangle_uv[2 * k + 1] = point[1] / metric.scale_v;
+    }
+    if (failure.segment >= 0 &&
+        static_cast<std::size_t>(failure.segment) < boundary.edges.size()) {
+      const auto& edge = boundary.edges[static_cast<std::size_t>(failure.segment)];
+      record.use = edge.use;
+      record.curve = edge.curve;
+      record.segment_parameters[0] = edge.parameters[0];
+      record.segment_parameters[1] = edge.parameters[1];
+      for (int64_t loop = 0; loop < model.loop_count; ++loop)
+        if (edge.use >= model.loop_use_offsets[loop] &&
+            edge.use < model.loop_use_offsets[loop + 1]) {
+          record.loop = static_cast<int32_t>(loop);
+          break;
+        }
+      if (edge.curve >= 0) {
+        const int64_t first = curves.offsets[edge.curve];
+        const int64_t last = curves.offsets[edge.curve + 1];
+        const double s = std::min(edge.parameters[0], edge.parameters[1]);
+        const double* found = std::lower_bound(curves.parameters + first, curves.parameters + last, s);
+        if (found == curves.parameters + last || *found != s ||
+            found - curves.parameters - first >= last - first - 1)
+          return PHX_MC_INTERNAL_ERROR;
+        record.curve_segment = static_cast<int32_t>(found - curves.parameters - first);
+        if (failure.refusal == CadRefine2DRefusal::encroachment) has_curve_encroachment = true;
+      }
+    }
+    out.push_back(record);
+  }
+  return PHX_MC_OK;
+}
+
+CadRefine2DInput make_refine_input(CadFaceStage& stage, bool split) {
+  CadRefine2DInput input;
+  input.points = stage.points.data();
+  input.point_count = static_cast<int32_t>(stage.points.size() / 2);
+  input.segments = stage.segments.data();
+  input.segment_count = static_cast<int32_t>(stage.segments.size() / 2);
+  input.holes = stage.holes.data();
+  input.hole_count = static_cast<int32_t>(stage.holes.size() / 2);
+  input.point_cap = static_cast<int32_t>(std::min<int64_t>(
+      kMaxMeshPoints, std::max<int64_t>(int64_t{input.point_count} * 100, 10000)));
+  input.metric = face_metric;
+  input.metric_context = &stage.metric;
+  input.fixed_vertices = stage.fixed.data();
+  input.admit_point = stage.metric.poles.empty() ? nullptr : admit_face_point;
+  input.admit_context = &stage.metric;
+  input.fixed_region = in_fixed_zone;
+  input.fixed_region_context = &stage.metric;
+  input.edge_split = split ? pole_boundary_split : nullptr;
+  input.edge_split_context = &stage.metric;
+  input.surface_position = face_position;
+  input.surface_context = &stage.metric;
+  input.stored_size = stage.size;
+  return input;
+}
+
+int32_t postprocess_refined(CadFaceStage& stage, double min_angle_degrees,
+                            SurfaceTriangulation& surface,
+                            std::vector<CadFaceVertex>& vertices,
+                            std::vector<uint8_t>& mapped_fixed) {
+  const auto& tri = stage.refined.triangulation;
+  auto& metric = stage.metric;
+  surface = SurfaceTriangulation{};
+  surface.charts = tri.coordinates;
+  surface.points.resize(3 * static_cast<std::size_t>(tri.vertex_count()));
+  surface.normals.resize(3 * static_cast<std::size_t>(tri.vertex_count()), 0.0);
+  vertices.assign(static_cast<std::size_t>(tri.vertex_count()), CadFaceVertex{});
+  mapped_fixed.assign(static_cast<std::size_t>(tri.vertex_count()), 0);
+  for (std::size_t i = 0; i < stage.fixed.size(); ++i) {
+    const int32_t mapped = stage.refined.vertex_map[i];
+    if (mapped < 0 || mapped >= tri.vertex_count()) return PHX_MC_INVALID_INPUT;
+    mapped_fixed[mapped] |= stage.fixed[i];
+  }
+  for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+    const double* p = tri.point(i);
+    vertices[i] = {{p[0] / metric.scale_u, p[1] / metric.scale_v}, 2, stage.face, -1};
+    if (!face_position(&metric, p, surface.points.data() + 3 * i)) return PHX_MC_INVALID_INPUT;
+  }
+  for (std::size_t i = 0; i < stage.boundary.vertices.size(); ++i) {
+    const int32_t mapped = stage.refined.vertex_map[i];
+    if (mapped < 0 || mapped >= tri.vertex_count() || vertices[mapped].dimension != 2)
+      return PHX_MC_INVALID_INPUT;
+    // The hook's classified lookup is keyed by the input chart point.
+    const double* p = tri.point(mapped);
+    if (p[0] != stage.points[2 * i] || p[1] != stage.points[2 * i + 1])
+      return PHX_MC_INTERNAL_ERROR;
+    vertices[mapped] = stage.boundary.vertices[i];
+  }
+  for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
+    if (!tri.live[t] || !tri.region[t] || tri.is_ghost(static_cast<int32_t>(t))) continue;
+    const auto& cell = tri.triangles[t];
+    surface.cells.push_back({cell.v[0], cell.v[1], cell.v[2]});
+    surface.constrained.push_back({static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 0) != -1),
+                                   static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 1) != -1),
+                                   static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 2) != -1)});
+  }
+  const int32_t prepare_status = surface.prepare();
+  if (prepare_status != PHX_MC_OK) return prepare_status;
+  // Where the fidelity tensor binds, the flips judge Delaunay in the face
+  // metric (vertex tensors averaged by the sweep), so they keep the metric
+  // shape the kernel built instead of undoing it in 3D (measured: plain 3D
+  // flips left interior triangles past the theta * tol sag bound).
+  // Reuse the computed tensors in `smooth` since `sweep` does not move vertices.
+  std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
+  bool binding = false;
+  {
+    const double isotropic = 1.0 / (metric.size * metric.size);
+    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+      double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
+      for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
+      binding |= vertex_metric(metric, tri.point(i), tensor);
+    }
+    if (binding) surface.metrics = std::move(tensors);
+  }
+  surface.sweep();
+  if (binding) tensors = std::move(surface.metrics);
+  smooth(metric, mapped_fixed, min_angle_degrees, vertices, surface, tensors);
+  return stage.refined_status;
+}
+
+int32_t refine_face_stage_impl(const cad::CadGeometry& geometry,
+                               const CadCurveDiscretization& curves, int32_t face,
+                               double size, double tolerance, double theta,
+                               std::vector<std::array<double, 2>>* metric_points,
+                               std::vector<std::array<double, 5>>* position_calls,
+                               bool graded_pole_rings, const cad::ProximityField* proximity,
+                               CadFaceStagePtr& out_stage, CadFaceMesh& early_result,
+                               bool& has_curve_encroachment) {
+  out_stage.reset();
+  early_result = CadFaceMesh{};
+  has_curve_encroachment = false;
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
-      !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
-  FaceBoundary boundary;
+      !std::isfinite(tolerance) || !std::isfinite(theta))
+    return PHX_MC_INVALID_ARGUMENT;
+  CadFaceStagePtr stage(new CadFaceStage{});
+  stage->geometry = &geometry;
+  stage->face = face;
+  stage->size = size;
   cad::EvaluationWorkspace workspace;
-  result = CadFaceMesh{};
-  int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
+  int32_t status = make_boundary(geometry, curves, face, workspace, stage->boundary, early_result);
   if (status != PHX_MC_OK) return status;
-  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, {},
-                    {}, {}, metric_points, {}, position_calls, graded_pole_rings, proximity};
+  stage->periodic_corner_gaps = early_result.periodic_corner_gaps;
+  stage->max_periodic_corner_gap_ulps = early_result.max_periodic_corner_gap_ulps;
+  stage->metric = FaceMetric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {},
+                             {}, {}, {}, metric_points, {}, position_calls, graded_pole_rings,
+                             proximity};
   if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
-  status = prepare_metric(geometry, curves, face, boundary, metric);
+  status = prepare_metric(geometry, curves, face, stage->boundary, stage->metric);
   if (status != PHX_MC_OK) return status;
 
-  std::vector<double> points;
-  points.reserve(2 * boundary.vertices.size());
+  auto& boundary = stage->boundary;
+  auto& metric = stage->metric;
+  stage->points.reserve(2 * boundary.vertices.size());
   for (const auto& vertex : boundary.vertices) {
-    points.push_back(vertex.uv[0] * metric.scale_u);
-    points.push_back(vertex.uv[1] * metric.scale_v);
+    stage->points.push_back(vertex.uv[0] * metric.scale_u);
+    stage->points.push_back(vertex.uv[1] * metric.scale_v);
   }
   std::vector<std::array<double, 2>> seeds(boundary.loops.size());
   for (std::size_t i = 0; i < boundary.loops.size(); ++i)
@@ -2379,46 +2814,30 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     }
   }
   if (outer == boundary.loops.size()) return PHX_MC_INVALID_INPUT;
-  std::vector<double> holes;
   for (std::size_t i = 0; i < boundary.loops.size(); ++i) {
     if (i == outer) continue;
     const auto& seed = seeds[i];
-    holes.push_back(seed[0] * metric.scale_u);
-    holes.push_back(seed[1] * metric.scale_v);
+    stage->holes.push_back(seed[0] * metric.scale_u);
+    stage->holes.push_back(seed[1] * metric.scale_v);
   }
-  std::vector<uint8_t> fixed(boundary.vertices.size(), 0);
-  std::vector<int32_t> segments = boundary.segments;
-  int64_t omitted_pole_points = 0;
-  status = seed_poles(geometry, boundary, outer, metric, points, fixed, segments,
-                      result.pole_sectors, result.protected_pole_edges, omitted_pole_points);
+  stage->fixed.assign(boundary.vertices.size(), 0);
+  stage->segments = boundary.segments;
+  status = seed_poles(geometry, boundary, outer, metric, stage->points, stage->fixed,
+                      stage->segments, stage->pole_sectors, stage->protected_pole_edges,
+                      stage->omitted_pole_points);
   if (status != PHX_MC_OK) return status;
-  if (points.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
-      segments.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
-      holes.size()/2 > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_INDEX_RANGE_ERROR;
+  if (stage->points.size() / 2 > static_cast<std::size_t>(kMaxMeshPoints) ||
+      stage->segments.size() / 2 > static_cast<std::size_t>(kMaxMeshPoints) ||
+      stage->holes.size() / 2 > static_cast<std::size_t>(kMaxMeshPoints))
+    return PHX_MC_INDEX_RANGE_ERROR;
   metric.boundary_positions.resize(boundary.vertices.size());
   for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
     auto& entry = metric.boundary_positions[i];
-    entry.first = {points[2 * i], points[2 * i + 1]};
+    entry.first = {stage->points[2 * i], stage->points[2 * i + 1]};
     if (!classified_position(geometry, curves, face, boundary.vertices[i], workspace, entry.second))
       return PHX_MC_INVALID_INPUT;
   }
   std::sort(metric.boundary_positions.begin(), metric.boundary_positions.end());
-  CadRefine2DInput input;
-  input.points = points.data();
-  input.point_count = static_cast<int32_t>(points.size() / 2);
-  input.segments = segments.data();
-  input.segment_count = static_cast<int32_t>(segments.size() / 2);
-  input.holes = holes.data();
-  input.hole_count = static_cast<int32_t>(holes.size() / 2);
-  input.point_cap = static_cast<int32_t>(std::min<int64_t>(
-      kMaxMeshPoints, std::max<int64_t>(int64_t{input.point_count} * 100, 10000)));
-  input.metric = face_metric;
-  input.metric_context = &metric;
-  input.fixed_vertices = fixed.data();
-  input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
-  input.admit_context = &metric;
-  input.fixed_region = in_fixed_zone;
-  input.fixed_region_context = &metric;
   // V3's pole regions (pole_boundary_split): a sphere chart face whose
   // chords span a whole turn on u, one per pole.
   if (!boundary.poles.empty() && sphere_chart(geometry, face, metric.cap_chart)) {
@@ -2434,104 +2853,96 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
         metric.cap_sigmas.push_back(boundary.vertices[pole.first_vertex].uv[1] > 0.0 ? 1.0
                                                                                      : -1.0);
   }
-  input.edge_split_context = &metric;
-  input.surface_position = face_position;
-  input.surface_context = &metric;
-  // The stored size guarantee: R <= h/sqrt(2) on the emitted triangle up to
-  // the rounding allowance, h the face's request size (the base size's
-  // ungraded value: grading lowers the metric's size, a chord floor never
-  // lifts it past this).
-  input.stored_size = size;
-  CadRefine2DResult refined;
+  CadRefine2DInput input = make_refine_input(*stage, false);
+  metric.pole_guard = false;
+  stage->refined = CadRefine2DResult{};
+  stage->refined_status = cad_refine2d(input, stage->refined);
+  if (stage->refined_status != PHX_MC_OK && stage->refined_status != PHX_MC_UNRESOLVED)
+    return stage->refined_status;
+  const int32_t collected =
+      collect_refinement_failures(geometry, curves, face, boundary, metric, stage->refined,
+                                  stage->refinement_failures, has_curve_encroachment);
+  if (collected != PHX_MC_OK) return collected;
+  const int32_t result_status = stage->refined_status;
+  out_stage = std::move(stage);
+  return result_status;
+}
+
+}  // namespace
+
+int32_t cad_refine_face_stage(const cad::CadGeometry& geometry,
+                              const CadCurveDiscretization& curves, int32_t face,
+                              double size, double tolerance, double theta,
+                              CadFaceStagePtr& stage, CadFaceMesh& early_result,
+                              bool& has_curve_encroachment,
+                              bool graded_pole_rings, const cad::ProximityField* proximity) {
+  return refine_face_stage_impl(geometry, curves, face, size, tolerance, theta, nullptr, nullptr,
+                                graded_pole_rings, proximity, stage, early_result,
+                                has_curve_encroachment);
+}
+
+std::size_t cad_face_stage_bytes(const CadFaceStage& stage) noexcept {
+  const auto bytes = []<typename T>(const std::vector<T>& v) { return v.capacity() * sizeof(T); };
+  const auto& tri = stage.refined.triangulation;
+  return sizeof(stage) + bytes(stage.boundary.vertices) + bytes(stage.boundary.segments) +
+         bytes(stage.boundary.edges) + bytes(stage.metric.boundary) +
+         bytes(stage.metric.boundary_sorted) + bytes(stage.metric.boundary_tree) +
+         bytes(stage.metric.chords) + bytes(stage.metric.chords_sorted) +
+         bytes(stage.metric.chord_tree) + bytes(stage.metric.boundary_positions) +
+         bytes(stage.points) + bytes(stage.holes) + bytes(stage.fixed) + bytes(stage.segments) +
+         bytes(stage.refinement_failures) + bytes(tri.coordinates) + bytes(tri.triangles) +
+         bytes(tri.live) + bytes(tri.region) + bytes(stage.refined.vertex_map) +
+         bytes(stage.refined.unresolved);
+}
+
+const std::vector<phx_mc_cad_face_failure>& cad_face_stage_failures(
+    const CadFaceStage& stage) noexcept {
+  return stage.refinement_failures;
+}
+
+int32_t cad_finish_face_stage(CadFaceStage& stage, const CadCurveDiscretization& curves,
+                              CadFaceMesh& result) {
+  result = CadFaceMesh{};
+  result.periodic_corner_gaps = stage.periodic_corner_gaps;
+  result.max_periodic_corner_gap_ulps = stage.max_periodic_corner_gap_ulps;
+  result.pole_sectors = std::move(stage.pole_sectors);
+  result.protected_pole_edges = std::move(stage.protected_pole_edges);
+  const CadRefine2DInput base_input = make_refine_input(stage, false);
   SurfaceTriangulation surface;
   std::vector<CadFaceVertex> vertices;
   std::vector<uint8_t> mapped_fixed;
-  // The kernel, the face-metric flips and the moves; with `split`, the
-  // kernel's pole-boundary splits and the moves' guard (pole_guard).
-  const auto build = [&](bool split) -> int32_t {
-    input.edge_split = split ? pole_boundary_split : nullptr;
-    metric.pole_guard = split;
-    refined = CadRefine2DResult{};
-    const int32_t refined_status = cad_refine2d(input, refined);
-    if (refined_status != PHX_MC_OK && refined_status != PHX_MC_UNRESOLVED) return refined_status;
-    const auto& tri = refined.triangulation;
-    surface = SurfaceTriangulation{};
-    surface.charts = tri.coordinates;
-    surface.points.resize(3 * static_cast<std::size_t>(tri.vertex_count()));
-    surface.normals.resize(3 * static_cast<std::size_t>(tri.vertex_count()), 0.0);
-    vertices.assign(static_cast<std::size_t>(tri.vertex_count()), CadFaceVertex{});
-    mapped_fixed.assign(static_cast<std::size_t>(tri.vertex_count()), 0);
-    for (std::size_t i = 0; i < fixed.size(); ++i) {
-      const int32_t mapped = refined.vertex_map[i];
-      if (mapped < 0 || mapped >= tri.vertex_count()) return PHX_MC_INVALID_INPUT;
-      mapped_fixed[mapped] |= fixed[i];
-    }
-    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
-      const double* p = tri.point(i);
-      vertices[i] = {{p[0] / metric.scale_u, p[1] / metric.scale_v}, 2, face, -1};
-      if (!face_position(&metric, p, surface.points.data() + 3 * i)) return PHX_MC_INVALID_INPUT;
-    }
-    for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
-      const int32_t mapped = refined.vertex_map[i];
-      if (mapped < 0 || mapped >= tri.vertex_count() || vertices[mapped].dimension != 2)
-        return PHX_MC_INVALID_INPUT;
-      // The hook's classified lookup is keyed by the input chart point.
-      const double* p = tri.point(mapped);
-      if (p[0] != points[2 * i] || p[1] != points[2 * i + 1]) return PHX_MC_INTERNAL_ERROR;
-      vertices[mapped] = boundary.vertices[i];
-    }
-    for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
-      if (!tri.live[t] || !tri.region[t] || tri.is_ghost(static_cast<int32_t>(t))) continue;
-      const auto& cell = tri.triangles[t];
-      surface.cells.push_back({cell.v[0], cell.v[1], cell.v[2]});
-      surface.constrained.push_back({static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 0) != -1),
-                                     static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 1) != -1),
-                                     static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 2) != -1)});
-    }
-    const int32_t prepare_status = surface.prepare();
-    if (prepare_status != PHX_MC_OK) return prepare_status;
-    // Where the fidelity tensor binds, the flips judge Delaunay in the face
-    // metric (vertex tensors averaged by the sweep), so they keep the metric
-    // shape the kernel built instead of undoing it in 3D (measured: plain 3D
-    // flips left interior triangles past the theta * tol sag bound).
-    {
-      std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
-      bool binding = false;
-      const double isotropic = 1.0 / (metric.size * metric.size);
-      for (int32_t i = 0; i < tri.vertex_count(); ++i) {
-        double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
-        for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
-        binding |= vertex_metric(metric, tri.point(i), tensor);
-      }
-      if (binding) surface.metrics = std::move(tensors);
-    }
-    surface.sweep();
-    smooth(metric, mapped_fixed, input.min_angle_degrees, vertices, surface);
-    return refined_status;
-  };
-  status = build(false);
+  int32_t status =
+      postprocess_refined(stage, base_input.min_angle_degrees, surface, vertices, mapped_fixed);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+  bool rebuilt_split = false;
   // A mesh with a pole-region boundary edge over tol (V3 would charge its
   // rows that seam cap) is built again with the splits: the kernel's mesh
   // before the flips and moves has edges over the budget that they remove
   // (measured: the unit sphere at h 0.2, theta 1; splitting them changed
   // meshes V3 certified), so only the final mesh decides.
-  if (!metric.cap_sigmas.empty()) {
+  if (!stage.metric.cap_sigmas.empty()) {
     std::vector<int32_t> cells(surface.cells.size());
     std::iota(cells.begin(), cells.end(), 0);
-    if (pole_boundary_overruns(metric, surface, cells) > 0) {
-      status = build(true);
+    if (pole_boundary_overruns(stage.metric, surface, cells) > 0) {
+      CadRefine2DInput split_input = make_refine_input(stage, true);
+      stage.metric.pole_guard = true;
+      stage.refined = CadRefine2DResult{};
+      stage.refined_status = cad_refine2d(split_input, stage.refined);
+      if (stage.refined_status != PHX_MC_OK && stage.refined_status != PHX_MC_UNRESOLVED)
+        return stage.refined_status;
+      status = postprocess_refined(stage, split_input.min_angle_degrees, surface, vertices,
+                                   mapped_fixed);
       if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+      rebuilt_split = true;
     }
   }
-  auto& tri = refined.triangulation;
   result.slivers.clear();
   result.triangles.clear();
   std::vector<std::pair<int32_t, int32_t>> pole_edges;
-  for (const auto& edge : boundary.edges) {
+  for (const auto& edge : stage.boundary.edges) {
     if (edge.curve >= 0) continue;
-    const int32_t a = refined.vertex_map[edge.vertices[0]];
-    const int32_t b = refined.vertex_map[edge.vertices[1]];
+    const int32_t a = stage.refined.vertex_map[edge.vertices[0]];
+    const int32_t b = stage.refined.vertex_map[edge.vertices[1]];
     pole_edges.emplace_back(std::min(a, b), std::max(a, b));
   }
   std::sort(pole_edges.begin(), pole_edges.end());
@@ -2545,55 +2956,16 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     if (sliver) result.slivers.push_back(cell);
     else result.triangles.push_back(cell);
   }
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-  const auto& model = geometry.model();
-  result.refinement_failures.reserve(refined.unresolved.size());
-  for (const auto& failure : refined.unresolved) {
-    phx_mc_cad_face_failure record{};
-    record.face = face;
-    record.loop = record.use = record.axis = -1;
-    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
-    record.triangle = failure.triangle;
-    record.bad_size = failure.bad_size;
-    record.bad_angle = failure.bad_angle;
-    record.refusal_kind = static_cast<int32_t>(failure.refusal);
-    record.curve = record.curve_segment = -1;
-    record.candidate_uv[0] = record.candidate_uv[1] = nan;
-    record.segment_parameters[0] = record.segment_parameters[1] = nan;
-    if (failure.refusal != CadRefine2DRefusal::none) {
-      record.candidate_uv[0] = failure.candidate[0] / metric.scale_u;
-      record.candidate_uv[1] = failure.candidate[1] / metric.scale_v;
-    }
-    const auto& cell = tri.triangles[static_cast<std::size_t>(failure.triangle)];
-    for (int k = 0; k < 3; ++k) {
-      const double* point = tri.point(cell.v[k]);
-      record.triangle_uv[2*k] = point[0] / metric.scale_u;
-      record.triangle_uv[2*k+1] = point[1] / metric.scale_v;
-    }
-    if (failure.segment >= 0 &&
-        static_cast<std::size_t>(failure.segment) < boundary.edges.size()) {
-      const auto& edge = boundary.edges[static_cast<std::size_t>(failure.segment)];
-      record.use = edge.use;
-      record.curve = edge.curve;
-      record.segment_parameters[0] = edge.parameters[0];
-      record.segment_parameters[1] = edge.parameters[1];
-      for (int64_t loop = 0; loop < model.loop_count; ++loop)
-        if (edge.use >= model.loop_use_offsets[loop] && edge.use < model.loop_use_offsets[loop+1]) {
-          record.loop = static_cast<int32_t>(loop);
-          break;
-        }
-      if (edge.curve >= 0) {
-        const int64_t first = curves.offsets[edge.curve];
-        const int64_t last = curves.offsets[edge.curve+1];
-        const double s = std::min(edge.parameters[0], edge.parameters[1]);
-        const double* found = std::lower_bound(curves.parameters+first, curves.parameters+last, s);
-        if (found == curves.parameters+last || *found != s ||
-            found-curves.parameters-first >= last-first-1) return PHX_MC_INTERNAL_ERROR;
-        record.curve_segment = static_cast<int32_t>(found-curves.parameters-first);
-      }
-    }
-    result.refinement_failures.push_back(record);
+  if (rebuilt_split) {
+    bool dummy_encroachment = false;
+    const int32_t collected = collect_refinement_failures(
+        *stage.geometry, curves, stage.face, stage.boundary, stage.metric, stage.refined,
+        result.refinement_failures, dummy_encroachment);
+    if (collected != PHX_MC_OK) return collected;
+  } else {
+    result.refinement_failures = std::move(stage.refinement_failures);
   }
+  const double nan = std::numeric_limits<double>::quiet_NaN();
   // The stored size guarantee on the emitted triangles (pole slivers aside,
   // fixed like the kernel's pole fans): a failure the kernel and the guarded
   // moves left (the 3D flips are not guarded) is a size refusal with its
@@ -2607,9 +2979,10 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                                    std::make_pair(std::min(a, b), std::max(a, b)));
     }
     if (sliver ||
-        stored_size_failures(surface, {static_cast<int32_t>(c)}, metric.size) == 0) continue;
+        stored_size_failures(surface, {static_cast<int32_t>(c)}, stage.metric.size) == 0)
+      continue;
     phx_mc_cad_face_failure record{};
-    record.face = face;
+    record.face = stage.face;
     record.loop = record.use = record.axis = -1;
     record.reason = PHX_MC_CAD_FACE_REFINEMENT;
     record.triangle = -1;
@@ -2619,25 +2992,41 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     record.candidate_uv[0] = record.candidate_uv[1] = nan;
     record.segment_parameters[0] = record.segment_parameters[1] = nan;
     for (int k = 0; k < 3; ++k) {
-      record.triangle_uv[2*k] = surface.chart(cell[k])[0] / metric.scale_u;
-      record.triangle_uv[2*k+1] = surface.chart(cell[k])[1] / metric.scale_v;
+      record.triangle_uv[2 * k] = surface.chart(cell[k])[0] / stage.metric.scale_u;
+      record.triangle_uv[2 * k + 1] = surface.chart(cell[k])[1] / stage.metric.scale_v;
     }
     result.refinement_failures.push_back(record);
     status = PHX_MC_UNRESOLVED;
   }
   result.vertices = std::move(vertices);
-  result.boundary_edges = std::move(boundary.edges);
+  result.boundary_edges = std::move(stage.boundary.edges);
   for (auto& edge : result.boundary_edges) {
-    edge.vertices[0] = refined.vertex_map[edge.vertices[0]];
-    edge.vertices[1] = refined.vertex_map[edge.vertices[1]];
+    edge.vertices[0] = stage.refined.vertex_map[edge.vertices[0]];
+    edge.vertices[1] = stage.refined.vertex_map[edge.vertices[1]];
   }
   for (auto& edge : result.protected_pole_edges) {
-    edge[0] = refined.vertex_map[edge[0]];
-    edge[1] = refined.vertex_map[edge[1]];
+    edge[0] = stage.refined.vertex_map[edge[0]];
+    edge[1] = stage.refined.vertex_map[edge[1]];
   }
-  result.stats = refined.stats;
-  result.omitted_pole_points = omitted_pole_points;
+  result.stats = stage.refined.stats;
+  result.omitted_pole_points = stage.omitted_pole_points;
   return status;
+}
+
+int32_t cad_mesh_face(const cad::CadGeometry& geometry,
+                      const CadCurveDiscretization& curves, int32_t face,
+                      double size, double tolerance, double theta,
+                      CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
+                      std::vector<std::array<double, 5>>* position_calls,
+                      bool graded_pole_rings, const cad::ProximityField* proximity) {
+  CadFaceStagePtr stage;
+  bool has_curve_encroachment = false;
+  const int32_t status =
+      refine_face_stage_impl(geometry, curves, face, size, tolerance, theta, metric_points,
+                             position_calls, graded_pole_rings, proximity, stage, result,
+                             has_curve_encroachment);
+  if (!stage) return status;
+  return cad_finish_face_stage(*stage, curves, result);
 }
 
 

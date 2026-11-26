@@ -2,7 +2,9 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "cad_curve_discretization.hpp"
@@ -190,5 +192,29 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       std::vector<std::array<double, 5>>* position_calls = nullptr,
                       bool graded_pole_rings = false,
                       const cad::ProximityField* proximity = nullptr);
+
+// Opaque Phase-1 face refinement state (boundary, metric, pole seeds, and 2D
+// chart refinement, prior to 3D flip sweep and smoothing) so retryable surface
+// passes can skip smoothing when any face triggers a shared-curve retry.
+struct CadFaceStage;
+struct CadFaceStageDeleter {
+  void operator()(CadFaceStage* stage) const noexcept;
+};
+using CadFaceStagePtr = std::unique_ptr<CadFaceStage, CadFaceStageDeleter>;
+
+int32_t cad_refine_face_stage(const cad::CadGeometry& geometry,
+                              const CadCurveDiscretization& curves, int32_t face,
+                              double size, double tolerance, double theta,
+                              CadFaceStagePtr& stage, CadFaceMesh& early_result,
+                              bool& has_curve_encroachment,
+                              bool graded_pole_rings = false,
+                              const cad::ProximityField* proximity = nullptr);
+
+std::size_t cad_face_stage_bytes(const CadFaceStage& stage) noexcept;
+const std::vector<phx_mc_cad_face_failure>& cad_face_stage_failures(
+    const CadFaceStage& stage) noexcept;
+
+int32_t cad_finish_face_stage(CadFaceStage& stage, const CadCurveDiscretization& curves,
+                              CadFaceMesh& result);
 
 }  // namespace phx::mc

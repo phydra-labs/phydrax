@@ -166,12 +166,30 @@ inline OrientationStage orientation_stage(const double* a, const double* b, cons
 
 // orient3d through its first, floating stage inlined: the clear cases are
 // decided here, so only near-degenerate tests reach the exact predicate.
+// An exact-zero column (e.g. four points on an axis-aligned plane) has an
+// identically zero exact determinant without invoking expansion arithmetic.
 inline int orient3d_filtered(const double* a, const double* b, const double* c,
                              const double* d) noexcept {
-  const OrientationStage stage = orientation_stage(a, b, c, d);
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent;
   // orient3d is the negated Shewchuk determinant.
-  if (stage.det > stage.errbound) return -1;
-  if (-stage.det > stage.errbound) return 1;
+  if (det > errbound) return -1;
+  if (-det > errbound) return 1;
+  if (det == 0.0 && ((adz == 0.0 && bdz == 0.0 && cdz == 0.0) ||
+                     (ady == 0.0 && bdy == 0.0 && cdy == 0.0) ||
+                     (adx == 0.0 && bdx == 0.0 && cdx == 0.0))) {
+    return 0;
+  }
   return orient3d(a, b, c, d);
 }
 
