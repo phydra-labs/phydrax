@@ -354,7 +354,9 @@ deviation and its derived-domain coverage are separate obligations.
 For raw or dirty triangle soups (cracked float32 STL/OBJ exports, T-junctions,
 degenerate slivers, holes, self-intersections, internal baffles, inverted
 shells, nested cavities, or stray debris), `phydrax.geometry.surface.repair_surface_mesh`
-(and the optional `SurfaceImportPolicy.repair_policy` hook on `import_surface`)
+(or `phydrax.geometry.surface.repair_surface_arrays` when host NumPy arrays and
+`SurfaceRepairEvidence` are desired without JAX `SurfaceModel` wrapping, plus the
+optional `SurfaceImportPolicy.repair_policy` hook on `import_surface`)
 provides an explicit, audited native C++20 repair pipeline sitting cleanly
 between zero-displacement `AuthoredTriangleSheet` and offset-band
 `SurfaceEnvelopeSource`. Every geometry-changing switch on `SurfaceRepairPolicy`

@@ -254,34 +254,49 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
                              double& max_displacement) {
   if (tolerance <= 0.0 || points.size() <= 1) return;
   const std::size_t v_count = points.size();
-  const double inv_h = 1.0 / tolerance;
   const double tol2 = tolerance * tolerance;
-  std::unordered_map<GridCell, std::vector<int64_t>, GridCellHash> grid;
-  grid.reserve(v_count);
-  for (std::size_t v = 0; v < v_count; ++v) {
-    const GridCell cell{static_cast<int64_t>(std::floor(points[v][0] * inv_h)),
-                        static_cast<int64_t>(std::floor(points[v][1] * inv_h)),
-                        static_cast<int64_t>(std::floor(points[v][2] * inv_h))};
-    grid[cell].push_back(static_cast<int64_t>(v));
+  // Choose the coordinate axis with the largest bounding span for 1D sweep-and-prune.
+  double lo[3] = {points[0][0], points[0][1], points[0][2]};
+  double hi[3] = {points[0][0], points[0][1], points[0][2]};
+  for (std::size_t v = 1; v < v_count; ++v) {
+    for (int d = 0; d < 3; ++d) {
+      const double c = points[v][static_cast<std::size_t>(d)];
+      if (c < lo[d]) lo[d] = c;
+      if (c > hi[d]) hi[d] = c;
+    }
   }
+  int a0 = 0;
+  if (hi[1] - lo[1] > hi[a0] - lo[a0]) a0 = 1;
+  if (hi[2] - lo[2] > hi[a0] - lo[a0]) a0 = 2;
+  const auto s0 = static_cast<std::size_t>(a0);
+  const auto s1 = static_cast<std::size_t>((a0 + 1) % 3);
+  const auto s2 = static_cast<std::size_t>((a0 + 2) % 3);
+
+  std::vector<int64_t> order(v_count);
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](int64_t a, int64_t b) {
+    const double ca = points[static_cast<std::size_t>(a)][s0];
+    const double cb = points[static_cast<std::size_t>(b)][s0];
+    return ca != cb ? ca < cb : a < b;
+  });
+
   std::vector<WeldCandidate> candidates;
-  for (std::size_t u = 0; u < v_count; ++u) {
-    const int64_t cx = static_cast<int64_t>(std::floor(points[u][0] * inv_h));
-    const int64_t cy = static_cast<int64_t>(std::floor(points[u][1] * inv_h));
-    const int64_t cz = static_cast<int64_t>(std::floor(points[u][2] * inv_h));
-    for (int dx = -1; dx <= 1; ++dx) {
-      for (int dy = -1; dy <= 1; ++dy) {
-        for (int dz = -1; dz <= 1; ++dz) {
-          const auto it = grid.find({cx + dx, cy + dy, cz + dz});
-          if (it == grid.end()) continue;
-          for (const int64_t v : it->second) {
-            if (v <= static_cast<int64_t>(u)) continue;
-            const double d2 = dist2_3(points[u], points[static_cast<std::size_t>(v)]);
-            if (d2 <= tol2) {
-              candidates.push_back({d2, static_cast<int64_t>(u), v});
-            }
-          }
-        }
+  candidates.reserve(v_count);
+  for (std::size_t i = 0; i < v_count; ++i) {
+    const int64_t u = order[i];
+    const Point& pu = points[static_cast<std::size_t>(u)];
+    for (std::size_t j = i + 1; j < v_count; ++j) {
+      const int64_t v = order[j];
+      const Point& pv = points[static_cast<std::size_t>(v)];
+      const double d0 = pv[s0] - pu[s0];
+      if (d0 > tolerance) break;
+      const double d1 = pv[s1] - pu[s1];
+      if (std::fabs(d1) > tolerance) continue;
+      const double d2c = pv[s2] - pu[s2];
+      if (std::fabs(d2c) > tolerance) continue;
+      const double d2 = d0 * d0 + d1 * d1 + d2c * d2c;
+      if (d2 <= tol2) {
+        candidates.push_back({d2, std::min(u, v), std::max(u, v)});
       }
     }
   }
@@ -293,21 +308,33 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
               return a.v < b.v;
             });
 
-  // Build vertex -> incident faces list when fold protection is enabled.
-  std::vector<std::vector<std::size_t>> v_faces;
+  // Flat CSR vertex -> incident faces when fold protection is enabled.
+  std::vector<std::size_t> vf_offsets;
+  std::vector<std::size_t> vf_faces;
   if (preserve_embedding) {
-    v_faces.resize(v_count);
+    vf_offsets.assign(v_count + 1, 0);
+    for (const Triangle& tri : faces) {
+      ++vf_offsets[static_cast<std::size_t>(tri[0]) + 1];
+      ++vf_offsets[static_cast<std::size_t>(tri[1]) + 1];
+      ++vf_offsets[static_cast<std::size_t>(tri[2]) + 1];
+    }
+    for (std::size_t v = 0; v < v_count; ++v) vf_offsets[v + 1] += vf_offsets[v];
+    vf_faces.resize(vf_offsets[v_count]);
+    std::vector<std::size_t> cursor(vf_offsets.begin(), vf_offsets.end() - 1);
     for (std::size_t t = 0; t < faces.size(); ++t) {
       for (int k = 0; k < 3; ++k) {
-        v_faces[static_cast<std::size_t>(faces[t][static_cast<std::size_t>(k)])].push_back(t);
+        const auto v = static_cast<std::size_t>(faces[t][static_cast<std::size_t>(k)]);
+        vf_faces[cursor[v]++] = t;
       }
     }
   }
 
+  // Flat intrusive singly-linked cluster lists (zero per-vertex heap allocations).
   std::vector<int64_t> parent(v_count);
   std::iota(parent.begin(), parent.end(), 0);
-  std::vector<std::vector<int64_t>> members(v_count);
-  for (std::size_t v = 0; v < v_count; ++v) members[v].push_back(static_cast<int64_t>(v));
+  std::vector<int64_t> next_member(v_count, -1);
+  std::vector<int64_t> tail_member(v_count);
+  std::iota(tail_member.begin(), tail_member.end(), 0);
 
   for (const WeldCandidate& cand : candidates) {
     const int64_t ra = topology::find_root(parent, cand.u);
@@ -319,7 +346,8 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
     // Enforce strict max_vertex_displacement <= tolerance for EVERY cluster member.
     double worst = 0.0;
     bool exceeds = false;
-    for (const int64_t member : members[static_cast<std::size_t>(drop)]) {
+    for (int64_t member = drop; member >= 0;
+         member = next_member[static_cast<std::size_t>(member)]) {
       const double d = dist3(points[static_cast<std::size_t>(member)], target);
       if (d > tolerance) {
         exceeds = true;
@@ -330,9 +358,11 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
     if (exceeds) continue;
     if (preserve_embedding) {
       bool folds = false;
-      for (const int64_t member : members[static_cast<std::size_t>(drop)]) {
-        for (const std::size_t f : v_faces[static_cast<std::size_t>(member)]) {
-          const Triangle& tri = faces[f];
+      for (int64_t member = drop; member >= 0 && !folds;
+           member = next_member[static_cast<std::size_t>(member)]) {
+        const auto mv = static_cast<std::size_t>(member);
+        for (std::size_t idx = vf_offsets[mv]; idx < vf_offsets[mv + 1]; ++idx) {
+          const Triangle& tri = faces[vf_faces[idx]];
           const int64_t cur[3] = {topology::find_root(parent, tri[0]),
                                   topology::find_root(parent, tri[1]),
                                   topology::find_root(parent, tri[2])};
@@ -353,7 +383,6 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
             }
           }
         }
-        if (folds) break;
       }
       if (folds) {
         ++rejected_fold_welds;
@@ -361,10 +390,8 @@ void tolerance_weld_vertices(std::vector<Point>& points, std::vector<Triangle>& 
       }
     }
     parent[static_cast<std::size_t>(drop)] = keep;
-    auto& dst = members[static_cast<std::size_t>(keep)];
-    auto& src = members[static_cast<std::size_t>(drop)];
-    dst.insert(dst.end(), src.begin(), src.end());
-    src.clear();
+    next_member[static_cast<std::size_t>(tail_member[static_cast<std::size_t>(keep)])] = drop;
+    tail_member[static_cast<std::size_t>(keep)] = tail_member[static_cast<std::size_t>(drop)];
     ++welded_count;
     max_displacement = std::max(max_displacement, worst);
   }
@@ -597,6 +624,27 @@ void clean_slivers_and_degenerates(std::vector<Point>& points, std::vector<Trian
   if (!drop_degenerate && min_edge_length <= 0.0 && min_triangle_area <= 0.0) return;
   const double min_edge2 = min_edge_length * min_edge_length;
 
+  // Fast O(F) screen: skip topology map construction when no triangle needs cleanup.
+  bool any_candidate = false;
+  for (const Triangle& tri : faces) {
+    if (tri[0] == tri[1] || tri[1] == tri[2] || tri[2] == tri[0]) {
+      any_candidate = true;
+      break;
+    }
+    const Point& p0 = points[static_cast<std::size_t>(tri[0])];
+    const Point& p1 = points[static_cast<std::size_t>(tri[1])];
+    const Point& p2 = points[static_cast<std::size_t>(tri[2])];
+    if (exact_collinear_3d(p0, p1, p2) ||
+        (min_triangle_area > 0.0 && tri_area(p0, p1, p2) < min_triangle_area) ||
+        (min_edge_length > 0.0 &&
+         (dist2_3(p0, p1) <= min_edge2 || dist2_3(p1, p2) <= min_edge2 ||
+          dist2_3(p2, p0) <= min_edge2))) {
+      any_candidate = true;
+      break;
+    }
+  }
+  if (!any_candidate) return;
+
   // Bounded topology-preserving passes: flip obtuse caps, link-condition collapse needles.
   for (int pass = 0; pass < 4; ++pass) {
     bool changed = false;
@@ -821,30 +869,48 @@ struct SimpleHoleLoop {
 std::vector<SimpleHoleLoop> extract_boundary_loops(const std::vector<Point>& points,
                                                    const std::vector<Triangle>& faces,
                                                    int64_t& total_boundary_edges) {
-  std::map<std::pair<int64_t, int64_t>, int64_t> dir_counts;
-  std::map<std::pair<int64_t, int64_t>, std::size_t> dir_face;
-  for (std::size_t t = 0; t < faces.size(); ++t) {
+  struct DirEdgeRec {
+    int64_t u;
+    int64_t v;
+    std::size_t face;
+    int8_t dir;
+  };
+  const std::size_t f_count = faces.size();
+  std::vector<DirEdgeRec> edges;
+  edges.reserve(3 * f_count);
+  for (std::size_t t = 0; t < f_count; ++t) {
     for (int k = 0; k < 3; ++k) {
       const int64_t a = faces[t][static_cast<std::size_t>(k)];
       const int64_t b = faces[t][static_cast<std::size_t>((k + 1) % 3)];
-      ++dir_counts[{a, b}];
-      dir_face[{a, b}] = t;
+      edges.push_back({std::min(a, b), std::max(a, b), t, static_cast<int8_t>(a < b ? 1 : -1)});
     }
   }
+  std::sort(edges.begin(), edges.end(), [](const DirEdgeRec& x, const DirEdgeRec& y) {
+    return x.u != y.u ? x.u < y.u : x.v < y.v;
+  });
   std::vector<HoleEdge> hole_edges;
-  for (const auto& [dir, count] : dir_counts) {
-    if (count == 1 && dir_counts.find({dir.second, dir.first}) == dir_counts.end()) {
-      const std::size_t f = dir_face.at(dir);
+  for (std::size_t i = 0; i < edges.size();) {
+    std::size_t j = i + 1;
+    while (j < edges.size() && edges[j].u == edges[i].u && edges[j].v == edges[i].v) ++j;
+    if (j - i == 1) {
+      const DirEdgeRec& rec = edges[i];
+      const int64_t orig_a = rec.dir > 0 ? rec.u : rec.v;
+      const int64_t orig_b = rec.dir > 0 ? rec.v : rec.u;
+      const std::size_t f = rec.face;
       Point n{};
       const bool ok = unit_normal(points[static_cast<std::size_t>(faces[f][0])],
                                   points[static_cast<std::size_t>(faces[f][1])],
                                   points[static_cast<std::size_t>(faces[f][2])], n);
-      // Traverse hole rim in reverse direction (b -> a) to match mesh orientation.
-      hole_edges.push_back({dir.second, dir.first, n, ok, false});
+      // Traverse hole rim in reverse direction (orig_b -> orig_a) to match mesh orientation.
+      hole_edges.push_back({orig_b, orig_a, n, ok, false});
     }
+    i = j;
   }
   total_boundary_edges = static_cast<int64_t>(hole_edges.size());
   if (hole_edges.empty()) return {};
+  std::sort(hole_edges.begin(), hole_edges.end(), [](const HoleEdge& a, const HoleEdge& b) {
+    return a.from != b.from ? a.from < b.from : a.to < b.to;
+  });
 
   std::map<int64_t, std::vector<std::size_t>> outgoing;
   for (std::size_t i = 0; i < hole_edges.size(); ++i) {
@@ -1351,9 +1417,13 @@ int32_t phx_mc_surface_fill_holes(const phx_mc_surface_hole_fill_request* reques
         if (refused[f] != 0) ++report->colliding_cap_triangles;
       }
     }
-    int64_t remaining = 0;
-    (void)phx::mc::extract_boundary_loops(result->points, result->triangles, remaining);
-    report->remaining_boundary_edges = remaining;
+    if (report->added_cap_triangles > 0) {
+      int64_t remaining = 0;
+      (void)phx::mc::extract_boundary_loops(result->points, result->triangles, remaining);
+      report->remaining_boundary_edges = remaining;
+    } else {
+      report->remaining_boundary_edges = initial_boundary_edges;
+    }
     phx::mc::compact_mesh(result->points, result->triangles);
     *out_surface = result.release();
     return PHX_MC_OK;
@@ -1392,88 +1462,113 @@ int32_t phx_mc_surface_orient_and_prune(const phx_mc_surface_orient_request* req
       return PHX_MC_OK;
     }
 
-    // Build edge -> incident faces adjacency (with orientation sign).
-    struct EdgeFace {
+    // Flat sorted edge pass: builds components (DSU), closure flags, and
+    // fixed-capacity manifold adjacency without any std::map or per-face vectors.
+    struct OrientEdge {
+      int64_t u;
+      int64_t v;
       std::size_t face;
       int8_t dir;
     };
-    std::map<phx::mc::EdgeKey, std::vector<EdgeFace>> edge_map;
+    std::vector<OrientEdge> edges;
+    edges.reserve(3 * n);
     for (std::size_t t = 0; t < n; ++t) {
       for (int k = 0; k < 3; ++k) {
         const int64_t a = result->triangles[t][static_cast<std::size_t>(k)];
         const int64_t b = result->triangles[t][static_cast<std::size_t>((k + 1) % 3)];
-        edge_map[phx::mc::make_edge(a, b)].push_back({t, static_cast<int8_t>(a < b ? 1 : -1)});
+        edges.push_back({std::min(a, b), std::max(a, b), t, static_cast<int8_t>(a < b ? 1 : -1)});
       }
     }
+    std::sort(edges.begin(), edges.end(), [](const OrientEdge& x, const OrientEdge& y) {
+      if (x.u != y.u) return x.u < y.u;
+      if (x.v != y.v) return x.v < y.v;
+      return x.face < y.face;
+    });
 
-    // Partition into edge-connected components.
-    std::vector<std::vector<std::size_t>> adj_all(n);
-    std::vector<std::vector<std::pair<std::size_t, int8_t>>> adj_manifold(n);
-    for (const auto& [edge, list] : edge_map) {
-      for (std::size_t i = 0; i < list.size(); ++i) {
-        for (std::size_t j = i + 1; j < list.size(); ++j) {
-          adj_all[list[i].face].push_back(list[j].face);
-          adj_all[list[j].face].push_back(list[i].face);
+    std::vector<int64_t> comp_parent(n);
+    std::iota(comp_parent.begin(), comp_parent.end(), 0);
+    const auto unite_comp = [&](std::size_t a, std::size_t b) {
+      const int64_t ra = phx::mc::topology::find_root(comp_parent, static_cast<int64_t>(a));
+      const int64_t rb = phx::mc::topology::find_root(comp_parent, static_cast<int64_t>(b));
+      if (ra != rb) comp_parent[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
+    };
+
+    struct ManifoldNbrs {
+      std::size_t nb[3];
+      int8_t rel[3];
+      std::uint8_t count = 0;
+    };
+    std::vector<ManifoldNbrs> man_adj;
+    if (request->orient_shells != 0) man_adj.resize(n);
+    std::vector<std::uint8_t> face_open_or_nm(n, 0);
+
+    for (std::size_t i = 0; i < edges.size();) {
+      std::size_t j = i + 1;
+      while (j < edges.size() && edges[j].u == edges[i].u && edges[j].v == edges[i].v) ++j;
+      const std::size_t f0 = edges[i].face;
+      for (std::size_t k = i + 1; k < j; ++k) unite_comp(f0, edges[k].face);
+      if (j - i != 2) {
+        face_open_or_nm[f0] = 1;
+      } else if (request->orient_shells != 0 && edges[i + 1].face != f0) {
+        const std::size_t f1 = edges[i + 1].face;
+        const int8_t rel = (edges[i].dir == edges[i + 1].dir) ? -1 : 1;
+        if (man_adj[f0].count < 3) {
+          man_adj[f0].nb[man_adj[f0].count] = f1;
+          man_adj[f0].rel[man_adj[f0].count] = rel;
+          ++man_adj[f0].count;
+        }
+        if (man_adj[f1].count < 3) {
+          man_adj[f1].nb[man_adj[f1].count] = f0;
+          man_adj[f1].rel[man_adj[f1].count] = rel;
+          ++man_adj[f1].count;
         }
       }
-      if (list.size() == 2) {
-        // Consistent orientation requires opposite directions across a shared edge.
-        const int8_t rel = (list[0].dir == list[1].dir) ? -1 : 1;
-        adj_manifold[list[0].face].push_back({list[1].face, rel});
-        adj_manifold[list[1].face].push_back({list[0].face, rel});
-      }
+      i = j;
     }
 
-    std::vector<int64_t> comp_id(n, -1);
+    // Group faces into components in deterministic ascending lowest-face order.
+    std::vector<int64_t> root_to_comp(n, -1);
     std::vector<std::vector<std::size_t>> comps;
-    for (std::size_t seed = 0; seed < n; ++seed) {
-      if (comp_id[seed] >= 0) continue;
-      const auto cid = static_cast<int64_t>(comps.size());
-      std::vector<std::size_t> members;
-      std::deque<std::size_t> q;
-      comp_id[seed] = cid;
-      q.push_back(seed);
-      while (!q.empty()) {
-        const std::size_t cur = q.front();
-        q.pop_front();
-        members.push_back(cur);
-        for (const std::size_t nb : adj_all[cur]) {
-          if (comp_id[nb] < 0) {
-            comp_id[nb] = cid;
-            q.push_back(nb);
-          }
-        }
+    std::vector<std::uint8_t> comp_closed;
+    for (std::size_t t = 0; t < n; ++t) {
+      const auto root = static_cast<std::size_t>(
+          phx::mc::topology::find_root(comp_parent, static_cast<int64_t>(t)));
+      if (root_to_comp[root] < 0) {
+        root_to_comp[root] = static_cast<int64_t>(comps.size());
+        comps.emplace_back();
+        comp_closed.push_back(1);
       }
-      std::sort(members.begin(), members.end());
-      comps.push_back(std::move(members));
+      const auto cid = static_cast<std::size_t>(root_to_comp[root]);
+      comps[cid].push_back(t);
+      if (face_open_or_nm[t]) comp_closed[cid] = 0;
     }
     report->component_count = static_cast<int64_t>(comps.size());
 
-    // Compute per-component closure, area, signed volume, and bounding box.
     const std::size_t m = comps.size();
-    std::vector<std::uint8_t> comp_closed(m, 1);
     std::vector<double> comp_area(m, 0.0);
     std::vector<double> comp_volume(m, 0.0);
     std::vector<int8_t> face_flip(n, 1);
 
     if (request->orient_shells != 0) {
+      std::vector<std::uint8_t> seen(n, 0);
+      std::vector<std::size_t> bfs_queue;
+      bfs_queue.reserve(n);
       for (std::size_t c = 0; c < m; ++c) {
-        // Consistent BFS across manifold edges within component c.
-        std::vector<std::uint8_t> seen(n, 0);
         for (const std::size_t seed : comps[c]) {
           if (seen[seed]) continue;
           seen[seed] = 1;
           face_flip[seed] = 1;
-          std::deque<std::size_t> q;
-          q.push_back(seed);
-          while (!q.empty()) {
-            const std::size_t cur = q.front();
-            q.pop_front();
-            for (const auto& [nb, rel] : adj_manifold[cur]) {
+          bfs_queue.clear();
+          bfs_queue.push_back(seed);
+          for (std::size_t head = 0; head < bfs_queue.size(); ++head) {
+            const std::size_t cur = bfs_queue[head];
+            const ManifoldNbrs& nbrs = man_adj[cur];
+            for (std::uint8_t idx = 0; idx < nbrs.count; ++idx) {
+              const std::size_t nb = nbrs.nb[idx];
               if (!seen[nb]) {
                 seen[nb] = 1;
-                face_flip[nb] = static_cast<int8_t>(face_flip[cur] * rel);
-                q.push_back(nb);
+                face_flip[nb] = static_cast<int8_t>(face_flip[cur] * nbrs.rel[idx]);
+                bfs_queue.push_back(nb);
               }
             }
           }
@@ -1484,9 +1579,8 @@ int32_t phx_mc_surface_orient_and_prune(const phx_mc_surface_orient_request* req
       }
     }
 
-    // Check exact directed closure per component.
+    // Compute per-component area and signed volume directly.
     for (std::size_t c = 0; c < m; ++c) {
-      std::map<phx::mc::EdgeKey, int> counts;
       double area = 0.0;
       double vol6 = 0.0;
       for (const std::size_t f : comps[c]) {
@@ -1496,16 +1590,6 @@ int32_t phx_mc_surface_orient_and_prune(const phx_mc_surface_orient_request* req
         const auto& p2 = result->points[static_cast<std::size_t>(t[2])];
         area += phx::mc::tri_area(p0, p1, p2);
         vol6 += phx::mc::dot3(p0, phx::mc::cross3(p1, p2));
-        for (int k = 0; k < 3; ++k) {
-          ++counts[phx::mc::make_edge(t[static_cast<std::size_t>(k)],
-                                      t[static_cast<std::size_t>((k + 1) % 3)])];
-        }
-      }
-      for (const auto& [edge, cnt] : counts) {
-        if (cnt != 2) {
-          comp_closed[c] = 0;
-          break;
-        }
       }
       comp_area[c] = area;
       comp_volume[c] = vol6 / 6.0;
@@ -1640,6 +1724,138 @@ int32_t phx_mc_surface_orient_and_prune(const phx_mc_surface_orient_request* req
 
     phx::mc::compact_mesh(result->points, result->triangles);
     *out_surface = result.release();
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_surface_closure_audit(int64_t vertex_count, const double* vertices,
+                                     int64_t triangle_count, const int64_t* triangles,
+                                     phx_mc_surface_closure_report* report) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (report == nullptr || vertex_count < 0 || triangle_count < 0 ||
+        (vertex_count > 0 && vertices == nullptr) || (triangle_count > 0 && triangles == nullptr) ||
+        !phx::mc::addressable(vertex_count, 3, sizeof(double)) ||
+        !phx::mc::addressable(triangle_count, 3, sizeof(int64_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    *report = {};
+    for (int64_t i = 0; i < 3 * vertex_count; ++i) {
+      if (!std::isfinite(vertices[i])) return PHX_MC_NONFINITE_INPUT;
+    }
+    for (int64_t i = 0; i < 3 * triangle_count; ++i) {
+      if (triangles[i] < 0 || triangles[i] >= vertex_count) return PHX_MC_INVALID_INPUT;
+    }
+    if (triangle_count == 0) return PHX_MC_OK;
+
+    const auto n = static_cast<std::size_t>(triangle_count);
+    report->triangle_count = triangle_count;
+
+    double vol6 = 0.0;
+    struct ClosureEdge {
+      int64_t u;
+      int64_t v;
+      int64_t face;
+      int64_t corner;
+      int8_t forward;
+    };
+    std::vector<ClosureEdge> edges;
+    edges.reserve(3 * n);
+    for (std::size_t t = 0; t < n; ++t) {
+      const int64_t i0 = triangles[3 * t];
+      const int64_t i1 = triangles[3 * t + 1];
+      const int64_t i2 = triangles[3 * t + 2];
+      const double* p0 = vertices + 3 * i0;
+      const double* p1 = vertices + 3 * i1;
+      const double* p2 = vertices + 3 * i2;
+      const double cx = p1[1] * p2[2] - p1[2] * p2[1];
+      const double cy = p1[2] * p2[0] - p1[0] * p2[2];
+      const double cz = p1[0] * p2[1] - p1[1] * p2[0];
+      vol6 += p0[0] * cx + p0[1] * cy + p0[2] * cz;
+      const int64_t tri[3] = {i0, i1, i2};
+      for (int k = 0; k < 3; ++k) {
+        const int64_t a = tri[k];
+        const int64_t b = tri[(k + 1) % 3];
+        edges.push_back({std::min(a, b), std::max(a, b), static_cast<int64_t>(t),
+                         static_cast<int64_t>(3 * t + static_cast<std::size_t>(k)),
+                         static_cast<int8_t>(a < b ? 1 : -1)});
+      }
+    }
+    report->signed_volume = vol6 / 6.0;
+
+    std::sort(edges.begin(), edges.end(), [](const ClosureEdge& x, const ClosureEdge& y) {
+      if (x.u != y.u) return x.u < y.u;
+      if (x.v != y.v) return x.v < y.v;
+      return x.corner < y.corner;
+    });
+
+    std::vector<int64_t> face_parent(n);
+    std::iota(face_parent.begin(), face_parent.end(), 0);
+    std::vector<int64_t> corner_parent(3 * n);
+    std::iota(corner_parent.begin(), corner_parent.end(), 0);
+    const auto unite = [](std::vector<int64_t>& parent, int64_t a, int64_t b) {
+      const int64_t ra = phx::mc::topology::find_root(parent, a);
+      const int64_t rb = phx::mc::topology::find_root(parent, b);
+      if (ra != rb) parent[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
+    };
+    const auto next_c = [](int64_t c) { return (c % 3 == 2) ? (c - 2) : (c + 1); };
+
+    int64_t boundary_edges = 0;
+    int64_t nonmanifold_edges = 0;
+    for (std::size_t i = 0; i < edges.size();) {
+      std::size_t j = i + 1;
+      while (j < edges.size() && edges[j].u == edges[i].u && edges[j].v == edges[i].v) ++j;
+      const int64_t first_face = edges[i].face;
+      for (std::size_t k = i + 1; k < j; ++k) unite(face_parent, first_face, edges[k].face);
+      const std::size_t deg = j - i;
+      if (deg == 1) {
+        ++boundary_edges;
+      } else if (deg == 2) {
+        if (edges[i].forward == edges[i + 1].forward) {
+          ++nonmanifold_edges;
+        } else {
+          const int64_t c0 = edges[i].corner;
+          const int64_t c0n = next_c(c0);
+          const int64_t c1 = edges[i + 1].corner;
+          const int64_t c1n = next_c(c1);
+          unite(corner_parent, c0, c1n);
+          unite(corner_parent, c0n, c1);
+        }
+      } else {
+        ++nonmanifold_edges;
+      }
+      i = j;
+    }
+
+    int64_t components = 0;
+    for (std::size_t t = 0; t < n; ++t) {
+      if (phx::mc::topology::find_root(face_parent, static_cast<int64_t>(t)) ==
+          static_cast<int64_t>(t)) {
+        ++components;
+      }
+    }
+
+    std::vector<int64_t> first_root(static_cast<std::size_t>(vertex_count), -1);
+    int64_t nonmanifold_vertices = 0;
+    for (std::size_t t = 0; t < n; ++t) {
+      for (int k = 0; k < 3; ++k) {
+        const auto v = static_cast<std::size_t>(triangles[3 * t + static_cast<std::size_t>(k)]);
+        const int64_t r = phx::mc::topology::find_root(
+            corner_parent, static_cast<int64_t>(3 * t + static_cast<std::size_t>(k)));
+        if (first_root[v] == -1) {
+          first_root[v] = r;
+        } else if (first_root[v] >= 0 && first_root[v] != r) {
+          ++nonmanifold_vertices;
+          first_root[v] = -2;
+        }
+      }
+    }
+
+    report->component_count = components;
+    report->boundary_edges = boundary_edges;
+    report->nonmanifold_edges = nonmanifold_edges;
+    report->nonmanifold_vertices = nonmanifold_vertices;
     return PHX_MC_OK;
   });
 }

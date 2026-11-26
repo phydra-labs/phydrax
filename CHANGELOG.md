@@ -12,11 +12,14 @@
 
 ### Added
 - Native certified surface mesh repair (`phydrax.geometry.surface.repair_surface_mesh`,
+  `repair_surface_arrays`, `SurfaceRepairArrays`,
   `SurfaceRepairPolicy`, `SurfaceRepairResult`, `SurfaceRepairEvidence`,
   `SurfaceRepairError`, `SolidWindingRule`, `SurfaceRepairStatus`) backed by new
   `native/meshcore` C++20 kernels (`phx_mc_arrange_soup`,
-  `phx_mc_arrangement_extract_solid`, `phx_mc_surface_weld_and_clean`,
-  `phx_mc_surface_fill_holes`, `phx_mc_surface_orient_and_prune`) and an opt-in
+  `phx_mc_arrangement_extract_solid`, `phx_mc_arrangement_boundary_edge_count`,
+  `phx_mc_surface_weld_and_clean`,
+  `phx_mc_surface_fill_holes`, `phx_mc_surface_orient_and_prune`,
+  `phx_mc_surface_closure_audit`) and an opt-in
   `SurfaceImportPolicy.repair_policy` hook on `import_surface`:
   - Single-soup exact self-arrangement over Attene/Cherchi indirect predicates
     with exact 3D arrangement cell decomposition (degree-≤-9 indirect-predicate

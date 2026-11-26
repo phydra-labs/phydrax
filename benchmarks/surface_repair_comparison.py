@@ -20,7 +20,11 @@ import numpy as np
 import trimesh
 
 from phydrax._meshcore import verify_surface_embedding
-from phydrax.geometry.surface import repair_surface_mesh, SurfaceRepairPolicy
+from phydrax.geometry.surface import (
+    repair_surface_arrays,
+    repair_surface_mesh,
+    SurfaceRepairPolicy,
+)
 
 
 def _box_mesh(
@@ -288,35 +292,36 @@ def _cases() -> list[
 def main() -> None:
     rows: list[dict[str, Any]] = []
     for name, (verts, faces), policy, weld_tol, ref_vol in _cases():
-        # Warm once, then min-of-3 timing for both tools.
-        phx_times: list[float] = []
+        # Warm once, then min-of-3 timing for host-arrays, SurfaceModel, and trimesh.
+        phx_arr_times: list[float] = []
+        phx_mod_times: list[float] = []
         tri_times: list[float] = []
-        phx_result = None
+        phx_arrays = None
         tri_out: tuple[np.ndarray, np.ndarray] = (verts, faces)
         for _ in range(3):
             t0 = perf_counter()
-            phx_result = repair_surface_mesh((verts, faces), policy=policy)
-            phx_times.append(perf_counter() - t0)
+            phx_arrays = repair_surface_arrays((verts, faces), policy=policy)
+            phx_arr_times.append(perf_counter() - t0)
+            t1 = perf_counter()
+            _ = repair_surface_mesh((verts, faces), policy=policy)
+            phx_mod_times.append(perf_counter() - t1)
             tv, tf, dt = _run_trimesh_repair(verts, faces, weld_tol=weld_tol)
             tri_times.append(dt)
             tri_out = (tv, tf)
-        assert phx_result is not None
-        phx_pts = np.asarray(phx_result.surface.mesh.coordinates, dtype=np.float64)
-        phx_tris = np.asarray(
-            phx_result.surface.mesh.connectivity.cell_vertices, dtype=np.int64
-        )[:, :3]
-        phx_audit = _audit_output(phx_pts, phx_tris)
+        assert phx_arrays is not None
+        phx_audit = _audit_output(phx_arrays.vertices, phx_arrays.triangles)
         tri_audit = _audit_output(tri_out[0], tri_out[1])
         rows.append(
             {
                 "case": name,
                 "reference_volume": round(ref_vol, 6),
-                "phydrax_ms": round(min(phx_times) * 1000.0, 3),
+                "phydrax_arrays_ms": round(min(phx_arr_times) * 1000.0, 3),
+                "phydrax_model_ms": round(min(phx_mod_times) * 1000.0, 3),
                 "trimesh_ms": round(min(tri_times) * 1000.0, 3),
                 "phydrax": {
                     **phx_audit,
-                    "embedding_verified": phx_result.evidence.embedding_verified,
-                    "max_displacement": phx_result.evidence.max_vertex_displacement,
+                    "embedding_verified": phx_arrays.evidence.embedding_verified,
+                    "max_displacement": phx_arrays.evidence.max_vertex_displacement,
                 },
                 "trimesh": tri_audit,
             }

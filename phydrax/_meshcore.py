@@ -847,6 +847,17 @@ class _SurfaceOrientReport(ctypes.Structure):
     )
 
 
+class _SurfaceClosureReport(ctypes.Structure):
+    _fields_ = (
+        ("triangle_count", _I64),
+        ("component_count", _I64),
+        ("boundary_edges", _I64),
+        ("nonmanifold_edges", _I64),
+        ("nonmanifold_vertices", _I64),
+        ("signed_volume", _F64),
+    )
+
+
 class _LevelSetSplit3DRequest(ctypes.Structure):
     _fields_ = (
         ("point_count", _I64),
@@ -1744,6 +1755,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I32, _I32, ctypes.POINTER(_SolidExtractionReport), _P),
     ),
+    "phx_mc_arrangement_boundary_edge_count": (_I32, (_P, _P)),
     "phx_mc_surface_weld_and_clean": (
         _I32,
         (
@@ -1767,6 +1779,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             ctypes.POINTER(_SurfaceOrientReport),
             _P,
         ),
+    ),
+    "phx_mc_surface_closure_audit": (
+        _I32,
+        (_I64, _P, _I64, _P, ctypes.POINTER(_SurfaceClosureReport)),
     ),
     "phx_mc_clip_reference_triangle_exact": (
         _I32,
@@ -9189,6 +9205,28 @@ class NativeSurfaceOrient(NamedTuple):
     pruned_face_count: int
 
 
+class NativeSurfaceClosure(NamedTuple):
+    """Exact native topological closure and signed-volume audit of a triangle surface."""
+
+    triangle_count: int
+    component_count: int
+    boundary_edges: int
+    nonmanifold_edges: int
+    nonmanifold_vertices: int
+    signed_volume: float
+
+
+class NativeSoupStageResult(NamedTuple):
+    """Single-pass self-arrangement result, optionally with immediate solid extraction."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    fragment_count: int
+    boundary_edge_count: int
+    extracted_solid: bool
+    solid_extraction: NativeSolidExtraction | None
+
+
 def arrange_soup(
     vertices: object,
     triangles: object,
@@ -9545,6 +9583,194 @@ def surface_orient_and_prune(
         cavity_component_count=int(report.cavity_component_count),
         pruned_component_count=int(report.pruned_component_count),
         pruned_face_count=int(report.pruned_face_count),
+    )
+
+
+def arrange_soup_or_extract_solid(
+    vertices: object,
+    triangles: object,
+    /,
+    *,
+    extract_if_closed: bool,
+    winding_rule: SolidWindingCode = SolidWindingCode.NONZERO,
+    split_nonmanifold_pinches: bool = False,
+    pairs: object | None = None,
+) -> NativeSoupStageResult:
+    """Self-arrange once and extract the solid directly on the same handle if closed."""
+
+    points = _points(vertices, "vertices", 3)
+    faces = _native_integer_array(triangles, "triangles", np.dtype(np.int64))
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or np.any(faces < 0)
+        or np.any(faces >= points.shape[0])
+    ):
+        raise ValueError("triangle array is misaligned with vertices.")
+    pair_count = 0
+    pair_ptr = 0
+    candidates: np.ndarray | None = None
+    if pairs is not None:
+        candidates = _native_integer_array(pairs, "pairs", np.dtype(np.int64))
+        if (
+            candidates.ndim != 2
+            or candidates.shape[1] != 2
+            or np.any(candidates < 0)
+            or np.any(candidates >= faces.shape[0])
+        ):
+            raise ValueError("candidate pair array is misaligned with triangles.")
+        pair_count = candidates.shape[0]
+        pair_ptr = candidates.ctypes.data if pair_count > 0 else 0
+    library = load_meshcore()
+    arr_handle = ctypes.c_void_p()
+    failed_face = np.full((1,), -1, dtype=np.int64)
+    status = MeshcoreStatus(
+        library["phx_mc_arrange_soup"](
+            points.shape[0],
+            points.ctypes.data,
+            faces.shape[0],
+            faces.ctypes.data,
+            pair_count,
+            pair_ptr,
+            failed_face.ctypes.data,
+            ctypes.addressof(arr_handle),
+        )
+    )
+    if not arr_handle.value:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "arrange_soup_or_extract_solid: missing arrangement",
+        )
+    try:
+        if status != MeshcoreStatus.OK:
+            raise ArrangementFailure(status, int(failed_face[0]))
+        sizes = np.empty((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_arrangement_sizes"](arr_handle, sizes.ctypes.data),
+            "arrangement_sizes",
+        )
+        vertex_count, fragment_count, edge_count, coplanar_count, location_count = sizes
+        open_edges = np.empty((1,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_arrangement_boundary_edge_count"](
+                arr_handle, open_edges.ctypes.data
+            ),
+            "arrangement_boundary_edge_count",
+        )
+        boundary_count = int(open_edges[0])
+        if extract_if_closed and boundary_count == 0:
+            report = _SolidExtractionReport()
+            surface_handle = ctypes.c_void_p()
+            _raise_for_call(
+                library["phx_mc_arrangement_extract_solid"](
+                    arr_handle,
+                    int(winding_rule),
+                    1 if split_nonmanifold_pinches else 0,
+                    ctypes.byref(report),
+                    ctypes.addressof(surface_handle),
+                ),
+                "arrangement_extract_solid",
+            )
+            out_vertices, out_triangles, _ = _take_surface_result(
+                library, surface_handle, "arrangement_extract_solid"
+            )
+            extraction = NativeSolidExtraction(
+                vertices=out_vertices,
+                triangles=out_triangles,
+                fragment_count=int(fragment_count),
+                patch_count=int(report.patch_count),
+                cell_count=int(report.cell_count),
+                canceled_coplanar_fragments=int(report.canceled_coplanar_fragments),
+                boundary_edge_count=int(report.boundary_edge_count),
+                nonmanifold_edge_count=int(report.nonmanifold_edge_count),
+                nonmanifold_vertex_count=int(report.nonmanifold_vertex_count),
+                split_pinch_vertices=int(report.split_pinch_vertices),
+                used_generalized_winding=bool(report.used_generalized_winding),
+                closed=bool(report.closed),
+            )
+            return NativeSoupStageResult(
+                vertices=out_vertices,
+                triangles=out_triangles,
+                fragment_count=int(fragment_count),
+                boundary_edge_count=0,
+                extracted_solid=True,
+                solid_extraction=extraction,
+            )
+        out_vertices = np.empty((vertex_count, 3), dtype=np.float64)
+        bounds = np.empty((vertex_count,), dtype=np.float64)
+        constructions = np.empty((vertex_count,), dtype=np.int8)
+        origins = np.empty((vertex_count,), dtype=np.int64)
+        fragments = np.empty((fragment_count, 3), dtype=np.int64)
+        fragment_faces = np.empty((fragment_count,), dtype=np.int64)
+        contact_edges = np.empty((edge_count, 2), dtype=np.int64)
+        coplanar = np.empty((coplanar_count, 3), dtype=np.int64)
+        locations = np.empty((location_count, 3), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_arrangement_export"](
+                arr_handle,
+                vertex_count,
+                fragment_count,
+                edge_count,
+                coplanar_count,
+                location_count,
+                out_vertices.ctypes.data,
+                bounds.ctypes.data,
+                constructions.ctypes.data,
+                origins.ctypes.data,
+                fragments.ctypes.data,
+                fragment_faces.ctypes.data,
+                contact_edges.ctypes.data,
+                coplanar.ctypes.data,
+                locations.ctypes.data,
+            ),
+            "arrangement_export",
+        )
+        return NativeSoupStageResult(
+            vertices=out_vertices,
+            triangles=fragments,
+            fragment_count=int(fragment_count),
+            boundary_edge_count=boundary_count,
+            extracted_solid=False,
+            solid_extraction=None,
+        )
+    finally:
+        library["phx_mc_arrangement_free"](arr_handle)
+
+
+def surface_closure_audit(
+    vertices: object,
+    triangles: object,
+    /,
+) -> NativeSurfaceClosure:
+    """Compute exact topological closure, manifoldness, components, and signed volume."""
+
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError("triangles must be an (N, 3) integer array.")
+    report = _SurfaceClosureReport()
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_surface_closure_audit"](
+            points.shape[0],
+            points.ctypes.data if points.shape[0] > 0 else 0,
+            faces.shape[0],
+            faces.ctypes.data if faces.shape[0] > 0 else 0,
+            ctypes.byref(report),
+        ),
+        "surface_closure_audit",
+    )
+    return NativeSurfaceClosure(
+        triangle_count=int(report.triangle_count),
+        component_count=int(report.component_count),
+        boundary_edges=int(report.boundary_edges),
+        nonmanifold_edges=int(report.nonmanifold_edges),
+        nonmanifold_vertices=int(report.nonmanifold_vertices),
+        signed_volume=float(report.signed_volume),
     )
 
 

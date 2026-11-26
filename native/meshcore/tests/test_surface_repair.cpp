@@ -118,6 +118,10 @@ void test_self_intersecting_overlapping_boxes() {
                             0, nullptr, &failed_face, &arr) == PHX_MC_OK);
   CHECK(arr != nullptr);
 
+  int64_t open_arr_edges = -1;
+  CHECK(phx_mc_arrangement_boundary_edge_count(arr, &open_arr_edges) == PHX_MC_OK);
+  CHECK(open_arr_edges == 0);
+
   phx_mc_solid_extraction_report rep{};
   void* out_handle = nullptr;
   CHECK(phx_mc_arrangement_extract_solid(arr, PHX_MC_WINDING_NONZERO, 0, &rep, &out_handle) ==
@@ -132,6 +136,17 @@ void test_self_intersecting_overlapping_boxes() {
   CHECK(verify_embedding_findings(solid) == 0);
   // Volume of [0,1]^3 U [0.5,1.5]^3 = 1 + 1 - 0.5^3 = 1.875.
   CHECK(std::fabs(signed_volume(solid) - 1.875) < 1.0e-12);
+  phx_mc_surface_closure_report closure{};
+  CHECK(phx_mc_surface_closure_audit(
+            static_cast<int64_t>(solid.vertices.size() / 3), solid.vertices.data(),
+            static_cast<int64_t>(solid.triangles.size() / 3), solid.triangles.data(),
+            &closure) == PHX_MC_OK);
+  CHECK(closure.triangle_count == static_cast<int64_t>(solid.triangles.size() / 3));
+  CHECK(closure.component_count == 1);
+  CHECK(closure.boundary_edges == 0);
+  CHECK(closure.nonmanifold_edges == 0);
+  CHECK(closure.nonmanifold_vertices == 0);
+  CHECK(std::fabs(closure.signed_volume - 1.875) < 1.0e-12);
 }
 
 void test_coplanar_cancellation_and_nested_cavity() {
@@ -244,6 +259,14 @@ void test_liepa_hole_filling_and_embedding_gate() {
   req.refine_caps = 1;
   req.check_embedding = 1;
 
+  phx_mc_surface_closure_report open_closure{};
+  CHECK(phx_mc_surface_closure_audit(
+            static_cast<int64_t>(open_cube.vertices.size() / 3), open_cube.vertices.data(),
+            static_cast<int64_t>(open_cube.triangles.size() / 3), open_cube.triangles.data(),
+            &open_closure) == PHX_MC_OK);
+  CHECK(open_closure.boundary_edges == 4);
+  CHECK(open_closure.component_count == 1);
+
   phx_mc_surface_hole_fill_report rep{};
   void* out_handle = nullptr;
   CHECK(phx_mc_surface_fill_holes(&req, &rep, &out_handle) == PHX_MC_OK);
@@ -255,6 +278,15 @@ void test_liepa_hole_filling_and_embedding_gate() {
   CHECK(std::fabs(rep.filled_hole_area - 1.0) < 1.0e-9);
   CHECK(verify_embedding_findings(filled) == 0);
   CHECK(std::fabs(signed_volume(filled) - 1.0) < 1.0e-9);
+  phx_mc_surface_closure_report closed_closure{};
+  CHECK(phx_mc_surface_closure_audit(
+            static_cast<int64_t>(filled.vertices.size() / 3), filled.vertices.data(),
+            static_cast<int64_t>(filled.triangles.size() / 3), filled.triangles.data(),
+            &closed_closure) == PHX_MC_OK);
+  CHECK(closed_closure.boundary_edges == 0);
+  CHECK(closed_closure.nonmanifold_edges == 0);
+  CHECK(closed_closure.nonmanifold_vertices == 0);
+  CHECK(std::fabs(closed_closure.signed_volume - 1.0) < 1.0e-9);
 }
 
 void test_orient_nested_cavities_and_prune_debris() {

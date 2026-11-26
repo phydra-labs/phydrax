@@ -19,15 +19,16 @@ import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
-    arrange_soup,
     arrange_soup_extract_solid,
+    arrange_soup_or_extract_solid,
     ArrangementFailure,
     mesh_certify,
     mesh_remesh,
     MeshcoreError,
     SolidWindingCode,
+    surface_closure_audit,
     surface_fill_holes,
     surface_orient_and_prune,
     surface_weld_and_clean,
@@ -509,6 +510,47 @@ class SurfaceRepairEvidence(StrictModule, NonTrainableState):
         )
 
 
+class SurfaceRepairArrays(StrictModule, NonTrainableState):
+    """Repaired host triangle arrays and complete repair provenance."""
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    evidence: SurfaceRepairEvidence
+    policy: SurfaceRepairPolicy
+    result_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        vertices: ArrayLike,
+        triangles: ArrayLike,
+        evidence: SurfaceRepairEvidence,
+        policy: SurfaceRepairPolicy,
+    ) -> None:
+        pts = np.ascontiguousarray(np.asarray(vertices, dtype=np.float64))
+        tris = np.ascontiguousarray(np.asarray(triangles, dtype=np.int64))
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError("SurfaceRepairArrays.vertices must have shape (V, 3).")
+        if tris.ndim != 2 or tris.shape[1] != 3:
+            raise ValueError("SurfaceRepairArrays.triangles must have shape (T, 3).")
+        if not isinstance(evidence, SurfaceRepairEvidence):
+            raise TypeError("evidence must be SurfaceRepairEvidence.")
+        if not isinstance(policy, SurfaceRepairPolicy):
+            raise TypeError("policy must be SurfaceRepairPolicy.")
+        self.vertices = pts
+        self.triangles = tris
+        self.evidence = evidence
+        self.policy = policy
+        self.result_id = canonical_fingerprint(
+            {
+                "kind": "surface-repair-arrays",
+                "arrays": array_tree_fingerprint((pts, tris)),
+                "evidence_id": evidence.evidence_id,
+                "policy_id": policy.policy_id,
+            }
+        )
+
+
 class SurfaceRepairResult(StrictModule, NonTrainableState):
     """Repaired authoritative surface model and complete repair provenance."""
 
@@ -571,109 +613,14 @@ class _RepairCounters:
 def _compute_closure_evidence(
     vertices: np.ndarray, triangles: np.ndarray, /
 ) -> SurfaceClosureEvidence:
-    tri_count = triangles.shape[0]
-    if tri_count == 0:
-        return SurfaceClosureEvidence(
-            triangle_count=0,
-            component_count=0,
-            boundary_edges=0,
-            nonmanifold_edges=0,
-            nonmanifold_vertices=0,
-            signed_volume=0.0,
-        )
-    a = triangles[:, 0]
-    b = triangles[:, 1]
-    c = triangles[:, 2]
-    p0 = vertices[a]
-    p1 = vertices[b]
-    p2 = vertices[c]
-    signed_volume = float(np.sum(p0 * np.cross(p1, p2)) / 6.0)
-
-    e0 = np.stack((a, b), axis=1)
-    e1 = np.stack((b, c), axis=1)
-    e2 = np.stack((c, a), axis=1)
-    directed = np.concatenate((e0, e1, e2), axis=0)
-    undirected = np.sort(directed, axis=1)
-    forward = directed[:, 0] < directed[:, 1]
-    corners = np.arange(3 * tri_count, dtype=np.int64)
-    # Corner index per undirected edge entry: edge k of triangle t has start corner 3*t + k.
-    tri_idx = np.tile(np.arange(tri_count, dtype=np.int64), 3)
-    local_k = np.repeat(np.arange(3, dtype=np.int64), tri_count)
-    start_corners = 3 * tri_idx + local_k
-    order = np.lexsort((corners, undirected[:, 1], undirected[:, 0]))
-    sorted_u = undirected[order]
-    sorted_fwd = forward[order]
-    sorted_tris = tri_idx[order]
-    sorted_sc = start_corners[order]
-
-    change = np.empty((sorted_u.shape[0] + 1,), dtype=np.bool_)
-    change[0] = True
-    change[-1] = True
-    change[1:-1] = np.any(sorted_u[1:] != sorted_u[:-1], axis=1)
-    starts = np.flatnonzero(change)
-    counts = np.diff(starts)
-
-    boundary_edges = int(np.sum(counts == 1))
-    nonmanifold_edges = int(np.sum(counts > 2))
-
-    # Build DSU over triangle components and vertex-corner fans.
-    face_parent = list(range(tri_count))
-
-    def _find(parent: list[int], x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def _union(parent: list[int], x: int, y: int) -> None:
-        rx = _find(parent, x)
-        ry = _find(parent, y)
-        if rx != ry:
-            parent[max(rx, ry)] = min(rx, ry)
-
-    corner_parent = list(range(3 * tri_count))
-    for group_idx, count in enumerate(counts):
-        s = int(starts[group_idx])
-        c_int = int(count)
-        first_face = int(sorted_tris[s])
-        for offset in range(1, c_int):
-            _union(face_parent, first_face, int(sorted_tris[s + offset]))
-        if c_int == 2:
-            if bool(sorted_fwd[s]) == bool(sorted_fwd[s + 1]):
-                nonmanifold_edges += 1
-            else:
-                c0 = int(sorted_sc[s])
-                c0n = c0 - 2 if c0 % 3 == 2 else c0 + 1
-                c1 = int(sorted_sc[s + 1])
-                c1n = c1 - 2 if c1 % 3 == 2 else c1 + 1
-                if bool(sorted_fwd[s]):
-                    _union(corner_parent, c0, c1n)
-                    _union(corner_parent, c0n, c1)
-                else:
-                    _union(corner_parent, c0n, c1)
-                    _union(corner_parent, c0, c1n)
-
-    components = len({_find(face_parent, i) for i in range(tri_count)})
-    first_root: dict[int, int] = {}
-    nonmanifold_vertices = 0
-    for t in range(tri_count):
-        for k in range(3):
-            v = int(triangles[t, k])
-            r = _find(corner_parent, 3 * t + k)
-            prev = first_root.get(v)
-            if prev is None:
-                first_root[v] = r
-            elif prev >= 0 and prev != r:
-                nonmanifold_vertices += 1
-                first_root[v] = -2
-
+    audit = surface_closure_audit(vertices, triangles)
     return SurfaceClosureEvidence(
-        triangle_count=tri_count,
-        component_count=components,
-        boundary_edges=boundary_edges,
-        nonmanifold_edges=nonmanifold_edges,
-        nonmanifold_vertices=nonmanifold_vertices,
-        signed_volume=signed_volume,
+        triangle_count=audit.triangle_count,
+        component_count=audit.component_count,
+        boundary_edges=audit.boundary_edges,
+        nonmanifold_edges=audit.nonmanifold_edges,
+        nonmanifold_vertices=audit.nonmanifold_vertices,
+        signed_volume=audit.signed_volume,
     )
 
 
@@ -729,12 +676,13 @@ def _run_arrangement_stage(
     policy: SurfaceRepairPolicy,
     counters: _RepairCounters,
     *,
-    extract_solid_now: bool,
-) -> tuple[np.ndarray, np.ndarray]:
+    extract_if_closed: bool,
+    force_extract: bool,
+) -> tuple[np.ndarray, np.ndarray, bool]:
     if tris.shape[0] == 0:
-        return pts, tris
+        return pts, tris, False
     try:
-        if extract_solid_now:
+        if force_extract:
             ext = arrange_soup_extract_solid(
                 pts,
                 tris,
@@ -747,10 +695,24 @@ def _run_arrangement_stage(
             counters.used_generalized_winding = (
                 counters.used_generalized_winding or ext.used_generalized_winding
             )
-            return ext.vertices, ext.triangles
-        arr = arrange_soup(pts, tris)
-        counters.arrangement_fragments += arr.fragments.shape[0]
-        return arr.vertices, arr.fragments
+            return ext.vertices, ext.triangles, True
+        stage = arrange_soup_or_extract_solid(
+            pts,
+            tris,
+            extract_if_closed=extract_if_closed,
+            winding_rule=_winding_code(policy.winding_rule),
+            split_nonmanifold_pinches=policy.split_nonmanifold_pinches,
+        )
+        counters.arrangement_fragments += stage.fragment_count
+        if stage.extracted_solid and stage.solid_extraction is not None:
+            ext = stage.solid_extraction
+            counters.canceled_coplanar_fragments += ext.canceled_coplanar_fragments
+            counters.split_pinch_vertices += ext.split_pinch_vertices
+            counters.used_generalized_winding = (
+                counters.used_generalized_winding or ext.used_generalized_winding
+            )
+            return stage.vertices, stage.triangles, True
+        return stage.vertices, stage.triangles, False
     except (ArrangementFailure, MeshcoreError) as error:
         raise SurfaceRepairError(
             "embedding_failed",
@@ -886,18 +848,12 @@ def _verify_repaired_surface(
     return closure, finding_count == 0
 
 
-def repair_surface_mesh(
+def _repair_surface_core(
     surface: SurfaceModel | tuple[ArrayLike, ArrayLike],
+    active_policy: SurfaceRepairPolicy,
+    metadata: SurfaceMetadata | None,
     /,
-    *,
-    policy: SurfaceRepairPolicy | None = None,
-    metadata: SurfaceMetadata | None = None,
-) -> SurfaceRepairResult:
-    """Repair a triangle surface mesh or raw triangle soup under explicit opt-in policy."""
-
-    active_policy = SurfaceRepairPolicy() if policy is None else policy
-    if not isinstance(active_policy, SurfaceRepairPolicy):
-        raise TypeError("policy must be SurfaceRepairPolicy or None.")
+) -> tuple[np.ndarray, np.ndarray, SurfaceRepairEvidence, SurfaceMetadata]:
     pts, tris, base_meta = _extract_input_arrays(surface, metadata)
     input_v = pts.shape[0]
     input_t = tris.shape[0]
@@ -928,39 +884,49 @@ def repair_surface_mesh(
             "empty_output", "No valid triangles remained after surface cleaning."
         )
 
-    # Stage 3: exact single-soup self-arrangement (before hole filling to expose true loops).
+    # Stage 3: exact single-soup self-arrangement. When extract_solid is enabled
+    # and the arranged fragment bank already has zero open boundary edges, solid
+    # extraction executes directly on the same native handle without re-arranging.
     extracted_solid = False
     if active_policy.resolve_self_intersections:
-        direct_solid = active_policy.extract_solid and not active_policy.fill_holes
-        pts, tris = _run_arrangement_stage(
-            pts, tris, active_policy, counters, extract_solid_now=direct_solid
+        pts, tris, extracted_solid = _run_arrangement_stage(
+            pts,
+            tris,
+            active_policy,
+            counters,
+            extract_if_closed=active_policy.extract_solid,
+            force_extract=active_policy.extract_solid and not active_policy.fill_holes,
         )
-        extracted_solid = direct_solid
 
     # Stage 4: certified Liepa DP hole filling (with exact cap-collision check).
     had_cap_collision = False
-    if active_policy.fill_holes and tris.shape[0] > 0:
+    if active_policy.fill_holes and not extracted_solid and tris.shape[0] > 0:
         pts, tris, had_cap_collision = _run_hole_fill_stage(
             pts, tris, active_policy, counters
         )
 
     # Stage 5a: exact 3D arrangement cell-complex solid extraction.
     if not extracted_solid and (active_policy.extract_solid or had_cap_collision):
-        pts, tris = _run_arrangement_stage(
-            pts, tris, active_policy, counters, extract_solid_now=True
+        pts, tris, extracted_solid = _run_arrangement_stage(
+            pts,
+            tris,
+            active_policy,
+            counters,
+            extract_if_closed=True,
+            force_extract=True,
         )
-        extracted_solid = True
     if tris.shape[0] == 0:
         raise SurfaceRepairError(
             "empty_output", "Surface repair produced zero surviving triangles."
         )
 
-    # Stage 5b / 6a: shell orientation & debris pruning.
-    if active_policy.orient_shells or active_policy.prune_small_components:
+    # Stage 5b / 6a: shell orientation & debris pruning (skip no-op calls).
+    need_orient = active_policy.orient_shells and not extracted_solid
+    if need_orient or active_policy.prune_small_components:
         oriented = surface_orient_and_prune(
             pts,
             tris,
-            orient_shells=active_policy.orient_shells and not extracted_solid,
+            orient_shells=need_orient,
             prune_small=active_policy.prune_small_components,
             min_component_faces=active_policy.min_component_faces,
             min_component_area_fraction=active_policy.min_component_area_fraction,
@@ -1010,6 +976,44 @@ def repair_surface_mesh(
         closure=closure,
         embedding_verified=embedding_verified,
         hausdorff_bound=counters.hausdorff_bound,
+    )
+    return pts, tris, evidence, base_meta
+
+
+def repair_surface_arrays(
+    surface: SurfaceModel | tuple[ArrayLike, ArrayLike],
+    /,
+    *,
+    policy: SurfaceRepairPolicy | None = None,
+) -> SurfaceRepairArrays:
+    """Repair a triangle surface and return audited host NumPy arrays without JAX wrapping."""
+
+    active_policy = SurfaceRepairPolicy() if policy is None else policy
+    if not isinstance(active_policy, SurfaceRepairPolicy):
+        raise TypeError("policy must be SurfaceRepairPolicy or None.")
+    pts, tris, evidence, _ = _repair_surface_core(surface, active_policy, None)
+    return SurfaceRepairArrays(
+        vertices=pts,
+        triangles=tris,
+        evidence=evidence,
+        policy=active_policy,
+    )
+
+
+def repair_surface_mesh(
+    surface: SurfaceModel | tuple[ArrayLike, ArrayLike],
+    /,
+    *,
+    policy: SurfaceRepairPolicy | None = None,
+    metadata: SurfaceMetadata | None = None,
+) -> SurfaceRepairResult:
+    """Repair a triangle surface mesh or raw triangle soup under explicit opt-in policy."""
+
+    active_policy = SurfaceRepairPolicy() if policy is None else policy
+    if not isinstance(active_policy, SurfaceRepairPolicy):
+        raise TypeError("policy must be SurfaceRepairPolicy or None.")
+    pts, tris, evidence, base_meta = _repair_surface_core(
+        surface, active_policy, metadata
     )
     repaired_metadata = SurfaceMetadata(
         source_id=base_meta.source_id,

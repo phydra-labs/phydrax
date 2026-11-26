@@ -3042,6 +3042,12 @@ PHX_MC_API int32_t phx_mc_arrangement_extract_solid(
     int32_t split_nonmanifold_pinches, phx_mc_solid_extraction_report* report,
     void** out_surface);
 
+/* Count open boundary edges (undirected edges of degree 1) in a published
+ * arrangement's fragment bank. Zero guarantees that hole filling has no
+ * boundary loops to close, so solid extraction can run directly on the handle. */
+PHX_MC_API int32_t phx_mc_arrangement_boundary_edge_count(
+    const phx_mc_arrangement* arrangement, int64_t* boundary_edge_count);
+
 typedef struct phx_mc_surface_clean_request {
   const double* vertices;
   int64_t vertex_count;
@@ -3118,6 +3124,21 @@ typedef struct phx_mc_surface_orient_report {
 PHX_MC_API int32_t phx_mc_surface_orient_and_prune(
     const phx_mc_surface_orient_request* request,
     phx_mc_surface_orient_report* report, void** out_surface);
+
+typedef struct phx_mc_surface_closure_report {
+  int64_t triangle_count;
+  int64_t component_count;
+  int64_t boundary_edges;
+  int64_t nonmanifold_edges;
+  int64_t nonmanifold_vertices;
+  double signed_volume;
+} phx_mc_surface_closure_report;
+
+/* Exact topological closure, connected-component, manifoldness, and signed-volume
+ * audit of a triangle surface mesh on flat sorted edge keys. */
+PHX_MC_API int32_t phx_mc_surface_closure_audit(
+    int64_t vertex_count, const double* vertices, int64_t triangle_count,
+    const int64_t* triangles, phx_mc_surface_closure_report* report);
 
 /* Exact reference-triangle clipping retains the caller's output-row extent. */
 PHX_MC_API int32_t phx_mc_clip_reference_triangle_exact(

@@ -508,12 +508,32 @@ class Kernel {
     Approx offset;
     plane_value(coords_, plane, normal, offset);
     magnitude = std::fabs(normal[axis].value);
-    return decide([&]<class T>() -> T {
-      T values[3];
-      T unused;
-      plane_value(coords_, plane, values, unused);
-      return values[axis];
-    });
+    const int certified = normal[axis].certified_sign();
+    if (certified != 2) return certified;
+    Dyadic exact[3];
+    Dyadic unused;
+    plane_value(coords_, plane, exact, unused);
+    return exact[axis].sign();
+  }
+
+  // Signs and filtered magnitudes of all three normal components in one pass.
+  void normal_signs_all(const PlaneDef& plane, int signs[3], double magnitudes[3]) {
+    Approx normal[3];
+    Approx offset;
+    plane_value(coords_, plane, normal, offset);
+    bool need_exact = false;
+    for (int axis = 0; axis < 3; ++axis) {
+      magnitudes[axis] = std::fabs(normal[axis].value);
+      signs[axis] = normal[axis].certified_sign();
+      if (signs[axis] == 2) need_exact = true;
+    }
+    if (!need_exact) return;
+    Dyadic exact[3];
+    Dyadic unused;
+    plane_value(coords_, plane, exact, unused);
+    for (int axis = 0; axis < 3; ++axis) {
+      if (signs[axis] == 2) signs[axis] = exact[axis].sign();
+    }
   }
 
   // Exact winding number, at the centroid of pool points p, q and r, of the
@@ -798,6 +818,15 @@ class Arranger {
     const std::int64_t* corners = triangles_ + 3 * t;
     const PlaneDef plane = triangle_plane(t);
     frame(plane);
+    if (partners.empty()) {
+      output_.fragments.push_back({corners[0], corners[1], corners[2]});
+      output_.fragment_faces.push_back(t);
+      output_.fragment_frames.push_back(static_cast<std::int8_t>(face_sign_ * (axis_ + 1)));
+      output_.locations.push_back({corners[0], t, 0});
+      output_.locations.push_back({corners[1], t, 1});
+      output_.locations.push_back({corners[2], t, 2});
+      return;
+    }
     points_.assign(corners, corners + 3);
     segments_.clear();
     for (int k = 0; k < 3; ++k) {
@@ -846,16 +875,17 @@ class Arranger {
   }
 
   void frame(const PlaneDef& plane) {
+    int signs[3];
+    double magnitudes[3];
+    kernel_.normal_signs_all(plane, signs, magnitudes);
     int chosen = -1;
     int chosen_sign = 0;
     double best = -1.0;
     for (int axis = 0; axis < 3; ++axis) {
-      double magnitude = 0.0;
-      const int sign = kernel_.normal_sign(plane, axis, magnitude);
-      if (sign != 0 && (chosen < 0 || magnitude > best)) {
-        best = magnitude;
+      if (signs[axis] != 0 && (chosen < 0 || magnitudes[axis] > best)) {
+        best = magnitudes[axis];
         chosen = axis;
-        chosen_sign = sign;
+        chosen_sign = signs[axis];
       }
     }
     if (chosen < 0) {
@@ -2049,13 +2079,13 @@ struct ArrangementPublication {
   std::vector<std::size_t> order;
   std::vector<std::int64_t> published;
   std::vector<std::int8_t> construction;
+  std::vector<std::int64_t> pool_to_root;
 
   std::int64_t root_index(std::int64_t id) const {
-    const auto found = std::lower_bound(used.begin(), used.end(), id);
-    if (found == used.end() || *found != id) {
+    if (id < 0 || static_cast<std::size_t>(id) >= pool_to_root.size()) {
       return std::int64_t{-1};
     }
-    return parent[static_cast<std::size_t>(found - used.begin())];
+    return pool_to_root[static_cast<std::size_t>(id)];
   }
 
   std::int64_t map_id(std::int64_t id) const {
@@ -2069,6 +2099,7 @@ void prepare_publication_points(Kernel& kernel, const phx::mc::Output& out,
   auto& used = state.used;
   auto& parent = state.parent;
   auto& order = state.order;
+  used.reserve(3 * out.fragments.size());
   for (const auto& fragment : out.fragments) {
     used.insert(used.end(), fragment.begin(), fragment.end());
   }
@@ -2100,28 +2131,53 @@ void weld_publication_points(Kernel& kernel, ArrangementPublication& state) {
   for (const std::int64_t id : used) {
     widest = std::max(widest, kernel.point(id).bound);
   }
-  for (std::size_t i = 0; i < n; ++i) {
-    const phx::mc::PoolPoint& p = kernel.point(used[order[i]]);
-    const double reach = phx::mc::geometry::next_up(p.upper(0) + widest);
-    for (std::size_t j = i + 1; j < n; ++j) {
-      const phx::mc::PoolPoint& q = kernel.point(used[order[j]]);
-      if (q.x[0] > reach) {
-        break;
+  if (widest == 0.0) {
+    for (std::size_t i = 0; i < n; ++i) {
+      const phx::mc::PoolPoint& p = kernel.point(used[order[i]]);
+      for (std::size_t j = i + 1; j < n; ++j) {
+        const phx::mc::PoolPoint& q = kernel.point(used[order[j]]);
+        if (q.x[0] != p.x[0] || q.x[1] != p.x[1] || q.x[2] != p.x[2]) {
+          break;
+        }
+        const std::int64_t a =
+            phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[i]));
+        const std::int64_t b =
+            phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[j]));
+        if (a != b) {
+          parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
+        }
       }
-      if (kernel.is_input(used[order[i]]) && kernel.is_input(used[order[j]]) &&
-          (p.x[1] != q.x[1] || p.x[2] != q.x[2] || p.x[0] != q.x[0])) {
-        continue;
-      }
-      const std::int64_t a = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[i]));
-      const std::int64_t b = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[j]));
-      if (a != b && kernel.equal(used[order[i]], used[order[j]])) {
-        parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
+    }
+  } else {
+    for (std::size_t i = 0; i < n; ++i) {
+      const phx::mc::PoolPoint& p = kernel.point(used[order[i]]);
+      const double reach = phx::mc::geometry::next_up(p.upper(0) + widest);
+      for (std::size_t j = i + 1; j < n; ++j) {
+        const phx::mc::PoolPoint& q = kernel.point(used[order[j]]);
+        if (q.x[0] > reach) {
+          break;
+        }
+        if (kernel.is_input(used[order[i]]) && kernel.is_input(used[order[j]]) &&
+            (p.x[1] != q.x[1] || p.x[2] != q.x[2] || p.x[0] != q.x[0])) {
+          continue;
+        }
+        const std::int64_t a =
+            phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[i]));
+        const std::int64_t b =
+            phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[j]));
+        if (a != b && kernel.equal(used[order[i]], used[order[j]])) {
+          parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
+        }
       }
     }
   }
   // Roots are the smallest member (pool ids, input vertices first).
   for (std::size_t index = 0; index < n; ++index) {
     parent[index] = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(index));
+  }
+  state.pool_to_root.assign(used.empty() ? 0 : static_cast<std::size_t>(used.back() + 1), -1);
+  for (std::size_t index = 0; index < n; ++index) {
+    state.pool_to_root[static_cast<std::size_t>(used[index])] = parent[index];
   }
 }
 
@@ -2187,6 +2243,7 @@ void publish_fragment_carrier(Kernel& kernel, const phx::mc::Output& out,
                               phx_mc_arrangement& result) {
   const auto& used = state.used;
   const auto& published = state.published;
+  result.fragments.reserve(3 * out.fragments.size());
   for (std::size_t index = 0; index < out.fragments.size(); ++index) {
     const auto& fragment = out.fragments[index];
     std::array<std::int64_t, 3> representatives;
@@ -2194,6 +2251,10 @@ void publish_fragment_carrier(Kernel& kernel, const phx::mc::Output& out,
       const auto root = static_cast<std::size_t>(state.root_index(fragment[corner]));
       representatives[corner] = used[root];
       result.fragments.push_back(published[root]);
+    }
+    if (kernel.is_input(representatives[0]) && kernel.is_input(representatives[1]) &&
+        kernel.is_input(representatives[2])) {
+      continue;
     }
     const int frame = out.fragment_frames[index];
     const int axis = std::abs(frame) - 1;
@@ -2832,6 +2893,8 @@ int32_t extract_solid_from_arrangement(const phx_mc_arrangement& arr, std::int32
   };
 
   std::vector<EdgeFanRecord> fans;
+  std::vector<RadialEntry> fan_buf;
+  fan_buf.reserve(8);
   std::int64_t arrangement_boundary_edges = 0;
   for (std::size_t i = 0; i < incidents.size();) {
     std::size_t j = i + 1;
@@ -2839,20 +2902,21 @@ int32_t extract_solid_from_arrangement(const phx_mc_arrangement& arr, std::int32
            incidents[j].v == incidents[i].v) {
       ++j;
     }
-    EdgeFanRecord rec{incidents[i].u, incidents[i].v, {}};
-    rec.entries.reserve(j - i);
-    for (std::size_t k = i; k < j; ++k) rec.entries.push_back(incidents[k].entry);
-    sort_radial_fan(kernel, rec.entries);
-    if (rec.entries.size() == 1) ++arrangement_boundary_edges;
-    const std::size_t d = rec.entries.size();
+    fan_buf.clear();
+    for (std::size_t k = i; k < j; ++k) fan_buf.push_back(incidents[k].entry);
+    sort_radial_fan(kernel, fan_buf);
+    const std::size_t d = fan_buf.size();
+    if (d == 1) ++arrangement_boundary_edges;
     for (std::size_t k = 0; k < d; ++k) {
-      const RadialEntry& cur = rec.entries[k];
-      const RadialEntry& nxt = rec.entries[(k + 1) % d];
+      const RadialEntry& cur = fan_buf[k];
+      const RadialEntry& nxt = fan_buf[(k + 1) % d];
       const std::int64_t ccw_cur = cur.dir > 0 ? (2 * cur.tri) : (2 * cur.tri + 1);
       const std::int64_t cw_nxt = nxt.dir > 0 ? (2 * nxt.tri + 1) : (2 * nxt.tri);
       unite_hf(ccw_cur, cw_nxt);
     }
-    fans.push_back(std::move(rec));
+    if (split_pinches && d >= 2) {
+      fans.push_back({incidents[i].u, incidents[i].v, fan_buf});
+    }
     i = j;
   }
 
@@ -3361,6 +3425,69 @@ int32_t phx_mc_arrangement_extract_solid(const phx_mc_arrangement* arrangement,
         *arrangement, winding_rule, split_nonmanifold_pinches != 0, *report, *surface);
     if (status != PHX_MC_OK) return status;
     *out_surface = surface.release();
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_arrangement_boundary_edge_count(const phx_mc_arrangement* arrangement,
+                                               int64_t* boundary_edge_count) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (arrangement == nullptr || boundary_edge_count == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const std::size_t f_count = arrangement->fragment_faces.size();
+    if (f_count == 0) {
+      *boundary_edge_count = 0;
+      return PHX_MC_OK;
+    }
+    const std::size_t v_count = arrangement->vertices.size() / 3;
+    std::int64_t open_edges = 0;
+    if (v_count <= 0xffffffffULL) {
+      std::vector<std::uint64_t> keys;
+      keys.reserve(3 * f_count);
+      for (std::size_t f = 0; f < f_count; ++f) {
+        const std::int64_t* tri = arrangement->fragments.data() + 3 * f;
+        for (int k = 0; k < 3; ++k) {
+          const std::int64_t a = tri[k];
+          const std::int64_t b = tri[(k + 1) % 3];
+          const auto u = static_cast<std::uint64_t>(std::min(a, b));
+          const auto v = static_cast<std::uint64_t>(std::max(a, b));
+          keys.push_back((u << 32) | v);
+        }
+      }
+      std::sort(keys.begin(), keys.end());
+      for (std::size_t i = 0; i < keys.size();) {
+        std::size_t j = i + 1;
+        while (j < keys.size() && keys[j] == keys[i]) ++j;
+        if (j - i == 1) ++open_edges;
+        i = j;
+      }
+    } else {
+      struct PairKey {
+        std::int64_t u;
+        std::int64_t v;
+        bool operator<(const PairKey& o) const { return u != o.u ? u < o.u : v < o.v; }
+        bool operator==(const PairKey& o) const { return u == o.u && v == o.v; }
+      };
+      std::vector<PairKey> keys;
+      keys.reserve(3 * f_count);
+      for (std::size_t f = 0; f < f_count; ++f) {
+        const std::int64_t* tri = arrangement->fragments.data() + 3 * f;
+        for (int k = 0; k < 3; ++k) {
+          const std::int64_t a = tri[k];
+          const std::int64_t b = tri[(k + 1) % 3];
+          keys.push_back({std::min(a, b), std::max(a, b)});
+        }
+      }
+      std::sort(keys.begin(), keys.end());
+      for (std::size_t i = 0; i < keys.size();) {
+        std::size_t j = i + 1;
+        while (j < keys.size() && keys[j] == keys[i]) ++j;
+        if (j - i == 1) ++open_edges;
+        i = j;
+      }
+    }
+    *boundary_edge_count = open_edges;
     return PHX_MC_OK;
   });
 }

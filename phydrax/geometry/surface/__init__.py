@@ -104,8 +104,10 @@ _EXPORT_GROUPS = (
     (
         "._repair",
         (
+            "repair_surface_arrays",
             "repair_surface_mesh",
             "SolidWindingRule",
+            "SurfaceRepairArrays",
             "SurfaceRepairError",
             "SurfaceRepairEvidence",
             "SurfaceRepairPolicy",

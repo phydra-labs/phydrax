@@ -14,10 +14,12 @@ import pytest
 from phydrax.geometry.surface import (
     export_surface,
     import_surface,
+    repair_surface_arrays,
     repair_surface_mesh,
     SurfaceExportPolicy,
     SurfaceFileFormat,
     SurfaceImportPolicy,
+    SurfaceRepairArrays,
     SurfaceRepairError,
     SurfaceRepairPolicy,
 )
@@ -209,6 +211,30 @@ def test_watertight_solid_repairs_self_intersections_baffles_and_coplanar_duplic
     repeat = repair_surface_mesh((soup_v, soup_f), policy=policy)
     assert repeat.result_id == result.result_id
     assert repeat.evidence.evidence_id == result.evidence.evidence_id
+
+    # Host-array entry point matches SurfaceModel output and evidence identically.
+    arrays = repair_surface_arrays((soup_v, soup_f), policy=policy)
+    assert isinstance(arrays, SurfaceRepairArrays)
+    assert arrays.evidence.evidence_id == result.evidence.evidence_id
+    assert np.array_equal(
+        arrays.vertices, np.asarray(result.surface.mesh.coordinates, dtype=np.float64)
+    )
+    assert np.array_equal(
+        arrays.triangles,
+        np.asarray(result.surface.mesh.connectivity.cell_vertices, dtype=np.int64)[:, :3],
+    )
+    arrays_repeat = repair_surface_arrays((soup_v, soup_f), policy=policy)
+    assert arrays_repeat.result_id == arrays.result_id
+
+    # Self-intersecting soup WITH an open hole still runs Stage 4 hole fill + Stage 5a extraction.
+    open_v1, open_f1 = _box_mesh((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
+    open_f1 = open_f1[2:]  # remove -z face to create a 4-edge open hole
+    open_soup = _concat((open_v1, open_f1), (v2, f2))
+    open_repaired = repair_surface_arrays(open_soup, policy=policy)
+    assert open_repaired.evidence.filled_hole_count >= 1
+    assert open_repaired.evidence.embedding_verified
+    assert open_repaired.evidence.closure.boundary_edges == 0
+    assert abs(open_repaired.evidence.closure.signed_volume - 1.875) < 1.0e-12
 
 
 def test_displacement_bounded_welding_t_junction_and_degenerate_cleanup() -> None:
